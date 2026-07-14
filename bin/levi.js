@@ -1,33 +1,96 @@
 #!/usr/bin/env node
 
+const {
+  approvePlan,
+  executeApprovedPlan,
+  initializeProject,
+  inspectStatus,
+  requestTask,
+  reviewProject,
+  validateProject,
+} = require("../src/cli-workflow");
 const { intakeRepository } = require("../src/repository-intake");
 const { scanRepository } = require("../src/repository-scanner");
 const { summarizeProject } = require("../src/project-summary");
 
 function printUsage() {
-  console.error("Usage: levi scan <repository-path>");
+  console.error("Usage: levi <init|status|request|approve|execute|validate|review|scan> <repository-path> [args]");
 }
 
 function main(argv) {
-  const [command, repositoryPath] = argv;
+  const [command, repositoryPath, ...args] = argv;
 
-  if (command !== "scan" || !repositoryPath || argv.length !== 2) {
+  if (!command || !repositoryPath) {
     printUsage();
     return 1;
   }
 
-  const result = intakeRepository(repositoryPath);
+  const intake = intakeRepository(repositoryPath);
 
-  if (!result.ok) {
-    console.error(result.error);
+  if (!intake.ok) {
+    console.error(intake.error);
     return 1;
   }
 
-  console.log(`Repository path is valid: ${result.path}`);
-  const scan = scanRepository(result.path);
-  const summary = summarizeProject(scan);
-  console.log(JSON.stringify(summary, null, 2));
-  return 0;
+  try {
+    return dispatchCommand(command, intake.path, args);
+  } catch (error) {
+    console.error(error.message);
+    return 1;
+  }
+}
+
+function dispatchCommand(command, repositoryPath, args) {
+  if (command === "scan") {
+    console.log(`Repository path is valid: ${repositoryPath}`);
+    printJson(summarizeProject(scanRepository(repositoryPath)));
+    return 0;
+  }
+
+  if (command === "init") {
+    printJson(initializeProject(repositoryPath));
+    return 0;
+  }
+
+  if (command === "status") {
+    printJson(inspectStatus(repositoryPath));
+    return 0;
+  }
+
+  if (command === "request") {
+    const result = requestTask(repositoryPath, args[0]);
+    printJson(result.payload);
+    return result.exitCode;
+  }
+
+  if (command === "approve") {
+    printJson(approvePlan(repositoryPath));
+    return 0;
+  }
+
+  if (command === "execute") {
+    printJson(executeApprovedPlan(repositoryPath));
+    return 0;
+  }
+
+  if (command === "validate") {
+    const validation = validateProject(repositoryPath, args);
+    printJson(validation);
+    return validation.status === "COMPLETED" ? 0 : 1;
+  }
+
+  if (command === "review") {
+    const report = reviewProject(repositoryPath);
+    printJson(report);
+    return report.status === "COMPLETED" ? 0 : 1;
+  }
+
+  printUsage();
+  return 1;
+}
+
+function printJson(value) {
+  console.log(JSON.stringify(value, null, 2));
 }
 
 process.exitCode = main(process.argv.slice(2));

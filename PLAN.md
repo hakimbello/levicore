@@ -492,4 +492,24 @@ Acceptance criteria:
 - CLI communicates only through Levi Core interfaces.
 - Interface errors do not corrupt project state.
 
-Status: NOT STARTED
+Status: COMPLETE
+
+### M9-FIX-001 CLI Architecture Compliance
+
+Requirement ID: LC-MVP-010
+
+Objective: Move workflow and state business logic out of the CLI entry point.
+
+Expected files:
+
+- bin/levi.js
+- src/cli-workflow.js
+
+Acceptance criteria:
+
+- bin/levi.js is limited to argument parsing, command dispatch, output formatting, exit codes, and calls into Levi Core modules.
+- Workflow and state business logic live in src/cli-workflow.js.
+- Existing CLI behavior is preserved.
+- No new features or dependencies are added.
+
+Status: COMPLETE
