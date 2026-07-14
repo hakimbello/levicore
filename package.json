@@ -1,0 +1,11 @@
+{
+  "name": "levi-core",
+  "version": "0.1.0",
+  "private": true,
+  "bin": {
+    "levi": "bin/levi.js"
+  },
+  "scripts": {
+    "levi": "node bin/levi.js"
+  }
+}
