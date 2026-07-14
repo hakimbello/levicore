@@ -279,3 +279,217 @@ Acceptance criteria:
 Status: COMPLETE
 
 No other implementation is approved during M1.
+
+## M2 Persistent Project Memory
+
+Begins only after M1 is complete.
+
+Planned requirement order:
+
+1. LC-MVP-003 Persistent Project Memory.
+
+### M2-001 Memory Store
+
+Requirement ID: LC-MVP-003
+
+Objective: Store verified project facts, approved decisions, task outcomes, and failed attempts across sessions.
+
+Expected files:
+
+- src/memory-store.js
+
+Acceptance criteria:
+
+- Memory remains isolated by project.
+- Every memory record has a type, source, timestamp, and confidence state.
+- Unverified model output never becomes approved project truth.
+- Users can inspect and remove stored project memory.
+
+Status: NOT STARTED
+
+## M3 Scope Enforcement
+
+Begins only after M2 is complete.
+
+Planned requirement order:
+
+1. LC-MVP-004 Scope Enforcement.
+
+### M3-001 Scope Checker
+
+Requirement ID: LC-MVP-004
+
+Objective: Check each requested task against approved project requirements before execution.
+
+Expected files:
+
+- src/scope-checker.js
+
+Acceptance criteria:
+
+- In-scope tasks proceed to planning.
+- Out-of-scope tasks stop before file modification.
+- Ambiguous tasks are marked ASSUMPTION REQUIRES APPROVAL.
+- New ideas are recorded separately and do not alter active scope.
+
+Status: NOT STARTED
+
+## M4 Task Planning
+
+Begins only after M3 is complete.
+
+Planned requirement order:
+
+1. LC-MVP-005 Task Planning.
+
+### M4-001 Task Planner
+
+Requirement ID: LC-MVP-005
+
+Objective: Produce a constrained implementation plan before changing files.
+
+Expected files:
+
+- src/task-planner.js
+
+Acceptance criteria:
+
+- Plan names the requirement ID.
+- Plan lists expected files, acceptance criteria, validation commands, risks, and exclusions.
+- Execution does not begin until the plan is approved.
+
+Status: NOT STARTED
+
+## M5 Model Gateway and Routing
+
+Begins only after M4 is complete.
+
+Planned requirement order:
+
+1. LC-MVP-006 Model Gateway and Routing.
+
+### M5-001 Model Gateway
+
+Requirement ID: LC-MVP-006
+
+Objective: Support replaceable local or remote model providers through one internal interface.
+
+Expected files:
+
+- src/model-gateway.js
+
+Acceptance criteria:
+
+- Business logic does not call provider SDKs directly.
+- At least one local provider and one remote provider are supported.
+- Routing records selected model, reason, estimated cost class, and fallback.
+- Spending and iteration limits are enforced.
+
+Status: NOT STARTED
+
+## M6 Coding Execution
+
+Begins only after M5 is complete.
+
+Planned requirement order:
+
+1. LC-MVP-007 Coding Execution.
+
+### M6-001 Coding Executor
+
+Requirement ID: LC-MVP-007
+
+Objective: Send an approved task plan to a replaceable coding executor that can create, update, and delete project files under controlled permissions.
+
+Expected files:
+
+- src/coding-executor.js
+
+Acceptance criteria:
+
+- Executor accesses only the active repository.
+- Planned file boundaries are enforced.
+- Destructive or irreversible actions require approval.
+- Every changed file is recorded.
+- Execution has time, step, and cost ceilings.
+
+Status: NOT STARTED
+
+## M7 Validation
+
+Begins only after M6 is complete.
+
+Planned requirement order:
+
+1. LC-MVP-008 Validation.
+
+### M7-001 Validation Runner
+
+Requirement ID: LC-MVP-008
+
+Objective: Run approved validation commands and record actual results.
+
+Expected files:
+
+- src/validation-runner.js
+
+Acceptance criteria:
+
+- Commands run from the correct repository root.
+- Exit codes and relevant output are stored.
+- Failed validation prevents completion status.
+- Levi never fabricates test results.
+
+Status: NOT STARTED
+
+## M8 Completion Reporting
+
+Begins only after M7 is complete.
+
+Planned requirement order:
+
+1. LC-MVP-009 Completion Reporting.
+
+### M8-001 Completion Reporter
+
+Requirement ID: LC-MVP-009
+
+Objective: Report exact work performed and update project state only after validation.
+
+Expected files:
+
+- src/completion-reporter.js
+
+Acceptance criteria:
+
+- Report contains requirement ID, exact files changed, change summary, commands run, results, known failures, and remaining work.
+- Partial work is marked partial or failed.
+- Verified task outcomes become project memory.
+
+Status: NOT STARTED
+
+## M9 Primary User Interface
+
+Begins only after M8 is complete.
+
+Planned requirement order:
+
+1. LC-MVP-010 Primary User Interface.
+
+### M9-001 CLI Workflow
+
+Requirement ID: LC-MVP-010
+
+Objective: Provide the first user interface as a command-line application.
+
+Expected files:
+
+- bin/levi.js
+
+Acceptance criteria:
+
+- User can initialize a project, inspect status, request a task, approve a plan, execute, validate, and review results.
+- CLI communicates only through Levi Core interfaces.
+- Interface errors do not corrupt project state.
+
+Status: NOT STARTED
