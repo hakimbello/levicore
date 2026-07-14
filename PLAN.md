@@ -211,7 +211,7 @@ Acceptance criteria:
 - Reports unsupported or unreadable files as skipped.
 - Does not parse file contents.
 
-Status: NOT STARTED
+Status: COMPLETE
 
 ### M1-003 Framework Detection
 
