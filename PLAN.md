@@ -385,7 +385,7 @@ Acceptance criteria:
 - Routing records selected model, reason, estimated cost class, and fallback.
 - Spending and iteration limits are enforced.
 
-Status: NOT STARTED
+Status: COMPLETE
 
 ## M6 Coding Execution
 
