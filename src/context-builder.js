@@ -1,0 +1,349 @@
+const CONTROL_CONFIDENCE_STATES = new Set(["APPROVED", "VERIFIED"]);
+const DEFAULT_LIMITS = {
+  maxRepositoryFacts: 50,
+  maxMemoryRecords: 20,
+  maxFactLength: 500,
+  maxMemoryValueLength: 1000,
+};
+const SECRET_KEY_PATTERN = /(api[_-]?key|auth|credential|password|private[_-]?key|secret|token)/i;
+const SECRET_PATH_PATTERN = /(^|\/|[._-])(env|secret|credential|private[-_]?key|api[-_]?key|token)($|\/|[._-])/i;
+
+function buildContext(input) {
+  validateInput(input);
+
+  const limits = normalizeLimits(input.limits);
+  const repositoryFacts = limitItems(
+    factsFromProjectSummary(input.projectSummary),
+    limits.maxRepositoryFacts,
+    limits.maxFactLength,
+  );
+  const projectMemory = limitItems(
+    filterMemory(resolveMemoryRecords(input), input.projectId),
+    limits.maxMemoryRecords,
+    limits.maxMemoryValueLength,
+  );
+
+  return {
+    projectId: input.projectId,
+    taskPlan: sanitizeValue(input.taskPlan),
+    approvedRequirements: sanitizeCollection(input.approvedRequirements || []),
+    repositoryFacts,
+    projectMemory,
+  };
+}
+
+function validateInput(input) {
+  if (!isPlainObject(input)) {
+    throw new Error("Context builder input is required.");
+  }
+
+  requireString(input.projectId, "projectId");
+
+  if (!isPlainObject(input.taskPlan)) {
+    throw new Error("Context builder taskPlan is required.");
+  }
+
+  if (!isPlainObject(input.projectSummary)) {
+    throw new Error("Context builder projectSummary is required.");
+  }
+
+  if (input.approvedRequirements !== undefined && !Array.isArray(input.approvedRequirements)) {
+    throw new Error("Context builder approvedRequirements must be an array.");
+  }
+
+  if (input.projectMemory !== undefined && !Array.isArray(input.projectMemory)) {
+    throw new Error("Context builder projectMemory must be an array.");
+  }
+
+  if (input.memoryStore !== undefined && !isMemoryStore(input.memoryStore)) {
+    throw new Error("Context builder memoryStore must provide listRecords.");
+  }
+}
+
+function resolveMemoryRecords(input) {
+  if (input.memoryStore) {
+    return input.memoryStore.listRecords(input.projectId);
+  }
+
+  return input.projectMemory || [];
+}
+
+function factsFromProjectSummary(summary) {
+  return [
+    ...factsFromValue("languages", summary.languages),
+    ...factsFromValue("frameworks", summary.frameworks),
+    ...factsFromValue("packageManagers", summary.packageManagers),
+    ...factsFromValue("entryPoints", summary.entryPoints),
+    ...factsFromValue("tests", summary.tests),
+    ...factsFromValue("majorDirectories", summary.majorDirectories),
+    ...factsFromValue("dependencies", summary.dependencies),
+  ].sort(compareFacts);
+}
+
+function factsFromValue(category, value) {
+  if (value === undefined || value === null || value === "UNKNOWN") {
+    return [
+      {
+        category,
+        value: "UNKNOWN",
+        evidence: [],
+      },
+    ];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => factFromEntry(category, entry));
+  }
+
+  return factFromEntry(category, value);
+}
+
+function factFromEntry(category, entry) {
+  const sanitized = sanitizeValue(entry);
+  const evidence = extractEvidence(sanitized);
+
+  if (evidence.length === 0 && sanitized !== "UNKNOWN") {
+    return [];
+  }
+
+  return [
+    {
+      category,
+      value: removeEvidence(sanitized),
+      evidence,
+    },
+  ];
+}
+
+function extractEvidence(value) {
+  const evidence = [];
+
+  collectEvidence(value, evidence);
+
+  return evidence
+    .filter((entry) => !isSecretLikePath(entry.source))
+    .sort(compareStable);
+}
+
+function collectEvidence(value, evidence) {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectEvidence(item, evidence);
+    }
+    return;
+  }
+
+  if (!isPlainObject(value)) {
+    return;
+  }
+
+  if (typeof value.source === "string" && typeof value.signal === "string") {
+    evidence.push({
+      source: value.source,
+      signal: value.signal,
+    });
+    return;
+  }
+
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "evidence") {
+      collectEvidence(child, evidence);
+      continue;
+    }
+
+    if (key === "source" || key === "signal") {
+      continue;
+    }
+
+    collectEvidence(child, evidence);
+  }
+}
+
+function removeEvidence(value) {
+  if (Array.isArray(value)) {
+    return value.map(removeEvidence);
+  }
+
+  if (!isPlainObject(value)) {
+    return value;
+  }
+
+  const cleaned = {};
+
+  for (const key of Object.keys(value).sort()) {
+    if (key === "evidence" || key === "source" || key === "signal") {
+      continue;
+    }
+
+    cleaned[key] = removeEvidence(value[key]);
+  }
+
+  return Object.keys(cleaned).length === 0 ? "UNKNOWN" : cleaned;
+}
+
+function filterMemory(records, projectId) {
+  return records
+    .filter((record) => {
+      if (!isPlainObject(record)) {
+        return false;
+      }
+
+      if (!CONTROL_CONFIDENCE_STATES.has(record.confidenceState)) {
+        return false;
+      }
+
+      if (record.projectId !== undefined && record.projectId !== projectId) {
+        return false;
+      }
+
+      if (record.source && record.source.kind === "model-output") {
+        return false;
+      }
+
+      return true;
+    })
+    .map(sanitizeValue)
+    .sort(compareStable);
+}
+
+function limitItems(items, maxItems, maxSerializedLength) {
+  return items
+    .map(sanitizeValue)
+    .filter((item) => stableSerialize(item).length <= maxSerializedLength)
+    .slice(0, maxItems);
+}
+
+function normalizeLimits(limits) {
+  if (limits === undefined) {
+    return DEFAULT_LIMITS;
+  }
+
+  if (!isPlainObject(limits)) {
+    throw new Error("Context builder limits must be an object.");
+  }
+
+  return {
+    maxRepositoryFacts: positiveIntegerOrDefault(
+      limits.maxRepositoryFacts,
+      DEFAULT_LIMITS.maxRepositoryFacts,
+      "maxRepositoryFacts",
+    ),
+    maxMemoryRecords: positiveIntegerOrDefault(
+      limits.maxMemoryRecords,
+      DEFAULT_LIMITS.maxMemoryRecords,
+      "maxMemoryRecords",
+    ),
+    maxFactLength: positiveIntegerOrDefault(limits.maxFactLength, DEFAULT_LIMITS.maxFactLength, "maxFactLength"),
+    maxMemoryValueLength: positiveIntegerOrDefault(
+      limits.maxMemoryValueLength,
+      DEFAULT_LIMITS.maxMemoryValueLength,
+      "maxMemoryValueLength",
+    ),
+  };
+}
+
+function positiveIntegerOrDefault(value, defaultValue, fieldName) {
+  if (value === undefined) {
+    return defaultValue;
+  }
+
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`Context builder ${fieldName} must be a positive integer.`);
+  }
+
+  return value;
+}
+
+function sanitizeCollection(values) {
+  return values.map(sanitizeValue).sort(compareStable);
+}
+
+function sanitizeValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(sanitizeValue).filter((entry) => entry !== undefined);
+  }
+
+  if (!isPlainObject(value)) {
+    return value;
+  }
+
+  const sanitized = {};
+
+  for (const key of Object.keys(value).sort()) {
+    if (SECRET_KEY_PATTERN.test(key)) {
+      continue;
+    }
+
+    const child = sanitizeValue(value[key]);
+
+    if (child !== undefined) {
+      sanitized[key] = child;
+    }
+  }
+
+  return sanitized;
+}
+
+function compareStable(left, right) {
+  return stableSerialize(left).localeCompare(stableSerialize(right));
+}
+
+function compareFacts(left, right) {
+  const leftUnknown = left.value === "UNKNOWN";
+  const rightUnknown = right.value === "UNKNOWN";
+
+  if (leftUnknown !== rightUnknown) {
+    return leftUnknown ? 1 : -1;
+  }
+
+  return compareStable(left, right);
+}
+
+function stableSerialize(value) {
+  if (value === undefined || value === null) {
+    return "UNKNOWN";
+  }
+
+  if (typeof value === "string") {
+    return value.trim() === "" ? "UNKNOWN" : value;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map(stableSerialize).join(", ")}]`;
+  }
+
+  if (isPlainObject(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${key}: ${stableSerialize(value[key])}`)
+      .join(", ")}}`;
+  }
+
+  return String(value);
+}
+
+function isSecretLikePath(filePath) {
+  return SECRET_PATH_PATTERN.test(filePath);
+}
+
+function isMemoryStore(value) {
+  return isPlainObject(value) && typeof value.listRecords === "function";
+}
+
+function requireString(value, fieldName) {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`Context builder ${fieldName} is required.`);
+  }
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+module.exports = {
+  buildContext,
+};
