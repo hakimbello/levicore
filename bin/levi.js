@@ -2,6 +2,7 @@
 
 const { intakeRepository } = require("../src/repository-intake");
 const { scanRepository } = require("../src/repository-scanner");
+const { summarizeProject } = require("../src/project-summary");
 
 function printUsage() {
   console.error("Usage: levi scan <repository-path>");
@@ -24,7 +25,8 @@ function main(argv) {
 
   console.log(`Repository path is valid: ${result.path}`);
   const scan = scanRepository(result.path);
-  console.log(JSON.stringify(scan, null, 2));
+  const summary = summarizeProject(scan);
+  console.log(JSON.stringify(summary, null, 2));
   return 0;
 }
 

@@ -252,7 +252,7 @@ Acceptance criteria:
 - Reports unsupported dependency formats as UNKNOWN.
 - Handles invalid manifest files with a clear error.
 
-Status: NOT STARTED
+Status: COMPLETE
 
 ### M1-005 Project Summary
 
@@ -276,6 +276,6 @@ Acceptance criteria:
 - Does not include uncited model output or assumptions.
 - Does not modify project files.
 
-Status: NOT STARTED
+Status: COMPLETE
 
 No other implementation is approved during M1.
