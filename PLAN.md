@@ -305,7 +305,7 @@ Acceptance criteria:
 - Unverified model output never becomes approved project truth.
 - Users can inspect and remove stored project memory.
 
-Status: NOT STARTED
+Status: COMPLETE
 
 ## M3 Scope Enforcement
 
