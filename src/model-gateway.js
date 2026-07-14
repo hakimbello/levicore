@@ -1,21 +1,45 @@
-const PROVIDER_TYPES = new Set(["local", "remote"]);
+const {
+  validateProvider,
+  validateProviderCostEstimate,
+  validateProviderRequest,
+} = require("./model-provider-interface");
 
 function createModelGateway(options) {
   validateOptions(options);
 
+  const providers = [];
   let spent = 0;
   let iterations = 0;
 
+  for (const provider of options.providers || []) {
+    registerProvider(provider);
+  }
+
+  function registerProvider(provider) {
+    validateProvider(provider);
+    providers.push(provider);
+    return provider;
+  }
+
+  function getProviders() {
+    return providers.slice();
+  }
+
   async function route(request) {
-    validateRequest(request);
+    validateProviderRequest(request);
+
+    if (providers.length === 0) {
+      throw new Error("No model providers are registered.");
+    }
 
     if (iterations >= options.limits.maxIterations) {
       throw new Error("Model gateway iteration limit exceeded.");
     }
 
-    const primary = selectProvider(request, options.providers);
-    const fallback = selectFallback(primary, options.providers);
+    const primary = selectProvider(request, providers);
+    const fallback = selectFallback(primary, providers);
     const estimatedCost = primary.estimateCost(request);
+    validateProviderCostEstimate(estimatedCost);
 
     if (spent + estimatedCost.amount > options.limits.maxSpend) {
       throw new Error("Model gateway spending limit exceeded.");
@@ -47,6 +71,8 @@ function createModelGateway(options) {
   }
 
   return {
+    getProviders,
+    registerProvider,
     route,
   };
 }
@@ -80,18 +106,11 @@ function validateOptions(options) {
     throw new Error("Model gateway options are required.");
   }
 
-  if (!Array.isArray(options.providers) || options.providers.length === 0) {
-    throw new Error("At least one model provider is required.");
+  if (options.providers !== undefined && !Array.isArray(options.providers)) {
+    throw new Error("Model gateway providers must be an array.");
   }
 
-  const hasLocal = options.providers.some((provider) => provider.type === "local");
-  const hasRemote = options.providers.some((provider) => provider.type === "remote");
-
-  if (!hasLocal || !hasRemote) {
-    throw new Error("At least one local provider and one remote provider are required.");
-  }
-
-  for (const provider of options.providers) {
+  for (const provider of options.providers || []) {
     validateProvider(provider);
   }
 
@@ -107,41 +126,6 @@ function validateOptions(options) {
     throw new Error("Model gateway maxIterations limit is required.");
   }
 }
-
-function validateProvider(provider) {
-  if (!provider || typeof provider !== "object" || Array.isArray(provider)) {
-    throw new Error("Model provider must be an object.");
-  }
-
-  requireString(provider.name, "provider name");
-  requireString(provider.model, "provider model");
-  requireString(provider.reason, "provider reason");
-
-  if (!PROVIDER_TYPES.has(provider.type)) {
-    throw new Error("Model provider type must be local or remote.");
-  }
-
-  if (typeof provider.estimateCost !== "function") {
-    throw new Error("Model provider estimateCost function is required.");
-  }
-}
-
-function validateRequest(request) {
-  if (!request || typeof request !== "object" || Array.isArray(request)) {
-    throw new Error("Model gateway request is required.");
-  }
-
-  if (request.providerType && !PROVIDER_TYPES.has(request.providerType)) {
-    throw new Error("Requested providerType must be local or remote.");
-  }
-}
-
-function requireString(value, fieldName) {
-  if (typeof value !== "string" || value.trim() === "") {
-    throw new Error(`Model gateway ${fieldName} is required.`);
-  }
-}
-
 module.exports = {
   createModelGateway,
 };

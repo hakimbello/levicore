@@ -2,9 +2,9 @@
 
 ## Current Milestone
 
-M0: Product and Scope Lock
+Phase 2: Real AI Integration
 
-Status: COMPLETE
+Status: NOT STARTED
 
 ## Completion Rules
 
@@ -513,3 +513,215 @@ Acceptance criteria:
 - No new features or dependencies are added.
 
 Status: COMPLETE
+
+## Phase 2 Real AI Integration
+
+Begins only after M9 is complete.
+
+Planned requirement order:
+
+1. LC-MVP-006 Model Gateway and Routing.
+2. LC-MVP-003 Persistent Project Memory.
+3. LC-MVP-007 Coding Execution.
+4. LC-MVP-008 Validation.
+5. LC-MVP-009 Completion Reporting.
+
+Phase 2 product principles:
+
+- Apple-level simplicity.
+- One-minute setup.
+- Free-model-first philosophy.
+- Safe execution.
+- Lowest possible friction.
+- Competitive with Cursor, Claude Code, Cline, GitHub Copilot, and similar tools.
+- No unnecessary complexity.
+- No feature creep.
+
+### M10-001 Provider Interface
+
+Task ID: M10-001
+
+Requirement ID: LC-MVP-006
+
+Objective: Define the Levi-owned provider interface used by Model Gateway so local and remote providers expose the same request, response, cost, routing, and error behavior.
+
+Expected files:
+
+- src/model-gateway.js
+- src/model-provider-interface.js
+
+Acceptance criteria:
+
+- Provider request and response shapes are enforced before provider calls.
+- Local and remote providers can be registered behind the same Levi-owned interface.
+- Business logic does not call provider SDKs or provider endpoints directly.
+- Routing metadata still records selected model, reason, estimated cost class, and fallback.
+- Spending and iteration limits remain enforced by Model Gateway.
+
+Status: NOT STARTED
+
+### M11-001 Ollama Provider
+
+Task ID: M11-001
+
+Requirement ID: LC-MVP-006
+
+Objective: Add a local Ollama provider behind the Levi-owned provider interface.
+
+Expected files:
+
+- src/model-gateway.js
+- src/model-provider-interface.js
+- src/providers/ollama-provider.js
+
+Acceptance criteria:
+
+- Ollama is accessed only through the provider interface.
+- Missing or unavailable Ollama returns a clear provider-unavailable error.
+- Local provider setup does not require remote credentials.
+- The provider supports free-model-first routing when a configured local model is available.
+- Provider responses include enough metadata for routing, usage, and completion reporting without logging secrets.
+
+Status: NOT STARTED
+
+### M12-001 Remote Provider
+
+Task ID: M12-001
+
+Requirement ID: LC-MVP-006
+
+Objective: Add a replaceable remote model provider behind the Levi-owned provider interface.
+
+Expected files:
+
+- src/model-gateway.js
+- src/model-provider-interface.js
+- src/providers/remote-provider.js
+
+Acceptance criteria:
+
+- Remote model calls are made only through the provider interface.
+- Missing endpoint, model, or credential configuration fails before any remote call.
+- Remote provider configuration remains replaceable and does not enter domain logic.
+- Provider errors return clear failure information without exposing secrets.
+- Estimated cost class and fallback behavior are recorded by Model Gateway.
+
+Status: NOT STARTED
+
+### M13-001 Prompt Engine
+
+Task ID: M13-001
+
+Requirement ID: LC-MVP-006
+
+Objective: Build approved model prompts from Levi-controlled task, scope, context, and safety inputs.
+
+Expected files:
+
+- src/prompt-engine.js
+- src/model-gateway.js
+
+Acceptance criteria:
+
+- Prompts are built only from approved task plans, approved requirements, cited repository facts, and verified project memory.
+- Prompt sections include objective, scope boundaries, expected files, validation commands, risks, and explicit exclusions.
+- UNKNOWN values remain marked UNKNOWN.
+- Secrets, rejected records, and unverified model output are excluded from control instructions.
+- Prompt output is deterministic for the same approved inputs.
+
+Status: NOT STARTED
+
+### M14-001 Context Builder
+
+Task ID: M14-001
+
+Requirement ID: LC-MVP-003
+
+Objective: Assemble bounded project context for AI requests from verified memory, approved decisions, repository summaries, and the active task plan.
+
+Expected files:
+
+- src/context-builder.js
+- src/memory-store.js
+- src/project-summary.js
+
+Acceptance criteria:
+
+- Context includes only APPROVED or VERIFIED memory records and cited repository facts.
+- Context remains isolated to the active project.
+- Every included fact preserves its source or deterministic signal.
+- UNKNOWN facts remain UNKNOWN.
+- Secret, generated, dependency, binary, rejected, and unverified records are excluded.
+
+Status: NOT STARTED
+
+### M15-001 Code Generation Pipeline
+
+Task ID: M15-001
+
+Requirement ID: LC-MVP-007
+
+Objective: Connect approved task plans, bounded context, prompt generation, model routing, and proposed code operations into one controlled coding pipeline.
+
+Expected files:
+
+- src/code-generation-pipeline.js
+- src/coding-executor.js
+- src/context-builder.js
+- src/model-gateway.js
+- src/prompt-engine.js
+
+Acceptance criteria:
+
+- Pipeline runs only after a task plan is approved.
+- Model requests go through Model Gateway.
+- Generated output is converted into structured proposed operations before file writes.
+- Planned file boundaries are checked before execution.
+- Model routing and usage metadata are recorded without exposing secrets.
+
+Status: NOT STARTED
+
+### M16-001 Safe Patch Application
+
+Task ID: M16-001
+
+Requirement ID: LC-MVP-007
+
+Objective: Apply AI-proposed file changes safely through the existing coding executor boundary.
+
+Expected files:
+
+- src/coding-executor.js
+- src/safe-patch.js
+
+Acceptance criteria:
+
+- Only structured operations for planned files inside the active repository can be applied.
+- Path traversal, malformed patches, binary writes, and unplanned files are rejected.
+- Destructive or irreversible operations require explicit approval.
+- Every changed file is recorded exactly.
+- Failed patch attempts do not produce COMPLETED status.
+
+Status: NOT STARTED
+
+### M17-001 Functional Assistant Audit
+
+Task ID: M17-001
+
+Requirement ID: LC-MVP-009
+
+Objective: Audit the real AI workflow from approved task request through provider routing, code generation, safe patch application, validation, and completion reporting.
+
+Expected files:
+
+- No implementation files expected unless an audit finding is approved as a separate task.
+
+Acceptance criteria:
+
+- Audit uses an approved in-scope task and does not expand product scope.
+- Audit verifies local-first routing, remote fallback behavior, safe execution, validation blocking, and exact completion reporting.
+- Audit records commands run, exit codes, changed files, known failures, and remaining work.
+- Any defect discovered is documented for a separate approved fix task.
+- No feature creep or architecture changes are introduced during the audit.
+
+Status: NOT STARTED
