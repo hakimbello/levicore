@@ -192,4 +192,90 @@ Constraints:
 
 Status: COMPLETE
 
+### M1-002 Repository Scanner
+
+Requirement ID: LC-MVP-002
+
+Objective: Scan supported source and documentation files while respecting exclusions.
+
+Expected files:
+
+- bin/levi.js
+- src/repository-scanner.js
+
+Acceptance criteria:
+
+- Scans the repository path accepted by repository intake.
+- Excludes secrets, generated files, dependencies, binaries, and ignored directories.
+- Records discovered file paths without modifying project files.
+- Reports unsupported or unreadable files as skipped.
+- Does not parse file contents.
+
+Status: NOT STARTED
+
+### M1-003 Framework Detection
+
+Requirement ID: LC-MVP-002
+
+Objective: Detect languages, frameworks, package managers, entry points, and tests from deterministic repository signals.
+
+Expected files:
+
+- src/framework-detection.js
+- src/repository-scanner.js
+
+Acceptance criteria:
+
+- Identifies languages only when supported file extensions or config files provide evidence.
+- Identifies frameworks only from deterministic files or manifest contents.
+- Identifies package managers only from lockfiles or package manifests.
+- Identifies entry points and tests only when evidence exists.
+- Reports unknown facts as UNKNOWN.
+
+Status: NOT STARTED
+
+### M1-004 Dependency Analysis
+
+Requirement ID: LC-MVP-002
+
+Objective: Analyze project dependency manifests without installing dependencies.
+
+Expected files:
+
+- src/dependency-analysis.js
+
+Acceptance criteria:
+
+- Reads supported dependency manifest files only.
+- Reports declared dependencies with source file evidence.
+- Does not install, update, execute, or fetch dependencies.
+- Reports unsupported dependency formats as UNKNOWN.
+- Handles invalid manifest files with a clear error.
+
+Status: NOT STARTED
+
+### M1-005 Project Summary
+
+Requirement ID: LC-MVP-002
+
+Objective: Produce a verified project summary from repository analysis results.
+
+Expected files:
+
+- bin/levi.js
+- src/project-summary.js
+- src/repository-scanner.js
+- src/framework-detection.js
+- src/dependency-analysis.js
+
+Acceptance criteria:
+
+- Produces a project summary containing only cited facts or UNKNOWN values.
+- Includes languages, frameworks, package managers, entry points, tests, major directories, and dependencies when evidence exists.
+- Includes source file evidence for every reported fact.
+- Does not include uncited model output or assumptions.
+- Does not modify project files.
+
+Status: NOT STARTED
+
 No other implementation is approved during M1.
