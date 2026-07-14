@@ -4,7 +4,7 @@
 
 M0: Product and Scope Lock
 
-Status: IN PROGRESS
+Status: COMPLETE
 
 ## Completion Rules
 
@@ -130,7 +130,7 @@ Acceptance criteria:
 - Adopt, study, and reject decisions are explicit.
 - No integration occurs during evaluation.
 
-Status: NOT STARTED
+Status: COMPLETE
 
 ### M0-008 Owner Scope Approval
 
@@ -146,7 +146,7 @@ Acceptance criteria:
 - AI rules approved.
 - OSS decisions approved.
 
-Status: NOT STARTED
+Status: COMPLETE
 
 ## M1 Repository Intake and Analysis
 
