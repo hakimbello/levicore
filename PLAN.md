@@ -157,4 +157,39 @@ Planned requirement order:
 1. LC-MVP-001 Repository Intake.
 2. LC-MVP-002 Repository Analysis.
 
+### M1-001 Repository Intake
+
+Requirement ID: LC-MVP-001
+
+Objective: Implement repository intake.
+
+Expected files:
+
+- package.json
+- bin/levi.js
+- src/repository-intake.js
+
+Behavior:
+
+- Command: levi scan <repository-path>
+- Verify the path exists.
+- Verify the path is a directory.
+- Return success for a valid directory.
+- Return a clear error for a missing path.
+- Return a clear error for a regular file.
+- Return a nonzero exit code on failure.
+- Do not modify the target repository.
+
+Constraints:
+
+- Node.js built-ins only.
+- No scanning.
+- No parsing.
+- No AI.
+- No memory.
+- No external dependencies.
+- No additional commands.
+
+Status: NOT STARTED
+
 No other implementation is approved during M1.
