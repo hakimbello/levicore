@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const { intakeRepository } = require("../src/repository-intake");
+const { scanRepository } = require("../src/repository-scanner");
 
 function printUsage() {
   console.error("Usage: levi scan <repository-path>");
@@ -22,6 +23,8 @@ function main(argv) {
   }
 
   console.log(`Repository path is valid: ${result.path}`);
+  const scan = scanRepository(result.path);
+  console.log(JSON.stringify(scan, null, 2));
   return 0;
 }
 
