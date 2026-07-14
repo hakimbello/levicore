@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { detectProjectSignals } = require("./framework-detection");
 
 const IGNORED_DIRECTORIES = new Set([
   ".git",
@@ -167,11 +168,15 @@ function scanRepository(repositoryPath) {
 
   scanDirectory(rootPath);
 
-  return {
+  const result = {
     root: rootPath,
     files,
     skipped,
   };
+
+  result.detected = detectProjectSignals(result);
+
+  return result;
 }
 
 module.exports = {
