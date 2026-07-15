@@ -22,6 +22,7 @@ function summarizeProject(scanResult) {
       ...scanResult,
       files: projectFiles,
     }),
+    structuralIndex: scanResult.structuralIndex || UNKNOWN,
   };
 }
 

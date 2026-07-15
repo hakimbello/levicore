@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { detectProjectSignals } = require("./framework-detection");
+const { buildStructuralIndex } = require("./structural-index");
 
 const IGNORED_DIRECTORIES = new Set([
   ".git",
@@ -10,6 +11,8 @@ const IGNORED_DIRECTORIES = new Set([
   "dist",
   "build",
   "out",
+  "generated",
+  ".next",
   "node_modules",
   "vendor",
 ]);
@@ -157,6 +160,14 @@ function scanRepository(repositoryPath) {
         continue;
       }
 
+      if (isGeneratedLike(entryPath)) {
+        skipped.push({
+          path: relativePath,
+          reason: "generated",
+        });
+        continue;
+      }
+
       if (!isSupportedFile(entryPath)) {
         skipped.push({
           path: relativePath,
@@ -180,8 +191,13 @@ function scanRepository(repositoryPath) {
   };
 
   result.detected = detectProjectSignals(result);
+  result.structuralIndex = buildStructuralIndex(result);
 
   return result;
+}
+
+function isGeneratedLike(filePath) {
+  return /\.min\.[a-z0-9]+$/i.test(path.basename(filePath));
 }
 
 function comparePathEntries(left, right) {
