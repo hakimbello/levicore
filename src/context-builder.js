@@ -25,6 +25,7 @@ function buildContext(input) {
 
   return {
     projectId: input.projectId,
+    repositoryRoot: stringOrUnknown(input.projectSummary.root),
     taskPlan: sanitizeValue(input.taskPlan),
     approvedRequirements: sanitizeCollection(input.approvedRequirements || []),
     repositoryFacts,
@@ -148,10 +149,17 @@ function collectEvidence(value, evidence) {
   }
 
   if (typeof value.source === "string" && typeof value.signal === "string") {
-    evidence.push({
+    const entry = {
       source: value.source,
       signal: value.signal,
-    });
+    };
+    const type = optionalString(value.type || value.evidenceType);
+
+    if (type) {
+      entry.type = type;
+    }
+
+    evidence.push(entry);
     return;
   }
 
@@ -189,6 +197,22 @@ function removeEvidence(value) {
   }
 
   return Object.keys(cleaned).length === 0 ? "UNKNOWN" : cleaned;
+}
+
+function optionalString(value) {
+  if (typeof value !== "string" || value.trim() === "") {
+    return null;
+  }
+
+  return value.trim();
+}
+
+function stringOrUnknown(value) {
+  if (typeof value !== "string" || value.trim() === "") {
+    return "UNKNOWN";
+  }
+
+  return value.trim();
 }
 
 function filterMemory(records, projectId) {
