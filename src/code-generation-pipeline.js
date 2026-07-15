@@ -221,6 +221,10 @@ function parseProposedOperations(providerResponse, taskPlan) {
     throw new Error("Model response operations array is required.");
   }
 
+  if (parsed.operations.length === 0) {
+    throw new Error("Model response must include at least one operation.");
+  }
+
   const parsedKeys = Object.keys(parsed);
 
   if (parsedKeys.length !== 1 || parsedKeys[0] !== "operations") {
@@ -228,8 +232,9 @@ function parseProposedOperations(providerResponse, taskPlan) {
   }
 
   const plannedFiles = plannedFileSet(taskPlan.expectedFiles);
+  const approvedOperations = approvedOperationMap(taskPlan.plannedOperations);
 
-  return parsed.operations.map((operation) => normalizeOperation(operation, plannedFiles));
+  return parsed.operations.map((operation) => normalizeOperation(operation, plannedFiles, approvedOperations));
 }
 
 function plannedFileSet(expectedFiles) {
@@ -246,7 +251,31 @@ function plannedFileSet(expectedFiles) {
   return plannedFiles;
 }
 
-function normalizeOperation(operation, plannedFiles) {
+function approvedOperationMap(plannedOperations) {
+  const approvedOperations = new Map();
+
+  if (!Array.isArray(plannedOperations)) {
+    return approvedOperations;
+  }
+
+  for (const operation of plannedOperations) {
+    if (!isPlainObject(operation) || typeof operation.path !== "string" || typeof operation.type !== "string") {
+      continue;
+    }
+
+    const relativePath = normalizeRelativePath(operation.path);
+    const key = `${operation.type}:${relativePath}`;
+    approvedOperations.set(key, {
+      type: operation.type,
+      path: relativePath,
+      destructiveConfirmation: operation.destructiveConfirmation === true,
+    });
+  }
+
+  return approvedOperations;
+}
+
+function normalizeOperation(operation, plannedFiles, approvedOperations) {
   if (!isPlainObject(operation)) {
     throw new Error("Proposed operation must be an object.");
   }
@@ -280,9 +309,17 @@ function normalizeOperation(operation, plannedFiles) {
   }
 
   if (operation.type === "delete") {
+    const approvedDelete = approvedOperations.get(`delete:${relativePath}`);
+
+    if (!approvedDelete || approvedDelete.destructiveConfirmation !== true) {
+      throw new Error(`Proposed delete operation is not approved: ${relativePath}`);
+    }
+
     return {
       type: operation.type,
       path: relativePath,
+      destructive: true,
+      destructiveConfirmation: true,
     };
   }
 

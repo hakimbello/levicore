@@ -127,6 +127,15 @@ function requestPlainLanguageTask(repositoryPath, taskTextParts) {
   plan.approvalSummary = createApprovalSummary(plan);
   plan.approvalDecision = createApprovalDecision(plan);
   plan.contextPreview = createPreviewForPlan(repositoryPath, plan, repositorySummary);
+  const state = loadState(repositoryPath);
+  state.request = {
+    requirementId: plan.requirementId,
+    intake,
+    scope,
+  };
+  state.plan = plan;
+  state.repositorySummary = repositorySummary;
+  saveState(repositoryPath, state);
 
   return {
     exitCode: 0,
@@ -247,6 +256,10 @@ function executeApprovedPlan(repositoryPath) {
 
   const repositorySummary = summarizeProject(scanRepository(repositoryPath));
   const memoryStore = createMemoryStore(path.join(repositoryPath, ".levi", "memory.json"));
+  const contextPreview = createPreviewForPlan(repositoryPath, state.plan, repositorySummary);
+  state.repositorySummary = repositorySummary;
+  state.contextPreview = contextPreview;
+  state.plan.contextPreview = contextPreview;
   const pipeline = createCodeGenerationPipeline({ modelGateway: gateway });
 
   return pipeline
@@ -276,6 +289,8 @@ function executeApprovedPlan(repositoryPath) {
         state.execution = {
           status: "FAILED",
           error: patch.error,
+          providerState: readiness.providers,
+          readiness: readinessSummary,
         };
         saveState(repositoryPath, state);
         return state.execution;
@@ -285,18 +300,18 @@ function executeApprovedPlan(repositoryPath) {
         repositoryRoot: repositoryPath,
         commands: state.plan.validationCommands,
       });
+      const completed = validation.status === "COMPLETED";
       const report = createCompletionReport({
         requirementId: state.plan.requirementId,
         filesChanged: patch.changes.filter((change) => change.changed).map((change) => change.path),
         changeSummary: patch.summary,
         validationResults: validation.results,
-        knownFailures: validation.status === "FAILED" ? ["Validation failed."] : [],
-        remainingWork: validation.status === "FAILED" ? ["Resolve failed validation."] : [],
-        status: validation.status === "COMPLETED" ? "COMPLETED" : "FAILED",
+        knownFailures: completed ? [] : ["Validation failed."],
+        remainingWork: completed ? [] : ["Resolve failed validation."],
+        status: completed ? "COMPLETED" : "FAILED",
       });
       const memoryRecord = recordVerifiedTaskOutcome(memoryStore, "default", report);
 
-      state.repositorySummary = repositorySummary;
       state.validation = validation;
       state.report = report;
       state.memoryRecord = memoryRecord;
