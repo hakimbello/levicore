@@ -29,11 +29,36 @@ const LEVI_RUNTIME_PATTERN = /(^|\/)\.levi($|\/)/;
 const SECRET_PATH_PATTERN = /(^|\/|[._-])(env|secret|credential|private[-_]?key|api[-_]?key|token)($|\/|[._-])/i;
 const BINARY_EXTENSION_PATTERN = /\.(png|jpe?g|gif|webp|ico|pdf|zip|gz|tar|exe|dll|so|dylib|bin|wasm)$/i;
 const JS_KEYWORDS = new Set(["catch", "for", "if", "switch", "while"]);
+const JS_NON_CALL_IDENTIFIERS = new Set([
+  "Array",
+  "Boolean",
+  "Date",
+  "Error",
+  "JSON",
+  "Math",
+  "Number",
+  "Object",
+  "Promise",
+  "RegExp",
+  "String",
+  "catch",
+  "else",
+  "for",
+  "function",
+  "if",
+  "new",
+  "require",
+  "return",
+  "switch",
+  "throw",
+  "while",
+]);
 
 function buildStructuralIndex(scanResult) {
   validateScanResult(scanResult);
 
   const symbolsByFingerprint = new Map();
+  const rawRelationships = [];
   const unsupported = [];
   const parseFailures = [];
   const files = safeFiles(scanResult.files);
@@ -50,6 +75,7 @@ function buildStructuralIndex(scanResult) {
         exported: false,
         signal: "configuration filename",
       }));
+      rawRelationships.push(...indexConfigurationRelationships(scanResult.root, file.path));
     }
 
     const extension = path.extname(file.path).toLowerCase();
@@ -60,6 +86,7 @@ function buildStructuralIndex(scanResult) {
         file,
         parser: indexJavaScript,
         symbolsByFingerprint,
+        rawRelationships,
         parseFailures,
       });
       continue;
@@ -71,6 +98,7 @@ function buildStructuralIndex(scanResult) {
         file,
         parser: indexPython,
         symbolsByFingerprint,
+        rawRelationships,
         parseFailures,
       });
       continue;
@@ -90,11 +118,13 @@ function buildStructuralIndex(scanResult) {
   const symbols = Array.from(symbolsByFingerprint.values())
     .sort(compareSymbols)
     .map((symbol) => scopeSymbolId(symbol, scanResult.root));
+  const relationships = buildRelationships(rawRelationships, symbols, files, scanResult.root);
 
   return {
     status: symbols.length > 0 ? "INDEXED" : UNKNOWN,
     unknown: symbols.length > 0 ? null : UNKNOWN,
     symbols,
+    relationships,
     unsupported: unsupported.sort(comparePathEntries),
     parseFailures: parseFailures.sort(comparePathEntries),
   };
@@ -145,9 +175,15 @@ function parseSourceFile(options) {
   }
 
   try {
-    for (const symbol of options.parser(options.file.path, contents)) {
+    const parsed = options.parser(options.file.path, contents);
+    const parsedSymbols = Array.isArray(parsed) ? parsed : parsed.symbols || [];
+    const parsedRelationships = Array.isArray(parsed.relationships) ? parsed.relationships : [];
+
+    for (const symbol of parsedSymbols) {
       addSymbol(options.symbolsByFingerprint, symbol);
     }
+
+    options.rawRelationships.push(...parsedRelationships);
   } catch (error) {
     options.parseFailures.push({
       path: options.file.path,
@@ -174,6 +210,9 @@ function indexJavaScript(relativePath, contents) {
   let currentClass = null;
   let classBraceDepth = 0;
   let pendingRoute = null;
+  let currentSource = moduleName(relativePath);
+  let currentSourceType = "module";
+  const relationships = [];
 
   addRouteSymbolsForPath(symbols, relativePath, language);
 
@@ -185,8 +224,8 @@ function indexJavaScript(relativePath, contents) {
       return;
     }
 
-    addJavaScriptImport(symbols, trimmed, relativePath, lineNumber, language);
-    addJavaScriptExportOnly(symbols, trimmed, relativePath, lineNumber, language);
+    addJavaScriptImport(symbols, relationships, trimmed, relativePath, lineNumber, language);
+    addJavaScriptExportOnly(symbols, relationships, trimmed, relativePath, lineNumber, language);
 
     const route = javascriptRoute(trimmed);
 
@@ -200,6 +239,16 @@ function indexJavaScript(relativePath, contents) {
         parent: moduleName(relativePath),
         exported: false,
         signal: route.signal,
+      }));
+      relationships.push(createRawRelationship({
+        sourceName: moduleName(relativePath),
+        sourceType: "module",
+        relationshipType: `${route.type}-to-handler`,
+        targetName: route.handler,
+        targetPath: relativePath,
+        sourcePath: relativePath,
+        lineNumber,
+        signal: `${route.signal}: ${route.handler || UNKNOWN}`,
       }));
       pendingRoute = route.name;
     }
@@ -215,6 +264,16 @@ function indexJavaScript(relativePath, contents) {
         exported: hasExport(trimmed),
         signal: "middleware evidence",
       }));
+      relationships.push(createRawRelationship({
+        sourceName: moduleName(relativePath),
+        sourceType: "module",
+        relationshipType: "middleware-usage",
+        targetName: middlewareName(trimmed, relativePath),
+        targetPath: relativePath,
+        sourcePath: relativePath,
+        lineNumber,
+        signal: "middleware usage",
+      }));
     }
 
     const classMatch = trimmed.match(/^(?:export\s+default\s+|export\s+)?class\s+([A-Za-z_$][\w$]*)/);
@@ -222,6 +281,7 @@ function indexJavaScript(relativePath, contents) {
     if (classMatch) {
       const exported = hasExport(trimmed);
       const className = classMatch[1];
+      const inheritance = javascriptInheritance(trimmed);
       symbols.push(createSymbol({
         name: className,
         type: "class",
@@ -232,7 +292,31 @@ function indexJavaScript(relativePath, contents) {
         exported,
         signal: exported ? "exported class declaration" : "class declaration",
       }));
+      if (inheritance.extendsName) {
+        relationships.push(createRawRelationship({
+          sourceName: className,
+          sourceType: "class",
+          relationshipType: "class-inheritance",
+          targetName: inheritance.extendsName,
+          sourcePath: relativePath,
+          lineNumber,
+          signal: "extends clause",
+        }));
+      }
+      for (const implementedName of inheritance.implementsNames) {
+        relationships.push(createRawRelationship({
+          sourceName: className,
+          sourceType: "class",
+          relationshipType: "interface-implementation",
+          targetName: implementedName,
+          sourcePath: relativePath,
+          lineNumber,
+          signal: "implements clause",
+        }));
+      }
       currentClass = className;
+      currentSource = className;
+      currentSourceType = "class";
       classBraceDepth = braceDelta(line);
       pendingRoute = null;
       return;
@@ -252,6 +336,9 @@ function indexJavaScript(relativePath, contents) {
           exported: false,
           signal: "class method declaration",
         }));
+        currentSource = method[1];
+        currentSourceType = "method";
+        addJavaScriptCallRelationships(relationships, trimmed, relativePath, lineNumber, currentSource, currentSourceType);
       }
 
       classBraceDepth += braceDelta(line);
@@ -259,20 +346,41 @@ function indexJavaScript(relativePath, contents) {
       if (classBraceDepth <= 0) {
         currentClass = null;
         classBraceDepth = 0;
+        currentSource = moduleName(relativePath);
+        currentSourceType = "module";
       }
 
       return;
     }
 
     addTypeScriptSymbol(symbols, trimmed, relativePath, lineNumber, language);
-    addJavaScriptFunctionOrVariable(symbols, trimmed, relativePath, lineNumber, language, pendingRoute);
+    const addedSource = addJavaScriptFunctionOrVariable(
+      symbols,
+      relationships,
+      trimmed,
+      relativePath,
+      lineNumber,
+      language,
+      pendingRoute,
+    );
+
+    if (addedSource) {
+      currentSource = addedSource.name;
+      currentSourceType = addedSource.type;
+    } else {
+      addJavaScriptCallRelationships(relationships, trimmed, relativePath, lineNumber, currentSource, currentSourceType);
+      addReactUsageRelationships(relationships, trimmed, relativePath, lineNumber, currentSource, currentSourceType);
+    }
     pendingRoute = null;
   });
 
-  return symbols;
+  return {
+    symbols,
+    relationships,
+  };
 }
 
-function addJavaScriptImport(symbols, trimmed, relativePath, lineNumber, language) {
+function addJavaScriptImport(symbols, relationships, trimmed, relativePath, lineNumber, language) {
   const importMatch =
     trimmed.match(/^import\s+(?:.+?\s+from\s+)?["']([^"']+)["']/) ||
     trimmed.match(/^(?:const|let|var)\s+.+?\s*=\s*require\(["']([^"']+)["']\)/);
@@ -289,11 +397,31 @@ function addJavaScriptImport(symbols, trimmed, relativePath, lineNumber, languag
     language,
     parent: moduleName(relativePath),
     exported: false,
+      signal: "import declaration",
+    }));
+  relationships.push(createRawRelationship({
+    sourceName: moduleName(relativePath),
+    sourceType: "module",
+    relationshipType: "import",
+    targetName: importMatch[1],
+    targetPath: importMatch[1],
+    sourcePath: relativePath,
+    lineNumber,
     signal: "import declaration",
+  }));
+  relationships.push(createRawRelationship({
+    sourceName: moduleName(relativePath),
+    sourceType: "module",
+    relationshipType: "module-dependency",
+    targetName: importMatch[1],
+    targetPath: importMatch[1],
+    sourcePath: relativePath,
+    lineNumber,
+    signal: "module import dependency",
   }));
 }
 
-function addJavaScriptExportOnly(symbols, trimmed, relativePath, lineNumber, language) {
+function addJavaScriptExportOnly(symbols, relationships, trimmed, relativePath, lineNumber, language) {
   const exportMatch = trimmed.match(/^export\s+(?:default\s+)?\{?\s*([A-Za-z_$][\w$]*)?/);
 
   if (!exportMatch || /^(export\s+(class|function|const|let|var|interface|type|enum)\b)/.test(trimmed)) {
@@ -308,6 +436,15 @@ function addJavaScriptExportOnly(symbols, trimmed, relativePath, lineNumber, lan
     language,
     parent: moduleName(relativePath),
     exported: true,
+      signal: "export declaration",
+    }));
+  relationships.push(createRawRelationship({
+    sourceName: moduleName(relativePath),
+    sourceType: "module",
+    relationshipType: "export",
+    targetName: exportMatch[1] || "default",
+    sourcePath: relativePath,
+    lineNumber,
     signal: "export declaration",
   }));
 }
@@ -331,10 +468,11 @@ function addTypeScriptSymbol(symbols, trimmed, relativePath, lineNumber, languag
   }));
 }
 
-function addJavaScriptFunctionOrVariable(symbols, trimmed, relativePath, lineNumber, language, pendingRoute) {
+function addJavaScriptFunctionOrVariable(symbols, relationships, trimmed, relativePath, lineNumber, language, pendingRoute) {
   const functionMatch = trimmed.match(/^(?:export\s+default\s+|export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/);
 
   if (functionMatch) {
+    const sourceType = reactFunctionType(functionMatch[1], relativePath);
     symbols.push(functionLikeSymbol({
       name: functionMatch[1],
       relativePath,
@@ -343,13 +481,27 @@ function addJavaScriptFunctionOrVariable(symbols, trimmed, relativePath, lineNum
       exported: hasExport(trimmed),
       signal: pendingRoute ? `route handler for ${pendingRoute}` : "function declaration",
     }));
-    return;
+    if (hasExport(trimmed)) {
+      relationships.push(createRawRelationship({
+        sourceName: moduleName(relativePath),
+        sourceType: "module",
+        relationshipType: "export",
+        targetName: functionMatch[1],
+        sourcePath: relativePath,
+        lineNumber,
+        signal: "exported function declaration",
+      }));
+    }
+    return {
+      name: functionMatch[1],
+      type: sourceType,
+    };
   }
 
   const assignmentMatch = trimmed.match(/^(?:export\s+)?(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.*)$/);
 
   if (!assignmentMatch) {
-    return;
+    return null;
   }
 
   const declaration = assignmentMatch[1];
@@ -358,6 +510,7 @@ function addJavaScriptFunctionOrVariable(symbols, trimmed, relativePath, lineNum
   const isFunctionValue = value.includes("=>") || value.startsWith("function");
 
   if (isFunctionValue) {
+    const sourceType = reactFunctionType(name, relativePath);
     symbols.push(functionLikeSymbol({
       name,
       relativePath,
@@ -366,7 +519,21 @@ function addJavaScriptFunctionOrVariable(symbols, trimmed, relativePath, lineNum
       exported: hasExport(trimmed),
       signal: pendingRoute ? `route handler for ${pendingRoute}` : "function expression",
     }));
-    return;
+    if (hasExport(trimmed)) {
+      relationships.push(createRawRelationship({
+        sourceName: moduleName(relativePath),
+        sourceType: "module",
+        relationshipType: "export",
+        targetName: name,
+        sourcePath: relativePath,
+        lineNumber,
+        signal: "exported function expression",
+      }));
+    }
+    return {
+      name,
+      type: sourceType,
+    };
   }
 
   symbols.push(createSymbol({
@@ -379,6 +546,18 @@ function addJavaScriptFunctionOrVariable(symbols, trimmed, relativePath, lineNum
     exported: hasExport(trimmed),
     signal: `${declaration} declaration`,
   }));
+  if (hasExport(trimmed)) {
+    relationships.push(createRawRelationship({
+      sourceName: moduleName(relativePath),
+      sourceType: "module",
+      relationshipType: "export",
+      targetName: name,
+      sourcePath: relativePath,
+      lineNumber,
+      signal: "exported variable declaration",
+    }));
+  }
+  return null;
 }
 
 function indexPython(relativePath, contents) {
@@ -399,6 +578,9 @@ function indexPython(relativePath, contents) {
   let currentClass = null;
   let classIndent = -1;
   let pendingRoute = null;
+  let currentSource = moduleName(relativePath);
+  let currentSourceType = "module";
+  const relationships = [];
 
   lines.forEach((line, index) => {
     const lineNumber = index + 1;
@@ -415,7 +597,7 @@ function indexPython(relativePath, contents) {
       classIndent = -1;
     }
 
-    addPythonImport(symbols, trimmed, relativePath, lineNumber, language);
+    addPythonImport(symbols, relationships, trimmed, relativePath, lineNumber, language);
 
     const route = pythonRoute(trimmed);
 
@@ -428,6 +610,16 @@ function indexPython(relativePath, contents) {
         language,
         parent: moduleName(relativePath),
         exported: false,
+        signal: route.signal,
+      }));
+      relationships.push(createRawRelationship({
+        sourceName: moduleName(relativePath),
+        sourceType: "module",
+        relationshipType: "api-endpoint-to-handler",
+        targetName: UNKNOWN,
+        targetPath: relativePath,
+        sourcePath: relativePath,
+        lineNumber,
         signal: route.signal,
       }));
       pendingRoute = route.name;
@@ -445,6 +637,16 @@ function indexPython(relativePath, contents) {
         exported: false,
         signal: "middleware decorator",
       }));
+      relationships.push(createRawRelationship({
+        sourceName: moduleName(relativePath),
+        sourceType: "module",
+        relationshipType: "middleware-usage",
+        targetName: "middleware",
+        targetPath: relativePath,
+        sourcePath: relativePath,
+        lineNumber,
+        signal: "middleware decorator",
+      }));
       return;
     }
 
@@ -453,6 +655,7 @@ function indexPython(relativePath, contents) {
     if (classMatch) {
       currentClass = classMatch[1];
       classIndent = indent;
+      const baseClass = pythonBaseClass(trimmed);
       symbols.push(createSymbol({
         name: classMatch[1],
         type: "class",
@@ -463,7 +666,20 @@ function indexPython(relativePath, contents) {
         exported: pythonExportedName(classMatch[1]),
         signal: "class declaration",
       }));
+      if (baseClass) {
+        relationships.push(createRawRelationship({
+          sourceName: classMatch[1],
+          sourceType: "class",
+          relationshipType: "class-inheritance",
+          targetName: baseClass,
+          sourcePath: relativePath,
+          lineNumber,
+          signal: "base class declaration",
+        }));
+      }
       pendingRoute = null;
+      currentSource = classMatch[1];
+      currentSourceType = "class";
       return;
     }
 
@@ -481,17 +697,35 @@ function indexPython(relativePath, contents) {
         exported: currentClass ? false : pythonExportedName(name),
         signal: pendingRoute ? `route handler for ${pendingRoute}` : "function declaration",
       }));
+      if (pendingRoute) {
+        relationships.push(createRawRelationship({
+          sourceName: moduleName(relativePath),
+          sourceType: "module",
+          relationshipType: "api-endpoint-to-handler",
+          targetName: name,
+          targetPath: relativePath,
+          sourcePath: relativePath,
+          lineNumber,
+          signal: `route handler for ${pendingRoute}`,
+        }));
+      }
+      currentSource = name;
+      currentSourceType = currentClass ? "method" : "function";
       pendingRoute = null;
       return;
     }
 
+    addPythonCallRelationships(relationships, trimmed, relativePath, lineNumber, currentSource, currentSourceType);
     addPythonVariable(symbols, trimmed, relativePath, lineNumber, language);
   });
 
-  return symbols;
+  return {
+    symbols,
+    relationships,
+  };
 }
 
-function addPythonImport(symbols, trimmed, relativePath, lineNumber, language) {
+function addPythonImport(symbols, relationships, trimmed, relativePath, lineNumber, language) {
   const importMatch = trimmed.match(/^import\s+([A-Za-z_][\w.]*)/) || trimmed.match(/^from\s+([A-Za-z_][\w.]*)\s+import\s+/);
 
   if (!importMatch) {
@@ -506,7 +740,27 @@ function addPythonImport(symbols, trimmed, relativePath, lineNumber, language) {
     language,
     parent: moduleName(relativePath),
     exported: false,
+      signal: "import declaration",
+    }));
+  relationships.push(createRawRelationship({
+    sourceName: moduleName(relativePath),
+    sourceType: "module",
+    relationshipType: "import",
+    targetName: importMatch[1],
+    targetPath: importMatch[1],
+    sourcePath: relativePath,
+    lineNumber,
     signal: "import declaration",
+  }));
+  relationships.push(createRawRelationship({
+    sourceName: moduleName(relativePath),
+    sourceType: "module",
+    relationshipType: "module-dependency",
+    targetName: importMatch[1],
+    targetPath: importMatch[1],
+    sourcePath: relativePath,
+    lineNumber,
+    signal: "module import dependency",
   }));
 }
 
@@ -529,6 +783,82 @@ function addPythonVariable(symbols, trimmed, relativePath, lineNumber, language)
     exported: pythonExportedName(name),
     signal: "assignment",
   }));
+}
+
+function indexConfigurationRelationships(scanRoot, relativePath) {
+  if (path.basename(relativePath) !== "package.json" && path.basename(relativePath) !== "tsconfig.json") {
+    return [];
+  }
+
+  let parsed;
+
+  try {
+    parsed = JSON.parse(fs.readFileSync(path.join(scanRoot, relativePath), "utf8"));
+  } catch (error) {
+    return [];
+  }
+
+  if (path.basename(relativePath) === "package.json") {
+    return packageJsonRelationships(relativePath, parsed);
+  }
+
+  return tsconfigRelationships(relativePath, parsed);
+}
+
+function packageJsonRelationships(relativePath, packageJson) {
+  const relationships = [];
+
+  if (typeof packageJson.main === "string") {
+    relationships.push(createRawRelationship({
+      sourceName: relativePath,
+      sourceType: "configuration",
+      relationshipType: "configuration-reference",
+      targetName: packageJson.main,
+      targetPath: packageJson.main,
+      sourcePath: relativePath,
+      lineNumber: 1,
+      signal: "package.json main",
+    }));
+  }
+
+  if (packageJson.scripts && typeof packageJson.scripts === "object" && !Array.isArray(packageJson.scripts)) {
+    for (const [name, command] of Object.entries(packageJson.scripts).sort(compareEntries)) {
+      if (typeof command !== "string" || command.trim() === "") {
+        continue;
+      }
+
+      relationships.push(createRawRelationship({
+        sourceName: relativePath,
+        sourceType: "configuration",
+        relationshipType: "configuration-reference",
+        targetName: name,
+        sourcePath: relativePath,
+        lineNumber: 1,
+        signal: `package.json scripts.${name}`,
+      }));
+    }
+  }
+
+  return relationships;
+}
+
+function tsconfigRelationships(relativePath, tsconfig) {
+  const relationships = [];
+
+  if (typeof tsconfig.extends === "string") {
+    relationships.push(createRawRelationship({
+      sourceName: relativePath,
+      sourceType: "configuration",
+      relationshipType: "configuration-reference",
+      targetName: tsconfig.extends,
+      targetPath: tsconfig.extends,
+      sourcePath: relativePath,
+      lineNumber: 1,
+      signal: "tsconfig extends",
+    }));
+  }
+
+  return relationships;
 }
 
 function addRouteSymbolsForPath(symbols, relativePath, language) {
@@ -586,6 +916,7 @@ function javascriptRoute(trimmed) {
   return {
     name: `${match[2].toUpperCase()} ${match[3]}`,
     type: match[3].startsWith("/api") || match[2] !== "use" ? "api-endpoint" : "route",
+    handler: routeHandlerArgument(trimmed),
     signal: `${match[1]}.${match[2]} route declaration`,
   };
 }
@@ -602,6 +933,313 @@ function pythonRoute(trimmed) {
     type: "api-endpoint",
     signal: "route decorator",
   };
+}
+
+function routeHandlerArgument(trimmed) {
+  const match = trimmed.match(/,\s*([A-Za-z_$][\w$]*)\s*(?:[,)]|$)/);
+  return match ? match[1] : UNKNOWN;
+}
+
+function javascriptInheritance(trimmed) {
+  const extendsMatch = trimmed.match(/\bextends\s+([A-Za-z_$][\w$]*)/);
+  const implementsMatch = trimmed.match(/\bimplements\s+([A-Za-z_$][\w$,\s]*)/);
+
+  return {
+    extendsName: extendsMatch ? extendsMatch[1] : null,
+    implementsNames: implementsMatch
+      ? implementsMatch[1]
+          .split(",")
+          .map((entry) => entry.trim())
+          .filter(Boolean)
+      : [],
+  };
+}
+
+function pythonBaseClass(trimmed) {
+  const match = trimmed.match(/^class\s+[A-Za-z_]\w*\(([^)]+)\)/);
+
+  if (!match) {
+    return null;
+  }
+
+  const baseClass = match[1]
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)[0];
+
+  return baseClass || null;
+}
+
+function addJavaScriptCallRelationships(relationships, trimmed, relativePath, lineNumber, sourceName, sourceType) {
+  if (isDeclarationLine(trimmed)) {
+    return;
+  }
+
+  const calls = uniqueSorted(
+    Array.from(trimmed.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g))
+      .filter((match) => trimmed[Math.max(match.index - 1, 0)] !== ".")
+      .map((match) => match[1])
+      .filter((name) => !JS_NON_CALL_IDENTIFIERS.has(name)),
+  );
+
+  for (const call of calls) {
+    relationships.push(createRawRelationship({
+      sourceName,
+      sourceType,
+      relationshipType: "function-call",
+      targetName: call,
+      sourcePath: relativePath,
+      lineNumber,
+      signal: `direct call expression: ${call}`,
+    }));
+  }
+}
+
+function addPythonCallRelationships(relationships, trimmed, relativePath, lineNumber, sourceName, sourceType) {
+  if (/^(?:async\s+)?def\s+/.test(trimmed) || /^class\s+/.test(trimmed) || /^@/.test(trimmed)) {
+    return;
+  }
+
+  const calls = uniqueSorted(
+    Array.from(trimmed.matchAll(/\b([A-Za-z_]\w*)\s*\(/g))
+      .map((match) => match[1])
+      .filter((name) => !["if", "for", "while", "return"].includes(name)),
+  );
+
+  for (const call of calls) {
+    relationships.push(createRawRelationship({
+      sourceName,
+      sourceType,
+      relationshipType: "function-call",
+      targetName: call,
+      sourcePath: relativePath,
+      lineNumber,
+      signal: `direct call expression: ${call}`,
+    }));
+  }
+}
+
+function addReactUsageRelationships(relationships, trimmed, relativePath, lineNumber, sourceName, sourceType) {
+  if (!/\.[jt]sx$/.test(relativePath)) {
+    return;
+  }
+
+  const components = uniqueSorted(
+    Array.from(trimmed.matchAll(/<([A-Z][A-Za-z0-9_]*)\b/g)).map((match) => match[1]),
+  );
+  const hooks = uniqueSorted(
+    Array.from(trimmed.matchAll(/\b(use[A-Z][A-Za-z0-9_]*)\s*\(/g)).map((match) => match[1]),
+  );
+
+  for (const component of components) {
+    relationships.push(createRawRelationship({
+      sourceName,
+      sourceType,
+      relationshipType: "react-component-usage",
+      targetName: component,
+      sourcePath: relativePath,
+      lineNumber,
+      signal: `JSX component usage: ${component}`,
+    }));
+  }
+
+  for (const hook of hooks) {
+    relationships.push(createRawRelationship({
+      sourceName,
+      sourceType,
+      relationshipType: "hook-usage",
+      targetName: hook,
+      sourcePath: relativePath,
+      lineNumber,
+      signal: `hook call: ${hook}`,
+    }));
+  }
+}
+
+function isDeclarationLine(trimmed) {
+  return (
+    /^(?:export\s+)?(?:async\s+)?function\s+/.test(trimmed) ||
+    /^(?:export\s+)?(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=/.test(trimmed) ||
+    /^class\s+/.test(trimmed) ||
+    /^import\s+/.test(trimmed)
+  );
+}
+
+function createRawRelationship(input) {
+  return {
+    sourceName: stringOrUnknown(input.sourceName),
+    sourceType: stringOrUnknown(input.sourceType),
+    relationshipType: stringOrUnknown(input.relationshipType),
+    targetName: stringOrUnknown(input.targetName),
+    targetPath: input.targetPath ? stringOrUnknown(input.targetPath).replace(/\\/g, "/") : UNKNOWN,
+    sourcePath: normalizeRelativePath(input.sourcePath),
+    lineNumber: normalizeLineNumber(input.lineNumber),
+    evidence: {
+      source: normalizeRelativePath(input.sourcePath),
+      signal: stringOrUnknown(input.signal),
+    },
+    confidenceState: input.confidenceState || "VERIFIED",
+  };
+}
+
+function buildRelationships(rawRelationships, symbols, files, repositoryRoot) {
+  const knownPaths = new Set(files.map((file) => file.path));
+  const relationshipsByFingerprint = new Map();
+
+  for (const rawRelationship of rawRelationships) {
+    if (isExcludedPath(rawRelationship.sourcePath) || isExcludedPath(rawRelationship.targetPath)) {
+      continue;
+    }
+
+    const sourceSymbol = resolveSourceSymbol(rawRelationship, symbols);
+    const targetResolution = resolveTarget(rawRelationship, symbols, knownPaths);
+    const relationship = {
+      relationshipId: UNKNOWN,
+      sourceSymbol: sourceSymbol || UNKNOWN,
+      relationshipType: rawRelationship.relationshipType,
+      targetSymbol: targetResolution.symbol || UNKNOWN,
+      targetPath: targetResolution.path,
+      sourcePath: rawRelationship.sourcePath,
+      lineNumber: rawRelationship.lineNumber,
+      evidence: rawRelationship.evidence,
+      confidenceState: relationshipConfidence(rawRelationship, sourceSymbol, targetResolution),
+    };
+    relationship.relationshipId = relationshipId(relationship, repositoryRoot);
+
+    const fingerprint = relationshipFingerprint(relationship);
+
+    if (!relationshipsByFingerprint.has(fingerprint)) {
+      relationshipsByFingerprint.set(fingerprint, relationship);
+    }
+  }
+
+  return Array.from(relationshipsByFingerprint.values()).sort(compareRelationships);
+}
+
+function resolveSourceSymbol(rawRelationship, symbols) {
+  return (
+    symbols.find(
+      (symbol) =>
+        symbol.path === rawRelationship.sourcePath &&
+        symbol.name === rawRelationship.sourceName &&
+        symbol.type === rawRelationship.sourceType,
+    ) ||
+    symbols.find((symbol) => symbol.path === rawRelationship.sourcePath && symbol.name === rawRelationship.sourceName) ||
+    symbols.find((symbol) => symbol.path === rawRelationship.sourcePath && symbol.type === "module")
+  );
+}
+
+function resolveTarget(rawRelationship, symbols, knownPaths) {
+  const targetPath = resolveTargetPath(rawRelationship, knownPaths);
+  const targetSymbol =
+    symbols.find((symbol) => targetPath !== UNKNOWN && symbol.path === targetPath && symbol.name === rawRelationship.targetName) ||
+    symbols.find((symbol) => targetPath !== UNKNOWN && symbol.path === targetPath && symbol.type === "module") ||
+    symbols.find((symbol) => symbol.path === rawRelationship.sourcePath && symbol.name === rawRelationship.targetName) ||
+    symbols.find((symbol) => symbol.name === rawRelationship.targetName);
+
+  return {
+    symbol: targetSymbol || null,
+    path: targetPath !== UNKNOWN ? targetPath : targetSymbol ? targetSymbol.path : UNKNOWN,
+  };
+}
+
+function resolveTargetPath(rawRelationship, knownPaths) {
+  if (rawRelationship.targetPath === UNKNOWN) {
+    return UNKNOWN;
+  }
+
+  if (knownPaths.has(rawRelationship.targetPath)) {
+    return rawRelationship.targetPath;
+  }
+
+  if (!rawRelationship.targetPath.startsWith(".")) {
+    return UNKNOWN;
+  }
+
+  const sourceDirectory = path.posix.dirname(rawRelationship.sourcePath);
+  const withoutExtension = path.posix.normalize(path.posix.join(sourceDirectory, rawRelationship.targetPath));
+  const candidates = [
+    withoutExtension,
+    `${withoutExtension}.js`,
+    `${withoutExtension}.jsx`,
+    `${withoutExtension}.mjs`,
+    `${withoutExtension}.ts`,
+    `${withoutExtension}.tsx`,
+    `${withoutExtension}.py`,
+    `${withoutExtension}/index.js`,
+    `${withoutExtension}/index.jsx`,
+    `${withoutExtension}/index.ts`,
+    `${withoutExtension}/index.tsx`,
+  ].map((candidate) => normalizeRelativePath(candidate));
+
+  return candidates.find((candidate) => knownPaths.has(candidate)) || UNKNOWN;
+}
+
+function relationshipConfidence(rawRelationship, sourceSymbol, targetResolution) {
+  if (rawRelationship.confidenceState === UNKNOWN) {
+    return UNKNOWN;
+  }
+
+  if (rawRelationship.relationshipType === "function-call" && !targetResolution.symbol) {
+    return UNKNOWN;
+  }
+
+  if (
+    ["class-inheritance", "interface-implementation", "react-component-usage", "hook-usage"].includes(
+      rawRelationship.relationshipType,
+    ) &&
+    !targetResolution.symbol
+  ) {
+    return UNKNOWN;
+  }
+
+  return sourceSymbol ? "VERIFIED" : UNKNOWN;
+}
+
+function relationshipId(relationship, repositoryRoot) {
+  return `relationship-${crypto
+    .createHash("sha256")
+    .update(stableSerialize({
+      repositoryRoot: path.resolve(repositoryRoot),
+      fingerprint: relationshipFingerprint(relationship),
+    }))
+    .digest("hex")
+    .slice(0, 16)}`;
+}
+
+function relationshipFingerprint(relationship) {
+  return stableSerialize({
+    sourcePath: relationship.sourcePath,
+    sourceSymbol: symbolReferenceKey(relationship.sourceSymbol),
+    relationshipType: relationship.relationshipType,
+    targetSymbol: symbolReferenceKey(relationship.targetSymbol),
+    targetPath: relationship.targetPath,
+    lineNumber: relationship.lineNumber,
+  });
+}
+
+function symbolReferenceKey(symbol) {
+  if (!symbol || symbol === UNKNOWN) {
+    return UNKNOWN;
+  }
+
+  return stableSerialize({
+    symbolId: symbol.symbolId,
+    name: symbol.name,
+    type: symbol.type,
+    path: symbol.path,
+  });
+}
+
+function compareRelationships(left, right) {
+  return (
+    left.sourcePath.localeCompare(right.sourcePath) ||
+    compareLineNumbers(left.lineNumber, right.lineNumber) ||
+    left.relationshipType.localeCompare(right.relationshipType) ||
+    stableSerialize(left.sourceSymbol).localeCompare(stableSerialize(right.sourceSymbol)) ||
+    stableSerialize(left.targetSymbol).localeCompare(stableSerialize(right.targetSymbol)) ||
+    left.relationshipId.localeCompare(right.relationshipId)
+  );
 }
 
 function functionLikeSymbol(input) {
@@ -808,8 +1446,16 @@ function stringOrUnknown(value) {
   return text === "" ? UNKNOWN : text;
 }
 
+function uniqueSorted(values) {
+  return Array.from(new Set(values)).sort();
+}
+
 function comparePathEntries(left, right) {
   return left.path.localeCompare(right.path);
+}
+
+function compareEntries(left, right) {
+  return left[0].localeCompare(right[0]);
 }
 
 function compareSymbols(left, right) {

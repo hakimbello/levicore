@@ -141,7 +141,37 @@ function factsFromProjectSummary(summary) {
     ...factsFromValue("tests", summary.tests),
     ...factsFromValue("majorDirectories", summary.majorDirectories),
     ...factsFromValue("dependencies", summary.dependencies),
+    ...factsFromValue("structuralRelationships", summary.structuralRelationships),
+    ...relationshipFactsFromStructuralIndex(summary.structuralIndex),
   ].sort(compareFacts);
+}
+
+function relationshipFactsFromStructuralIndex(structuralIndex) {
+  if (!isPlainObject(structuralIndex) || !Array.isArray(structuralIndex.relationships)) {
+    return [];
+  }
+
+  return structuralIndex.relationships
+    .filter((relationship) => isPlainObject(relationship))
+    .map((relationship) => {
+      const evidence = extractEvidence(relationship.evidence);
+
+      if (evidence.length === 0) {
+        return null;
+      }
+
+      return {
+        category: "structuralRelationship",
+        value: {
+          relationshipType: stringOrUnknown(relationship.relationshipType),
+          sourcePath: stringOrUnknown(relationship.sourcePath),
+          targetPath: stringOrUnknown(relationship.targetPath),
+          confidenceState: stringOrUnknown(relationship.confidenceState),
+        },
+        evidence,
+      };
+    })
+    .filter(Boolean);
 }
 
 function factsFromValue(category, value) {

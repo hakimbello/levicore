@@ -23,7 +23,51 @@ function summarizeProject(scanResult) {
       files: projectFiles,
     }),
     structuralIndex: scanResult.structuralIndex || UNKNOWN,
+    structuralRelationships: summarizeStructuralRelationships(scanResult.structuralIndex),
   };
+}
+
+function summarizeStructuralRelationships(structuralIndex) {
+  if (!structuralIndex || !Array.isArray(structuralIndex.relationships) || structuralIndex.relationships.length === 0) {
+    return UNKNOWN;
+  }
+
+  const counts = new Map();
+
+  for (const relationship of structuralIndex.relationships) {
+    if (!relationship || typeof relationship.relationshipType !== "string") {
+      continue;
+    }
+
+    if (!counts.has(relationship.relationshipType)) {
+      counts.set(relationship.relationshipType, {
+        name: relationship.relationshipType,
+        count: 0,
+        evidence: [],
+      });
+    }
+
+    const entry = counts.get(relationship.relationshipType);
+    entry.count += 1;
+
+    if (relationship.evidence && typeof relationship.evidence.source === "string") {
+      entry.evidence.push({
+        source: relationship.evidence.source,
+        signal: relationship.evidence.signal || relationship.relationshipType,
+      });
+    }
+  }
+
+  if (counts.size === 0) {
+    return UNKNOWN;
+  }
+
+  return Array.from(counts.values())
+    .map((entry) => ({
+      ...entry,
+      evidence: entry.evidence.slice(0, 10),
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
 }
 
 function summarizeMajorDirectories(files) {

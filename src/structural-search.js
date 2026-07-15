@@ -56,6 +56,55 @@ function searchProjectSummary(options) {
   });
 }
 
+function searchStructuralRelationships(options) {
+  validateOptions(options);
+
+  const structuralIndex = options.structuralIndex;
+
+  if (!isUsableRelationshipIndex(structuralIndex)) {
+    return {
+      status: UNKNOWN,
+      unknown: UNKNOWN,
+      reason: "Structural relationship index is unavailable.",
+      filters: normalizeRelationshipFilters(options.filters || options),
+      count: 0,
+      results: [],
+    };
+  }
+
+  const filters = normalizeRelationshipFilters(options.filters || {});
+  const limit = normalizeLimit(options.limit);
+  const relationships = uniqueRelationships(structuralIndex.relationships)
+    .filter((relationship) => !isExcludedRelationship(relationship))
+    .filter((relationship) => matchesRelationshipFilters(relationship, filters))
+    .map((relationship) => ({
+      rank: rankRelationship(relationship, filters),
+      result: relationshipResult(relationship),
+    }))
+    .sort(compareRankedRelationshipResults)
+    .slice(0, limit);
+
+  return {
+    status: relationships.length > 0 ? "FOUND" : "EMPTY",
+    unknown: relationships.length > 0 ? null : UNKNOWN,
+    filters,
+    count: relationships.length,
+    results: relationships.map((entry) => entry.result),
+  };
+}
+
+function searchProjectSummaryRelationships(options) {
+  validateOptions(options);
+
+  const summary = options.projectSummary || {};
+
+  return searchStructuralRelationships({
+    structuralIndex: options.structuralIndex || summary.structuralIndex,
+    filters: options.filters || {},
+    limit: options.limit,
+  });
+}
+
 function validateOptions(options) {
   if (!isPlainObject(options)) {
     throw new Error("Structural search options are required.");
@@ -64,6 +113,10 @@ function validateOptions(options) {
 
 function isUsableIndex(structuralIndex) {
   return isPlainObject(structuralIndex) && Array.isArray(structuralIndex.symbols);
+}
+
+function isUsableRelationshipIndex(structuralIndex) {
+  return isPlainObject(structuralIndex) && Array.isArray(structuralIndex.relationships);
 }
 
 function normalizeFilters(filters) {
@@ -87,6 +140,18 @@ function normalizeFilters(filters) {
   };
 
   return normalized;
+}
+
+function normalizeRelationshipFilters(filters) {
+  return {
+    relationshipTypes: normalizeTextFilter(filters.relationshipTypes || filters.relationshipType || filters.type),
+    sourceNames: normalizeTextFilter(filters.sourceNames || filters.sourceName || filters.sourceSymbol),
+    targetNames: normalizeTextFilter(filters.targetNames || filters.targetName || filters.targetSymbol),
+    sourcePaths: normalizePathFilter(filters.sourcePaths || filters.sourcePath || filters.path),
+    targetPaths: normalizePathFilter(filters.targetPaths || filters.targetPath),
+    confidenceStates: normalizeTextFilter(filters.confidenceStates || filters.confidenceState || filters.confidence),
+    keywords: normalizeTextFilter(filters.keywords || filters.keyword),
+  };
 }
 
 function normalizeTextFilter(value) {
@@ -234,6 +299,37 @@ function searchResult(symbol) {
   };
 }
 
+function relationshipResult(relationship) {
+  return {
+    sourceSymbol: normalizeSymbolReference(relationship.sourceSymbol),
+    relationshipType: stringOrUnknown(relationship.relationshipType),
+    targetSymbol: normalizeSymbolReference(relationship.targetSymbol),
+    targetPath: stringOrUnknown(relationship.targetPath),
+    sourcePath: stringOrUnknown(relationship.sourcePath),
+    lineNumber: normalizeLineNumber(relationship.lineNumber),
+    evidence: normalizeEvidence(relationship.evidence),
+    confidenceState: stringOrUnknown(relationship.confidenceState),
+  };
+}
+
+function normalizeSymbolReference(symbol) {
+  if (!isPlainObject(symbol)) {
+    return UNKNOWN;
+  }
+
+  return {
+    symbolId: stringOrUnknown(symbol.symbolId),
+    name: stringOrUnknown(symbol.name),
+    type: stringOrUnknown(symbol.type),
+    path: stringOrUnknown(symbol.path),
+    lineNumber: normalizeLineNumber(symbol.lineNumber),
+    language: stringOrUnknown(symbol.language),
+    parent: stringOrUnknown(symbol.parent),
+    exported: Boolean(symbol.exported),
+    evidence: normalizeEvidence(symbol.evidence),
+  };
+}
+
 function rankSymbol(symbol, filters) {
   let rank = 0;
 
@@ -257,6 +353,42 @@ function rankSymbol(symbol, filters) {
   }
 
   return rank;
+}
+
+function rankRelationship(relationship, filters) {
+  let rank = 0;
+
+  rank += rankText(relationship.relationshipType, filters.relationshipTypes, 50);
+  rank += rankText(symbolName(relationship.sourceSymbol), filters.sourceNames, 35);
+  rank += rankText(symbolName(relationship.targetSymbol), filters.targetNames, 35);
+  rank += rankPath(relationship.sourcePath, filters.sourcePaths, 30);
+  rank += rankPath(relationship.targetPath, filters.targetPaths, 30);
+  rank += rankText(relationship.confidenceState, filters.confidenceStates, 20);
+  rank += rankKeywords(relationship, filters.keywords);
+
+  return rank;
+}
+
+function matchesRelationshipFilters(relationship, filters) {
+  return (
+    matchesText(relationship.relationshipType, filters.relationshipTypes) &&
+    matchesText(symbolName(relationship.sourceSymbol), filters.sourceNames) &&
+    matchesText(symbolName(relationship.targetSymbol), filters.targetNames) &&
+    matchesPath(relationship.sourcePath, filters.sourcePaths) &&
+    matchesPath(relationship.targetPath, filters.targetPaths) &&
+    matchesText(relationship.confidenceState, filters.confidenceStates) &&
+    matchesRelationshipKeywords(relationship, filters.keywords)
+  );
+}
+
+function matchesRelationshipKeywords(relationship, keywords) {
+  if (keywords.length === 0) {
+    return true;
+  }
+
+  const haystack = stableSerialize(relationshipResult(relationship)).toLowerCase();
+
+  return keywords.some((keyword) => haystack.includes(keyword.toLowerCase()));
 }
 
 function rankText(value, filters, weight) {
@@ -338,6 +470,31 @@ function uniqueSymbols(symbols) {
   return Array.from(byId.values()).sort(compareSymbols);
 }
 
+function uniqueRelationships(relationships) {
+  const byFingerprint = new Map();
+
+  for (const relationship of relationships) {
+    if (!isPlainObject(relationship) || isExcludedRelationship(relationship)) {
+      continue;
+    }
+
+    const fingerprint = stableSerialize(relationshipResult(relationship));
+
+    if (!byFingerprint.has(fingerprint)) {
+      byFingerprint.set(fingerprint, relationship);
+      continue;
+    }
+
+    const current = byFingerprint.get(fingerprint);
+
+    if (compareRelationships(relationship, current) < 0) {
+      byFingerprint.set(fingerprint, relationship);
+    }
+  }
+
+  return Array.from(byFingerprint.values()).sort(compareRelationships);
+}
+
 function normalizeEvidence(evidence) {
   if (!isPlainObject(evidence)) {
     return {
@@ -356,6 +513,15 @@ function normalizeEvidence(evidence) {
 
 function isExcludedSymbol(symbol) {
   return isExcludedPath(symbol.path) || isExcludedPath(symbol.name) || isExcludedPath(symbol.parent);
+}
+
+function isExcludedRelationship(relationship) {
+  return (
+    isExcludedPath(relationship.sourcePath) ||
+    isExcludedPath(relationship.targetPath) ||
+    isExcludedSymbol(relationship.sourceSymbol) ||
+    isExcludedSymbol(relationship.targetSymbol)
+  );
 }
 
 function isExcludedPath(value) {
@@ -388,6 +554,32 @@ function compareRankedResults(left, right) {
   );
 }
 
+function compareRankedRelationshipResults(left, right) {
+  const leftResult = left.result;
+  const rightResult = right.result;
+
+  return (
+    right.rank - left.rank ||
+    leftResult.sourcePath.localeCompare(rightResult.sourcePath) ||
+    compareLineNumbers(leftResult.lineNumber, rightResult.lineNumber) ||
+    leftResult.relationshipType.localeCompare(rightResult.relationshipType) ||
+    stableSerialize(leftResult.sourceSymbol).localeCompare(stableSerialize(rightResult.sourceSymbol)) ||
+    stableSerialize(leftResult.targetSymbol).localeCompare(stableSerialize(rightResult.targetSymbol)) ||
+    leftResult.targetPath.localeCompare(rightResult.targetPath)
+  );
+}
+
+function compareRelationships(left, right) {
+  return (
+    stringOrUnknown(left.sourcePath).localeCompare(stringOrUnknown(right.sourcePath)) ||
+    compareLineNumbers(left.lineNumber, right.lineNumber) ||
+    stringOrUnknown(left.relationshipType).localeCompare(stringOrUnknown(right.relationshipType)) ||
+    stableSerialize(left.sourceSymbol).localeCompare(stableSerialize(right.sourceSymbol)) ||
+    stableSerialize(left.targetSymbol).localeCompare(stableSerialize(right.targetSymbol)) ||
+    stringOrUnknown(left.targetPath).localeCompare(stringOrUnknown(right.targetPath))
+  );
+}
+
 function compareSymbols(left, right) {
   return (
     stringOrUnknown(left.path).localeCompare(stringOrUnknown(right.path)) ||
@@ -406,6 +598,14 @@ function compareLineNumbers(left, right) {
 
 function normalizeLineNumber(lineNumber) {
   return Number.isInteger(lineNumber) && lineNumber > 0 ? lineNumber : UNKNOWN;
+}
+
+function symbolName(symbol) {
+  if (!isPlainObject(symbol)) {
+    return UNKNOWN;
+  }
+
+  return stringOrUnknown(symbol.name);
 }
 
 function asArray(value) {
@@ -463,5 +663,7 @@ function isPlainObject(value) {
 module.exports = {
   UNKNOWN,
   searchProjectSummary,
+  searchProjectSummaryRelationships,
+  searchStructuralRelationships,
   searchStructuralIndex,
 };
