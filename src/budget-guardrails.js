@@ -9,10 +9,16 @@ function checkBudget(input) {
   const costEstimate = input.costEstimate;
   const budgetCeiling = normalizeBudgetCeiling(input.budgetCeiling);
   const estimatedCost = normalizeEstimatedCost(costEstimate);
+  const exactEstimate = isExactCost(estimatedCost) ? estimatedCost : UNKNOWN;
+  const estimatedCostRange = isCostRange(estimatedCost) ? estimatedCost : UNKNOWN;
   const pricingEvidence = pricingEvidenceFrom(costEstimate);
   const base = {
     provider: costEstimate.selectedProvider,
     model: costEstimate.selectedModel,
+    costClass: costEstimate.costClass,
+    currency: costEstimate.currency,
+    exactEstimate,
+    estimatedCostRange,
     estimatedCost,
     budgetCeiling,
     pricingEvidence,
@@ -23,6 +29,7 @@ function checkBudget(input) {
       ...base,
       status: ALLOWED,
       reason: "Free local execution is within the task spending ceiling.",
+      recommendedNextStep: "Proceed with free local execution.",
     };
   }
 
@@ -31,6 +38,19 @@ function checkBudget(input) {
       ...base,
       status: APPROVAL_REQUIRED,
       reason: "Estimated cost is UNKNOWN, so explicit approval is required before execution.",
+      recommendedNextStep: "Review UNKNOWN pricing evidence and explicitly approve before execution.",
+    };
+  }
+
+  if (
+    estimatedCost.currency !== UNKNOWN &&
+    budgetCeiling.currency !== estimatedCost.currency
+  ) {
+    return {
+      ...base,
+      status: APPROVAL_REQUIRED,
+      reason: "Estimated cost currency differs from the task spending ceiling, so explicit approval is required before execution.",
+      recommendedNextStep: "Review the currency mismatch and explicitly approve before execution.",
     };
   }
 
@@ -40,6 +60,7 @@ function checkBudget(input) {
         ...base,
         status: BLOCKED,
         reason: "Estimated cost exceeds the task spending ceiling.",
+        recommendedNextStep: "Lower the estimated cost or raise the configured task spending ceiling before execution.",
       };
     }
 
@@ -47,6 +68,7 @@ function checkBudget(input) {
       ...base,
       status: ALLOWED,
       reason: "Estimated cost is within the task spending ceiling.",
+      recommendedNextStep: "Proceed with execution.",
     };
   }
 
@@ -55,6 +77,7 @@ function checkBudget(input) {
       ...base,
       status: BLOCKED,
       reason: "Estimated cost range exceeds the task spending ceiling.",
+      recommendedNextStep: "Reduce the expected usage or raise the configured task spending ceiling before execution.",
     };
   }
 
@@ -63,6 +86,7 @@ function checkBudget(input) {
       ...base,
       status: APPROVAL_REQUIRED,
       reason: "Estimated cost range crosses the task spending ceiling, so explicit approval is required before execution.",
+      recommendedNextStep: "Review the estimate range and explicitly approve before execution.",
     };
   }
 
@@ -70,6 +94,7 @@ function checkBudget(input) {
     ...base,
     status: ALLOWED,
     reason: "Estimated cost range is within the task spending ceiling.",
+    recommendedNextStep: "Proceed with execution.",
   };
 }
 
@@ -106,6 +131,14 @@ function exactAmount(costEstimate) {
 
 function isExactCost(estimatedCost) {
   return isPlainObject(estimatedCost) && Number.isFinite(estimatedCost.amount);
+}
+
+function isCostRange(estimatedCost) {
+  return (
+    isPlainObject(estimatedCost) &&
+    Number.isFinite(estimatedCost.min) &&
+    Number.isFinite(estimatedCost.max)
+  );
 }
 
 function validateInput(input) {

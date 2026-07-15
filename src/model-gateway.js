@@ -3,7 +3,7 @@ const {
   validateProviderCostEstimate,
   validateProviderRequest,
 } = require("./model-provider-interface");
-const { ALLOWED, checkBudget } = require("./budget-guardrails");
+const { ALLOWED, BLOCKED, UNKNOWN, checkBudget } = require("./budget-guardrails");
 const { estimateTaskCost } = require("./cost-estimator");
 const { discoverLocalModels: discoverLocalModelEvidence } = require("./local-model-discovery");
 
@@ -66,7 +66,7 @@ function createModelGateway(options) {
     const provider = selectProviderForRequest(request);
     const fallback = selectFallback(provider, providers);
     const costEstimate = estimateTaskCost({ provider, request });
-    const budget = request.budgetCeiling
+    const costDecision = request.budgetCeiling
       ? checkBudget({
           costEstimate,
           budgetCeiling: request.budgetCeiling,
@@ -77,13 +77,28 @@ function createModelGateway(options) {
       provider,
       fallback,
       costEstimate,
-      budget,
-      routing: routingMetadata(provider, fallback, costEstimate, budget),
+      budget: costDecision,
+      costDecision,
+      routing: routingMetadata(provider, fallback, costEstimate, costDecision),
       usage: {
         spent,
         iterations,
       },
     };
+  }
+
+  function estimateCostDecision(request) {
+    validateProviderRequest(request);
+
+    if (!request.budgetCeiling) {
+      throw new Error("Model gateway cost decision budgetCeiling is required.");
+    }
+
+    if (providers.length === 0) {
+      return missingProviderDecision(request.budgetCeiling);
+    }
+
+    return estimateCost(request).costDecision;
   }
 
   async function route(request) {
@@ -119,6 +134,7 @@ function createModelGateway(options) {
   return {
     discoverLocalModels,
     estimateCost,
+    estimateCostDecision,
     getProviders,
     registerProvider,
     route,
@@ -143,6 +159,7 @@ function routingMetadata(provider, fallback, costEstimate, budget) {
     estimatedCostClass: costEstimate.costClass,
     costEstimate,
     budget,
+    costDecision: budget,
     fallback: fallback
       ? {
           model: fallback.model,
@@ -162,6 +179,46 @@ function enforceBudget(budget) {
   }
 
   throw new Error("Model gateway budget ceiling exceeded.");
+}
+
+function missingProviderDecision(budgetCeiling) {
+  return {
+    status: BLOCKED,
+    provider: UNKNOWN,
+    model: UNKNOWN,
+    costClass: UNKNOWN,
+    currency: UNKNOWN,
+    exactEstimate: UNKNOWN,
+    estimatedCostRange: UNKNOWN,
+    estimatedCost: UNKNOWN,
+    budgetCeiling: normalizeBudgetCeiling(budgetCeiling),
+    pricingEvidence: {
+      source: UNKNOWN,
+      currency: UNKNOWN,
+      costClass: UNKNOWN,
+    },
+    reason: "No model providers are registered, so cost cannot be estimated before execution.",
+    recommendedNextStep: "Configure a local or remote provider before execution.",
+  };
+}
+
+function normalizeBudgetCeiling(budgetCeiling) {
+  if (!budgetCeiling || typeof budgetCeiling !== "object" || Array.isArray(budgetCeiling)) {
+    throw new Error("Model gateway cost decision budgetCeiling is required.");
+  }
+
+  if (!Number.isFinite(budgetCeiling.amount) || budgetCeiling.amount < 0) {
+    throw new Error("Model gateway cost decision budgetCeiling amount must be a nonnegative number.");
+  }
+
+  if (typeof budgetCeiling.currency !== "string" || budgetCeiling.currency.trim() === "") {
+    throw new Error("Model gateway cost decision budgetCeiling currency is required.");
+  }
+
+  return {
+    amount: budgetCeiling.amount,
+    currency: budgetCeiling.currency,
+  };
 }
 
 function selectProvider(request, providers) {
