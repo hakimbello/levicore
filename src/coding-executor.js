@@ -162,7 +162,17 @@ function resolveInsideRepository(repositoryRoot, relativePath) {
 }
 
 function normalizeRelativePath(filePath) {
-  return filePath.split(/[\\/]+/).filter(Boolean).join("/");
+  if (typeof filePath !== "string" || filePath.trim() === "" || path.isAbsolute(filePath) || filePath.includes("\0")) {
+    throw new Error("Coding executor path must be relative.");
+  }
+
+  const parts = filePath.split(/[\\/]+/).filter(Boolean);
+
+  if (parts.length === 0 || parts.some((part) => part === "." || part === "..")) {
+    throw new Error("Coding executor path must stay inside active repository.");
+  }
+
+  return parts.join("/");
 }
 
 function enforceTimeLimit(startedAt, maxMilliseconds) {

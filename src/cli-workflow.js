@@ -397,8 +397,6 @@ function restoreProject(repositoryPath, restorePointId, confirmation) {
     confirmation,
   });
 
-  state.restore = restore;
-  saveState(repositoryPath, state);
   return restore;
 }
 
