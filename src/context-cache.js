@@ -1,11 +1,39 @@
 const crypto = require("node:crypto");
+const path = require("node:path");
 
 const UNKNOWN = "UNKNOWN";
 const CACHE_HIT_REASON = "Context cache hit because deterministic context inputs are unchanged.";
 const FIRST_MISS_REASON = "Context cache miss because no cached context exists for this project.";
 const INVALIDATED_REASON = "Context cache miss because deterministic context inputs changed.";
+const CONTROL_CONFIDENCE_STATES = new Set(["APPROVED", "VERIFIED"]);
 const SECRET_KEY_PATTERN = /(api[_-]?key|auth|credential|password|private[_-]?key|secret|token)/i;
 const SECRET_VALUE_PATTERN = /\b(api[_-]?key|password|secret|token)\s*[:=]/i;
+const SECRET_PATH_PATTERN = /(^|\/|[._-])(env|secret|credential|private[-_]?key|api[-_]?key|token)($|\/|[._-])/i;
+const SUPPORTED_EVIDENCE_EXTENSIONS = new Set([
+  ".c",
+  ".cc",
+  ".cpp",
+  ".cs",
+  ".css",
+  ".go",
+  ".h",
+  ".hpp",
+  ".html",
+  ".java",
+  ".js",
+  ".jsx",
+  ".json",
+  ".md",
+  ".mjs",
+  ".py",
+  ".rb",
+  ".rs",
+  ".ts",
+  ".tsx",
+  ".txt",
+  ".yml",
+  ".yaml",
+]);
 
 const cacheByProject = new Map();
 
@@ -52,11 +80,12 @@ function getOrBuildCachedContext(input, buildContext, options = {}) {
 }
 
 function createContextCacheId(input) {
+  const projectId = stringOrUnknown(input.projectId);
   const fingerprint = {
     approvedRequirements: sanitizeForFingerprint(input.approvedRequirements || []),
     budgetConfiguration: sanitizeForFingerprint(input.limits || {}),
-    projectId: stringOrUnknown(input.projectId),
-    projectMemory: sanitizeForFingerprint(input.projectMemory || []),
+    projectId,
+    projectMemory: sanitizeForFingerprint(filterCacheableMemory(input.projectMemory || [], projectId)),
     projectSummary: sanitizeForFingerprint(input.projectSummary || {}),
     taskPlan: sanitizeForFingerprint(input.taskPlan || {}),
   };
@@ -93,6 +122,12 @@ function sanitizeForFingerprint(value) {
     return value;
   }
 
+  if (typeof value.source === "string" && typeof value.signal === "string") {
+    if (isSecretLikePath(value.source) || !isSupportedEvidencePath(value.source)) {
+      return undefined;
+    }
+  }
+
   const sanitized = {};
 
   for (const key of Object.keys(value).sort()) {
@@ -108,6 +143,28 @@ function sanitizeForFingerprint(value) {
   }
 
   return sanitized;
+}
+
+function filterCacheableMemory(records, projectId) {
+  return records.filter((record) => {
+    if (!isPlainObject(record)) {
+      return false;
+    }
+
+    if (!CONTROL_CONFIDENCE_STATES.has(record.confidenceState)) {
+      return false;
+    }
+
+    if (record.projectId !== undefined && record.projectId !== projectId) {
+      return false;
+    }
+
+    if (record.source && record.source.kind === "model-output") {
+      return false;
+    }
+
+    return true;
+  });
 }
 
 function stableSerialize(value) {
@@ -151,6 +208,19 @@ function normalizeCacheTimestamp(timestamp) {
   }
 
   return timestamp.trim();
+}
+
+function isSecretLikePath(filePath) {
+  return SECRET_PATH_PATTERN.test(filePath.replace(/\\/g, "/"));
+}
+
+function isSupportedEvidencePath(filePath) {
+  if (typeof filePath !== "string" || filePath.trim() === "") {
+    return false;
+  }
+
+  const extension = path.extname(filePath).toLowerCase();
+  return extension === "" || SUPPORTED_EVIDENCE_EXTENSIONS.has(extension);
 }
 
 function validateInput(input, buildContext, options) {
