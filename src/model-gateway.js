@@ -1,4 +1,5 @@
 const {
+  isControlledProvider,
   validateProvider,
   validateProviderCostEstimate,
   validateProviderRequest,
@@ -10,6 +11,13 @@ const {
   checkProviderHealth: checkProviderHealthForProviders,
   createFallbackDiagnostics,
 } = require("./provider-health");
+const { createOllamaProvider } = require("./providers/ollama-provider");
+const { createRemoteProvider } = require("./providers/remote-provider");
+
+const DEFAULT_PUBLIC_GATEWAY_LIMITS = {
+  maxSpend: 1,
+  maxIterations: 2,
+};
 
 function createModelGateway(options) {
   validateOptions(options);
@@ -218,6 +226,211 @@ function createModelGateway(options) {
   }
 }
 
+function createPublicModelGateway(options = {}) {
+  validatePublicGatewayOptions(options);
+
+  const registry = createPublicProviderRegistry(options);
+  const gateway = createModelGateway({
+    providers: registry.providers,
+    limits: normalizeGatewayLimits(options.limits),
+  });
+
+  return {
+    ...gateway,
+    getProviderRegistry() {
+      return cloneRegistry(registry);
+    },
+    getPublicProviderState() {
+      return {
+        mode: registry.mode,
+        source: registry.source,
+        registeredProviderCount: registry.providers.length,
+        providerPriorityOrder: registry.providers.map(providerRegistryEntry),
+        configurationIssues: registry.configurationIssues.slice(),
+      };
+    },
+  };
+}
+
+function createPublicProviderRegistry(options = {}) {
+  validatePublicRegistryOptions(options);
+
+  const environment = normalizeEnvironment(options.environment);
+  const configurationIssues = [];
+  const environmentProviders = providersFromEnvironment(environment, configurationIssues);
+  const injectedProviders = normalizeInjectedProviders(options.providers || [], options.testMode === true);
+  const providers = orderProvidersLocalFirst([...environmentProviders, ...injectedProviders]);
+
+  return {
+    mode: options.testMode === true ? "test" : "public",
+    source: "public-provider-registry",
+    providers,
+    configurationIssues,
+  };
+}
+
+function providersFromEnvironment(environment, configurationIssues) {
+  return [
+    ...localProvidersFromEnvironment(environment, configurationIssues),
+    ...remoteProvidersFromEnvironment(environment, configurationIssues),
+  ];
+}
+
+function localProvidersFromEnvironment(environment, configurationIssues) {
+  const model = environmentValue(environment, "LEVI_OLLAMA_MODEL");
+  const endpoint = environmentValue(environment, "LEVI_OLLAMA_ENDPOINT");
+  const name = environmentValue(environment, "LEVI_OLLAMA_PROVIDER_NAME");
+
+  if (!model) {
+    if (endpoint || name) {
+      configurationIssues.push(configurationIssue({
+        providerType: "local",
+        reason: "Ollama provider configuration is incomplete.",
+        missingFields: ["LEVI_OLLAMA_MODEL"],
+      }));
+    }
+
+    return [];
+  }
+
+  try {
+    return [
+      createOllamaProvider({
+        model,
+        endpoint,
+        name,
+      }),
+    ];
+  } catch (error) {
+    configurationIssues.push(configurationIssue({
+      providerType: "local",
+      reason: error.message,
+      missingFields: [],
+    }));
+    return [];
+  }
+}
+
+function remoteProvidersFromEnvironment(environment, configurationIssues) {
+  const endpoint = environmentValue(environment, "LEVI_REMOTE_ENDPOINT");
+  const model = environmentValue(environment, "LEVI_REMOTE_MODEL");
+  const credential = environmentValue(environment, "LEVI_REMOTE_CREDENTIAL");
+  const name = environmentValue(environment, "LEVI_REMOTE_PROVIDER_NAME");
+  const costClass = environmentValue(environment, "LEVI_REMOTE_COST_CLASS");
+  const estimatedCost = environmentValue(environment, "LEVI_REMOTE_ESTIMATED_COST");
+  const configuredFieldNames = [
+    ["LEVI_REMOTE_ENDPOINT", endpoint],
+    ["LEVI_REMOTE_MODEL", model],
+    ["LEVI_REMOTE_CREDENTIAL", credential],
+    ["LEVI_REMOTE_PROVIDER_NAME", name],
+    ["LEVI_REMOTE_COST_CLASS", costClass],
+    ["LEVI_REMOTE_ESTIMATED_COST", estimatedCost],
+  ].filter(([, value]) => value !== undefined);
+
+  if (configuredFieldNames.length === 0) {
+    return [];
+  }
+
+  const missingFields = [
+    ["LEVI_REMOTE_ENDPOINT", endpoint],
+    ["LEVI_REMOTE_MODEL", model],
+    ["LEVI_REMOTE_CREDENTIAL", credential],
+  ].filter(([, value]) => value === undefined).map(([fieldName]) => fieldName);
+
+  if (missingFields.length > 0) {
+    configurationIssues.push(configurationIssue({
+      providerType: "remote",
+      reason: "Remote provider configuration is incomplete.",
+      missingFields,
+    }));
+    return [];
+  }
+
+  try {
+    return [
+      createRemoteProvider({
+        endpoint,
+        model,
+        credential,
+        name,
+        costClass,
+        estimatedCost: estimatedCost === undefined ? undefined : Number(estimatedCost),
+      }),
+    ];
+  } catch (error) {
+    configurationIssues.push(configurationIssue({
+      providerType: "remote",
+      reason: error.message,
+      missingFields: [],
+    }));
+    return [];
+  }
+}
+
+function normalizeInjectedProviders(providers, testMode) {
+  if (providers.length > 0 && !testMode) {
+    throw new Error("Public provider injection is allowed only in explicit test mode.");
+  }
+
+  return providers.map((provider) => {
+    validateProvider(provider);
+
+    if (!isControlledProvider(provider)) {
+      throw new Error("Injected public providers must be marked as controlled test providers.");
+    }
+
+    return provider;
+  });
+}
+
+function orderProvidersLocalFirst(providers) {
+  return providers
+    .map((provider, index) => ({ provider, index }))
+    .sort((left, right) => {
+      if (left.provider.type === right.provider.type) {
+        return left.index - right.index;
+      }
+
+      if (left.provider.type === "local") {
+        return -1;
+      }
+
+      if (right.provider.type === "local") {
+        return 1;
+      }
+
+      return left.index - right.index;
+    })
+    .map((entry) => entry.provider);
+}
+
+function configurationIssue({ providerType, reason, missingFields }) {
+  return {
+    providerType,
+    availability: "MISSING_CONFIGURATION",
+    reason,
+    missingFields,
+  };
+}
+
+function cloneRegistry(registry) {
+  return {
+    mode: registry.mode,
+    source: registry.source,
+    providers: registry.providers.slice(),
+    configurationIssues: registry.configurationIssues.slice(),
+  };
+}
+
+function providerRegistryEntry(provider, index) {
+  return {
+    priority: index + 1,
+    name: provider.name,
+    type: provider.type,
+    model: provider.model,
+  };
+}
+
 function routingMetadata(provider, fallback, costEstimate, budget) {
   return {
     selectedModel: provider.model,
@@ -359,7 +572,77 @@ function validateOptions(options) {
     throw new Error("Model gateway maxIterations limit is required.");
   }
 }
+
+function validatePublicGatewayOptions(options) {
+  validatePublicRegistryOptions(options);
+
+  if (options.limits !== undefined) {
+    validateLimits(options.limits);
+  }
+}
+
+function validatePublicRegistryOptions(options) {
+  if (!options || typeof options !== "object" || Array.isArray(options)) {
+    throw new Error("Public provider registry options must be an object.");
+  }
+
+  if (options.environment !== undefined && (!options.environment || typeof options.environment !== "object")) {
+    throw new Error("Public provider registry environment must be an object.");
+  }
+
+  if (options.providers !== undefined && !Array.isArray(options.providers)) {
+    throw new Error("Public provider registry providers must be an array.");
+  }
+
+  if (options.testMode !== undefined && typeof options.testMode !== "boolean") {
+    throw new Error("Public provider registry testMode must be boolean.");
+  }
+}
+
+function normalizeGatewayLimits(limits) {
+  const normalized = limits || DEFAULT_PUBLIC_GATEWAY_LIMITS;
+  validateLimits(normalized);
+  return {
+    maxSpend: normalized.maxSpend,
+    maxIterations: normalized.maxIterations,
+  };
+}
+
+function validateLimits(limits) {
+  if (!limits || typeof limits !== "object" || Array.isArray(limits)) {
+    throw new Error("Model gateway limits are required.");
+  }
+
+  if (!Number.isFinite(limits.maxSpend) || limits.maxSpend < 0) {
+    throw new Error("Model gateway maxSpend limit is required.");
+  }
+
+  if (!Number.isInteger(limits.maxIterations) || limits.maxIterations < 1) {
+    throw new Error("Model gateway maxIterations limit is required.");
+  }
+}
+
+function normalizeEnvironment(environment) {
+  if (environment === undefined) {
+    return process.env;
+  }
+
+  return environment;
+}
+
+function environmentValue(environment, fieldName) {
+  const value = environment[fieldName];
+
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
 module.exports = {
+  createPublicModelGateway,
+  createPublicProviderRegistry,
   createModelGateway,
   discoverLocalModels: discoverLocalModelEvidence,
 };

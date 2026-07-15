@@ -1,4 +1,4 @@
-const { createModelGateway } = require("./model-gateway");
+const { createPublicModelGateway } = require("./model-gateway");
 const { UNKNOWN } = require("./local-model-discovery");
 
 const READY = "READY";
@@ -8,18 +8,22 @@ const NOT_READY = "NOT_READY";
 function createLocalReadinessReport(options = {}) {
   validateOptions(options);
 
-  const gateway = options.modelGateway || createModelGateway({
+  const gateway = options.modelGateway || createPublicModelGateway({
+    environment: options.environment,
     providers: options.providers || [],
+    testMode: options.testMode,
     limits: {
       maxSpend: 0,
       maxIterations: 1,
     },
   });
+  const providerRegistry =
+    typeof gateway.getProviderRegistry === "function" ? gateway.getProviderRegistry() : null;
   const discoveryOptions = options.discoveryOptions || {};
   const discovery = gateway.discoverLocalModels(discoveryOptions);
   const ollama = discovery.runtimes.ollama;
   const modelSummary = summarizeModels(ollama);
-  const providers = summarizeProviders(gateway.getProviders(), ollama);
+  const providers = summarizeProviders(gateway.getProviders(), ollama, providerRegistry);
   const overallReadiness = determineOverallReadiness({
     ollama,
     providers,
@@ -208,7 +212,7 @@ function checkRequiredModelVerification(readiness) {
   });
 }
 
-function summarizeProviders(providers, ollama) {
+function summarizeProviders(providers, ollama, providerRegistry) {
   const installedModels = new Set(ollama.models.map((model) => model.name));
   const registered = providers.map((provider, index) => ({
     name: provider.name,
@@ -229,6 +233,9 @@ function summarizeProviders(providers, ollama) {
     evidence: {
       source: "Model Gateway provider registry",
       registeredProviderCount: registered.length,
+      registryMode: providerRegistry ? providerRegistry.mode : "direct-gateway",
+      registrySource: providerRegistry ? providerRegistry.source : "provided-model-gateway",
+      configurationIssues: providerRegistry ? providerRegistry.configurationIssues : [],
     },
   };
 }
@@ -560,6 +567,14 @@ function validateOptions(options) {
 
   if (options.providers !== undefined && !Array.isArray(options.providers)) {
     throw new Error("Local readiness providers must be an array.");
+  }
+
+  if (options.environment !== undefined && (!options.environment || typeof options.environment !== "object")) {
+    throw new Error("Local readiness environment must be an object.");
+  }
+
+  if (options.testMode !== undefined && typeof options.testMode !== "boolean") {
+    throw new Error("Local readiness testMode must be boolean.");
   }
 
   if (

@@ -7,7 +7,7 @@ const { buildContext } = require("./context-builder");
 const { createContextPreview } = require("./context-preview");
 const { createMemoryStore } = require("./memory-store");
 const { createLocalReadinessReport } = require("./local-readiness-check");
-const { createModelGateway } = require("./model-gateway");
+const { createPublicModelGateway } = require("./model-gateway");
 const { summarizeProject } = require("./project-summary");
 const { scanRepository } = require("./repository-scanner");
 const { applySafePatch } = require("./safe-patch");
@@ -224,15 +224,29 @@ function executeApprovedPlan(repositoryPath) {
     return state.execution;
   }
 
-  const repositorySummary = summarizeProject(scanRepository(repositoryPath));
-  const memoryStore = createMemoryStore(path.join(repositoryPath, ".levi", "memory.json"));
-  const gateway = createModelGateway({
-    providers: [createCliLocalProvider(repositoryPath, state.plan)],
+  const gateway = createPublicModelGateway({
     limits: {
       maxSpend: 1,
       maxIterations: 2,
     },
   });
+  const readiness = createLocalReadinessReport({ modelGateway: gateway });
+  const providerGate = publicExecutionProviderGate(readiness);
+  const readinessSummary = summarizeExecutionReadiness(readiness);
+
+  if (!providerGate.ok) {
+    state.execution = {
+      status: "FAILED",
+      error: providerGate.reason,
+      providerState: readiness.providers,
+      readiness: readinessSummary,
+    };
+    saveState(repositoryPath, state);
+    return state.execution;
+  }
+
+  const repositorySummary = summarizeProject(scanRepository(repositoryPath));
+  const memoryStore = createMemoryStore(path.join(repositoryPath, ".levi", "memory.json"));
   const pipeline = createCodeGenerationPipeline({ modelGateway: gateway });
 
   return pipeline
@@ -288,11 +302,15 @@ function executeApprovedPlan(repositoryPath) {
       state.memoryRecord = memoryRecord;
       state.execution = {
         status: report.status,
+        providerState: readiness.providers,
+        readiness: readinessSummary,
       };
       saveState(repositoryPath, state);
 
       return {
         status: report.status,
+        providerState: readiness.providers,
+        readiness: readinessSummary,
         generation,
         patch,
         validation,
@@ -304,6 +322,8 @@ function executeApprovedPlan(repositoryPath) {
       state.execution = {
         status: "FAILED",
         error: error.message,
+        providerState: readiness.providers,
+        readiness: readinessSummary,
       };
       saveState(repositoryPath, state);
       return state.execution;
@@ -470,42 +490,69 @@ function quoteCommandArg(value) {
   return `"${value.replace(/"/g, '\\"')}"`;
 }
 
-function createCliLocalProvider(repositoryPath, taskPlan) {
+function publicExecutionProviderGate(readiness) {
+  const providerState = readiness.providers;
+
+  if (!providerState || !Array.isArray(providerState.registered)) {
+    return {
+      ok: false,
+      reason: "Public execution cannot start because provider readiness state is unavailable.",
+    };
+  }
+
+  if (providerState.registered.length === 0) {
+    return {
+      ok: false,
+      reason: "Public execution cannot start because no usable model provider is registered.",
+    };
+  }
+
+  const readyLocalProvider = providerState.registered.find(
+    (provider) => provider.type === "local" && provider.status === "READY",
+  );
+
+  if (readyLocalProvider) {
+    return {
+      ok: true,
+      reason: `Local provider ${readyLocalProvider.name} is ready.`,
+    };
+  }
+
+  const remoteProvider = providerState.registered.find((provider) => provider.type === "remote");
+
+  if (remoteProvider) {
+    return {
+      ok: true,
+      reason: `Remote provider ${remoteProvider.name} is configured for fallback or execution.`,
+    };
+  }
+
+  const unknownLocalProvider = providerState.registered.find(
+    (provider) => provider.type === "local" && provider.status === "UNKNOWN",
+  );
+
+  if (unknownLocalProvider) {
+    return {
+      ok: false,
+      reason:
+        "Public execution cannot start because local provider readiness is UNKNOWN and no remote fallback is registered.",
+    };
+  }
+
   return {
-    name: "levi-local-planned-provider",
-    type: "local",
-    model: "levi-local-structured-operation",
-    reason: "Local structured provider for the approved CLI assistant pipeline.",
-    estimateCost() {
-      return {
-        amount: 0,
-        costClass: "free-local",
-      };
-    },
-    async sendRequest() {
-      return {
-        content: JSON.stringify({
-          operations: taskPlan.expectedFiles.map((expectedFile) => plannedOperation(repositoryPath, expectedFile)),
-        }),
-        finishReason: "stop",
-        usage: {
-          inputTokens: 0,
-          outputTokens: 0,
-        },
-      };
-    },
+    ok: false,
+    reason:
+      "Public execution cannot start because registered local providers are unavailable and no remote fallback is registered.",
   };
 }
 
-function plannedOperation(repositoryPath, expectedFile) {
-  const targetPath = path.join(repositoryPath, expectedFile);
-  const exists = fs.existsSync(targetPath);
-  const content = exists ? fs.readFileSync(targetPath, "utf8") : "";
-
+function summarizeExecutionReadiness(readiness) {
   return {
-    type: exists ? "update" : "create",
-    path: expectedFile,
-    content: nextContent(expectedFile, content),
+    overallReadiness: readiness.overallReadiness,
+    registeredProviderCount: readiness.providers.evidence.registeredProviderCount,
+    defaultProvider: readiness.providers.defaultProvider,
+    availableProviders: readiness.providers.available,
+    configurationIssues: readiness.providers.evidence.configurationIssues,
   };
 }
 
@@ -516,39 +563,6 @@ function plannedOperationSummary(repositoryPath, expectedFile) {
     type: fs.existsSync(targetPath) ? "update" : "create",
     path: expectedFile,
   };
-}
-
-function nextContent(expectedFile, content) {
-  const marker = markerForFile(expectedFile);
-
-  if (content.includes(marker.trim())) {
-    return content;
-  }
-
-  const separator = content === "" || content.endsWith("\n") ? "" : "\n";
-  return `${content}${separator}${marker}`;
-}
-
-function markerForFile(expectedFile) {
-  const extension = path.extname(expectedFile).toLowerCase();
-
-  if (JAVASCRIPT_EXTENSIONS.has(extension) || extension === ".ts" || extension === ".tsx") {
-    return "// Levi assistant validated change\n";
-  }
-
-  if (extension === ".py" || extension === ".rb") {
-    return "# Levi assistant validated change\n";
-  }
-
-  if (extension === ".css") {
-    return "/* Levi assistant validated change */\n";
-  }
-
-  if (extension === ".html") {
-    return "<!-- Levi assistant validated change -->\n";
-  }
-
-  return "Levi assistant validated change.\n";
 }
 
 function loadState(repositoryPath) {

@@ -36,6 +36,13 @@ function validateProvider(provider) {
   }
 }
 
+function isControlledProvider(provider) {
+  return Boolean(
+    isPlainObject(provider) &&
+      (provider.controlled === true || provider.testProvider === true || provider.testModeOnly === true),
+  );
+}
+
 function validateProviderRequest(request) {
   if (!isPlainObject(request)) {
     throw new Error("Model provider request is required.");
@@ -135,6 +142,7 @@ module.exports = {
   PROVIDER_AVAILABILITY_STATES,
   PROVIDER_TYPES,
   createProviderError,
+  isControlledProvider,
   validateProvider,
   validateProviderCostEstimate,
   validateProviderHealthEvidence,
