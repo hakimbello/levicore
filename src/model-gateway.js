@@ -3,6 +3,7 @@ const {
   validateProviderCostEstimate,
   validateProviderRequest,
 } = require("./model-provider-interface");
+const { estimateTaskCost } = require("./cost-estimator");
 const { discoverLocalModels: discoverLocalModelEvidence } = require("./local-model-discovery");
 
 function createModelGateway(options) {
@@ -60,44 +61,45 @@ function createModelGateway(options) {
     return discoverLocalModelEvidence(ollamaOptions);
   }
 
+  function estimateCost(request) {
+    const provider = selectProviderForRequest(request);
+    const fallback = selectFallback(provider, providers);
+    const costEstimate = estimateTaskCost({ provider, request });
+
+    return {
+      provider,
+      fallback,
+      costEstimate,
+      routing: routingMetadata(provider, fallback, costEstimate),
+      usage: {
+        spent,
+        iterations,
+      },
+    };
+  }
+
   async function route(request) {
     validateProviderRequest(request);
-
-    if (providers.length === 0) {
-      throw new Error("No model providers are registered.");
-    }
 
     if (iterations >= options.limits.maxIterations) {
       throw new Error("Model gateway iteration limit exceeded.");
     }
 
-    const primary = selectProvider(request, providers);
-    const fallback = selectFallback(primary, providers);
-    const estimatedCost = primary.estimateCost(request);
-    validateProviderCostEstimate(estimatedCost);
+    const preview = estimateCost(request);
+    const executionCost = preview.provider.estimateCost(request);
+    validateProviderCostEstimate(executionCost);
 
-    if (spent + estimatedCost.amount > options.limits.maxSpend) {
+    if (spent + executionCost.amount > options.limits.maxSpend) {
       throw new Error("Model gateway spending limit exceeded.");
     }
 
     iterations += 1;
-    spent += estimatedCost.amount;
+    spent += executionCost.amount;
 
     return {
-      provider: primary,
-      fallback,
-      routing: {
-        selectedModel: primary.model,
-        selectedProvider: primary.name,
-        reason: primary.reason,
-        estimatedCostClass: estimatedCost.costClass,
-        fallback: fallback
-          ? {
-              model: fallback.model,
-              provider: fallback.name,
-            }
-          : null,
-      },
+      provider: preview.provider,
+      fallback: preview.fallback,
+      routing: preview.routing,
       usage: {
         spent,
         iterations,
@@ -107,9 +109,36 @@ function createModelGateway(options) {
 
   return {
     discoverLocalModels,
+    estimateCost,
     getProviders,
     registerProvider,
     route,
+  };
+
+  function selectProviderForRequest(request) {
+    validateProviderRequest(request);
+
+    if (providers.length === 0) {
+      throw new Error("No model providers are registered.");
+    }
+
+    return selectProvider(request, providers);
+  }
+}
+
+function routingMetadata(provider, fallback, costEstimate) {
+  return {
+    selectedModel: provider.model,
+    selectedProvider: provider.name,
+    reason: provider.reason,
+    estimatedCostClass: costEstimate.costClass,
+    costEstimate,
+    fallback: fallback
+      ? {
+          model: fallback.model,
+          provider: fallback.name,
+        }
+      : null,
   };
 }
 
