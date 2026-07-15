@@ -6,7 +6,10 @@ const APPROVED = "APPROVED";
 const VERIFIED = "VERIFIED";
 const REJECTED = "REJECTED";
 const NON_ENFORCING = "NON_ENFORCING";
+const REMOVED = "REMOVED";
+const INACTIVE = "INACTIVE";
 const APPROVE_PROJECT_DECISION = "APPROVE_PROJECT_DECISION";
+const REMOVE_PROJECT_DECISION = "REMOVE_PROJECT_DECISION";
 const ENFORCEMENT_STATUSES = {
   ALLOWED: "ALLOWED",
   APPROVAL_REQUIRED: "APPROVAL_REQUIRED",
@@ -184,6 +187,109 @@ function enforceProjectDecisions(options = {}) {
   });
 }
 
+function reviewProjectDecisions(options = {}) {
+  const projectId = stringOrUnknown(options.projectId || "default");
+  const filters = normalizeReviewFilters(options);
+  const decisions = decisionRecordsForReview(options, projectId)
+    .map(reviewDecisionFromRecord)
+    .filter((decision) => matchesReviewFilters(decision, filters))
+    .sort(compareReviewDecisions);
+
+  return {
+    status: decisions.length > 0 ? "FOUND" : "EMPTY",
+    unknown: decisions.length > 0 ? null : UNKNOWN,
+    projectId,
+    filters,
+    count: decisions.length,
+    decisions,
+  };
+}
+
+function removeProjectDecision(options) {
+  const result = removeProjectDecisions({
+    ...options,
+    decisionIds: [options.decisionId || options.recordId],
+  });
+
+  return {
+    ...result,
+    removedDecision: result.removedDecisions[0] || null,
+    removalResult: result.results[0] || null,
+  };
+}
+
+function removeProjectDecisions(options) {
+  validateRemovalOptions(options);
+
+  const projectId = stringOrUnknown(options.projectId || "default");
+  const decisionIds = normalizeStringFilter(options.decisionIds || options.decisionId || options.recordIds || options.recordId);
+  const timestamp = normalizeTimestamp(options.timestamp);
+  const results = [];
+  const removedDecisions = [];
+
+  if (options.confirmation !== REMOVE_PROJECT_DECISION) {
+    return {
+      status: "CONFIRMATION_REQUIRED",
+      projectId,
+      removedDecisions,
+      results: decisionIds.map((decisionId) => ({
+        status: "CONFIRMATION_REQUIRED",
+        decisionId,
+        reason: "Explicit project decision removal confirmation is required.",
+      })),
+    };
+  }
+
+  for (const decisionId of decisionIds) {
+    const record = options.memoryStore
+      .listRecords(projectId)
+      .find((candidate) => isApprovedDecisionRecord(candidate, projectId) && candidate.id === decisionId);
+
+    if (!record) {
+      results.push({
+        status: "NOT_FOUND",
+        decisionId,
+        reason: "Active approved project decision was not found.",
+      });
+      continue;
+    }
+
+    const reason = stringOrUnknown(options.reason || "Project decision removed by explicit approval.");
+    const removed = options.memoryStore.updateRecord(projectId, record.id, (current) => ({
+      ...current,
+      value: {
+        ...current.value,
+        enforcementState: REMOVED,
+        removedAt: timestamp,
+        removalReason: reason,
+        removalHistory: [
+          ...asArray(current.value && current.value.removalHistory).filter(isPlainObject),
+          {
+            status: REMOVED,
+            timestamp,
+            reason,
+          },
+        ],
+      },
+    }));
+    const reviewed = reviewDecisionFromRecord(removed);
+
+    removedDecisions.push(reviewed);
+    results.push({
+      status: REMOVED,
+      decisionId,
+      decision: reviewed,
+    });
+  }
+
+  return {
+    status: removalBatchStatus(results),
+    projectId,
+    removedDecisions,
+    results,
+  };
+}
+
 function validateRecordOptions(options) {
   if (!isPlainObject(options)) {
     throw new Error("Project decision record options are required.");
@@ -191,6 +297,22 @@ function validateRecordOptions(options) {
 
   if (!isMemoryStore(options.memoryStore)) {
     throw new Error("Project decision recording requires a memoryStore.");
+  }
+}
+
+function validateRemovalOptions(options) {
+  if (!isPlainObject(options)) {
+    throw new Error("Project decision removal options are required.");
+  }
+
+  if (!isMemoryStore(options.memoryStore) || typeof options.memoryStore.updateRecord !== "function") {
+    throw new Error("Project decision removal requires a memoryStore with updateRecord.");
+  }
+
+  const decisionIds = normalizeStringFilter(options.decisionIds || options.decisionId || options.recordIds || options.recordId);
+
+  if (decisionIds.length === 0) {
+    throw new Error("Project decision removal requires at least one decision ID.");
   }
 }
 
@@ -268,7 +390,7 @@ function validateRecordableDecision(decision) {
 
 function projectDecisionRecord(input) {
   const normalized = normalizeDecision(input.decision);
-  const decisionId = projectDecisionId(input.projectId, normalized);
+  const decisionId = projectDecisionId(input.projectId, normalized, input.timestamp);
 
   return {
     id: decisionId,
@@ -339,7 +461,7 @@ function isApprovedDecisionRecord(record, projectId) {
     return false;
   }
 
-  if (["REMOVED", "REJECTED", "UNRESOLVED"].includes(record.value.enforcementState)) {
+  if ([REMOVED, INACTIVE, "REJECTED", "UNRESOLVED"].includes(record.value.enforcementState)) {
     return false;
   }
 
@@ -364,6 +486,101 @@ function activeDecisionRecords(options, projectId) {
       : [];
 
   return records.filter((record) => isApprovedDecisionRecord(record, projectId)).sort(compareStable);
+}
+
+function decisionRecordsForReview(options, projectId) {
+  const records = Array.isArray(options.decisionRecords)
+    ? options.decisionRecords
+    : options.memoryStore && typeof options.memoryStore.listRecords === "function"
+      ? options.memoryStore.listRecords(projectId)
+      : [];
+
+  return records.filter((record) => isReviewableDecisionRecord(record, projectId)).sort(compareStable);
+}
+
+function isReviewableDecisionRecord(record, projectId) {
+  if (!isPlainObject(record) || record.type !== "approved-decision") {
+    return false;
+  }
+
+  if (record.projectId !== projectId) {
+    return false;
+  }
+
+  if (!isPlainObject(record.source) || record.source.kind !== "project-decision") {
+    return false;
+  }
+
+  if (!isPlainObject(record.value) || !DECISION_CATEGORIES.includes(record.value.category)) {
+    return false;
+  }
+
+  return (
+    stringOrUnknown(record.value.statement) !== UNKNOWN &&
+    normalizeEvidence(record.value.evidence || record.source.evidence).length > 0 &&
+    !hasUnsafeEvidenceSource(record.value.evidence || record.source.evidence) &&
+    !containsSecretValue(record) &&
+    !containsModelOutputEvidence(record)
+  );
+}
+
+function reviewDecisionFromRecord(record) {
+  const enforcementStatus = reviewEnforcementStatus(record);
+  const approvalStatus = stringOrUnknown(record.value.approvalStatus || record.confidenceState);
+
+  return {
+    decisionId: stringOrUnknown(record.value.decisionId || record.id),
+    recordId: stringOrUnknown(record.id),
+    projectId: stringOrUnknown(record.projectId),
+    statement: stringOrUnknown(record.value.statement),
+    category: record.value.category,
+    evidence: normalizeEvidence(record.value.evidence || record.source.evidence),
+    confidence: stringOrUnknown(record.value.confidence || record.confidenceState),
+    approvalTimestamp: stringOrUnknown(record.value.approvalTimestamp || record.timestamp),
+    approvalStatus,
+    enforcementStatus,
+    active: enforcementStatus === "ACTIVE",
+    removedAt: stringOrUnknown(record.value.removedAt),
+    removalReason: stringOrUnknown(record.value.removalReason),
+    auditHistory: auditHistoryFor(record),
+  };
+}
+
+function reviewEnforcementStatus(record) {
+  if (record.value.approvalStatus === REJECTED || record.confidenceState === REJECTED) {
+    return REJECTED;
+  }
+
+  if (record.value.enforcementState === REMOVED) {
+    return REMOVED;
+  }
+
+  if (record.value.enforcementState === INACTIVE) {
+    return INACTIVE;
+  }
+
+  if (record.value.enforcementState === "UNRESOLVED") {
+    return "UNRESOLVED";
+  }
+
+  return isApprovedDecisionRecord(record, record.projectId) ? "ACTIVE" : UNKNOWN;
+}
+
+function auditHistoryFor(record) {
+  return [
+    {
+      status: stringOrUnknown(record.value.approvalStatus || record.confidenceState),
+      timestamp: stringOrUnknown(record.value.approvalTimestamp || record.timestamp),
+      evidence: normalizeEvidence(record.value.evidence || record.source.evidence),
+    },
+    ...asArray(record.value.removalHistory)
+      .filter(isPlainObject)
+      .map((entry) => ({
+        status: stringOrUnknown(entry.status),
+        timestamp: stringOrUnknown(entry.timestamp),
+        reason: stringOrUnknown(entry.reason),
+      })),
+  ].sort(compareStable);
 }
 
 function decisionFromRecord(record) {
@@ -580,10 +797,73 @@ function firstReason(matches, status) {
   return match ? match.reason : "Project decision enforcement requires review.";
 }
 
-function projectDecisionId(projectId, decision) {
+function normalizeReviewFilters(options) {
+  return {
+    categories: normalizeStringFilter(options.categories || options.category).map(normalizeCategory),
+    decisionIds: normalizeStringFilter(options.decisionIds || options.decisionId || options.recordIds || options.recordId),
+    keywords: normalizeStringFilter(options.keywords || options.keyword).map((keyword) => keyword.toLowerCase()),
+    confidenceStates: normalizeStringFilter(options.confidenceStates || options.confidence).map(normalizeConfidence),
+    approvalStates: normalizeStringFilter(options.approvalStates || options.approvalState || options.status).map((status) => status.toUpperCase()),
+  };
+}
+
+function normalizeStringFilter(value) {
+  return uniqueSorted(asArray(value).map(stringOrUnknown).filter((entry) => entry !== UNKNOWN));
+}
+
+function matchesReviewFilters(decision, filters) {
+  return (
+    matchesFilter(decision.category, filters.categories) &&
+    matchesDecisionIdFilter(decision, filters.decisionIds) &&
+    matchesKeywordFilter(decision, filters.keywords) &&
+    matchesFilter(decision.confidence.toUpperCase(), filters.confidenceStates) &&
+    matchesApprovalStateFilter(decision, filters.approvalStates)
+  );
+}
+
+function matchesFilter(value, filterValues) {
+  return filterValues.length === 0 || filterValues.includes(value);
+}
+
+function matchesDecisionIdFilter(decision, decisionIds) {
+  return decisionIds.length === 0 || decisionIds.includes(decision.decisionId) || decisionIds.includes(decision.recordId);
+}
+
+function matchesKeywordFilter(decision, keywords) {
+  if (keywords.length === 0) {
+    return true;
+  }
+
+  const haystack = stableSerialize({
+    statement: decision.statement,
+    category: decision.category,
+    evidence: decision.evidence,
+  }).toLowerCase();
+
+  return keywords.some((keyword) => haystack.includes(keyword));
+}
+
+function matchesApprovalStateFilter(decision, approvalStates) {
+  if (approvalStates.length === 0) {
+    return true;
+  }
+
+  return approvalStates.includes(decision.approvalStatus.toUpperCase()) || approvalStates.includes(decision.enforcementStatus.toUpperCase());
+}
+
+function compareReviewDecisions(left, right) {
+  return (
+    left.category.localeCompare(right.category) ||
+    left.statement.localeCompare(right.statement) ||
+    left.approvalTimestamp.localeCompare(right.approvalTimestamp) ||
+    left.decisionId.localeCompare(right.decisionId)
+  );
+}
+
+function projectDecisionId(projectId, decision, timestamp = UNKNOWN) {
   return `project-decision-${crypto
     .createHash("sha256")
-    .update(projectDecisionFingerprint(projectId, decision))
+    .update(stableSerialize({ fingerprint: projectDecisionFingerprint(projectId, decision), timestamp }))
     .digest("hex")
     .slice(0, 16)}`;
 }
@@ -615,6 +895,18 @@ function decisionBatchStatus(results) {
 
   if (results.every((result) => result.status === REJECTED)) {
     return REJECTED;
+  }
+
+  return "PARTIAL";
+}
+
+function removalBatchStatus(results) {
+  if (results.every((result) => result.status === REMOVED)) {
+    return REMOVED;
+  }
+
+  if (results.every((result) => result.status === "NOT_FOUND")) {
+    return "NOT_FOUND";
   }
 
   return "PARTIAL";
@@ -799,8 +1091,12 @@ module.exports = {
   DECISION_CATEGORIES,
   ENFORCEMENT_STATUSES,
   NON_ENFORCING,
+  REMOVE_PROJECT_DECISION,
   UNKNOWN,
   enforceProjectDecisions,
   recordProjectDecision,
   recordProjectDecisions,
+  removeProjectDecision,
+  removeProjectDecisions,
+  reviewProjectDecisions,
 };

@@ -57,10 +57,39 @@ function createMemoryStore(filePath) {
     return project.records.length !== before;
   }
 
+  function updateRecord(projectId, recordId, updater) {
+    const store = loadStore();
+    const project = store.projects[projectId];
+
+    if (!project) {
+      return null;
+    }
+
+    const index = project.records.findIndex((record) => record.id === recordId);
+
+    if (index === -1) {
+      return null;
+    }
+
+    const current = project.records[index];
+    const next = typeof updater === "function" ? updater(JSON.parse(JSON.stringify(current))) : updater;
+    const normalized = normalizeRecord({
+      ...next,
+      id: current.id,
+      projectId: current.projectId || projectId,
+      timestamp: next.timestamp || current.timestamp,
+    });
+
+    project.records[index] = normalized;
+    saveStore(store);
+    return normalized;
+  }
+
   return {
     addRecord,
     listRecords,
     removeRecord,
+    updateRecord,
   };
 }
 

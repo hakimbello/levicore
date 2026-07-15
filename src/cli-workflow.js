@@ -9,6 +9,7 @@ const { createContextPreview } = require("./context-preview");
 const { createMemoryStore } = require("./memory-store");
 const { createLocalReadinessReport } = require("./local-readiness-check");
 const { createPublicModelGateway } = require("./model-gateway");
+const { removeProjectDecisions, reviewProjectDecisions } = require("./project-decisions");
 const { summarizeProject } = require("./project-summary");
 const { scanRepository } = require("./repository-scanner");
 const { applySafePatch } = require("./safe-patch");
@@ -439,6 +440,24 @@ function reviewProject(repositoryPath) {
   return report;
 }
 
+function reviewProjectDecisionRecords(repositoryPath, filters = {}) {
+  return reviewProjectDecisions({
+    ...filters,
+    projectId: filters.projectId || "default",
+    memoryStore: createMemoryStore(path.join(repositoryPath, ".levi", "memory.json")),
+  });
+}
+
+function removeProjectDecisionRecords(repositoryPath, decisionIds, confirmation, options = {}) {
+  return removeProjectDecisions({
+    ...options,
+    projectId: options.projectId || "default",
+    memoryStore: createMemoryStore(path.join(repositoryPath, ".levi", "memory.json")),
+    decisionIds,
+    confirmation,
+  });
+}
+
 function latestRestorePoint(state) {
   if (state && state.patch && state.patch.restorePoint) {
     return state.patch.restorePoint;
@@ -722,7 +741,9 @@ module.exports = {
   inspectLocalReadiness,
   inspectStatus,
   requestTask,
+  removeProjectDecisionRecords,
   restoreProject,
   reviewProject,
+  reviewProjectDecisionRecords,
   validateProject,
 };
