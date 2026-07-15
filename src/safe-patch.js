@@ -3,7 +3,15 @@ const path = require("node:path");
 const { createCodingExecutor } = require("./coding-executor");
 
 const OPERATION_TYPES = new Set(["create", "update", "delete"]);
-const OPERATION_KEYS = new Set(["type", "path", "content", "approved"]);
+const OPERATION_KEYS = new Set([
+  "type",
+  "path",
+  "content",
+  "approved",
+  "destructive",
+  "destructiveAction",
+  "destructiveConfirmation",
+]);
 const BINARY_LIKE_CONTENT_PATTERN = /[\u0000-\u0008\u000B\u000E-\u001F\u007F]/;
 
 function applySafePatch(options) {
@@ -16,14 +24,18 @@ function applySafePatch(options) {
     plannedFiles: Array.from(plannedFiles),
     limits: options.limits,
   });
+  let operations;
   const changes = [];
   const rollback = [];
 
-  for (const rawOperation of options.operations) {
-    let operation;
+  try {
+    operations = options.operations.map((operation) => normalizeOperation(operation, plannedFiles));
+  } catch (error) {
+    return result("FAILED", changes, rollback, error.message);
+  }
 
+  for (const operation of operations) {
     try {
-      operation = normalizeOperation(rawOperation, plannedFiles);
       const snapshot = snapshotTarget(repositoryRoot, operation.path);
       const result = executor.execute({
         operations: [operation],
@@ -101,15 +113,16 @@ function normalizeOperation(operation, plannedFiles) {
     throw new Error("Safe patch delete operation must not include content.");
   }
 
-  if (operation.type === "delete" && operation.approved !== true) {
-    throw new Error(`Safe patch delete requires approval: ${relativePath}`);
+  if (isDestructiveOperation(operation) && operation.destructiveConfirmation !== true) {
+    throw new Error(`Destructive confirmation required: ${relativePath}`);
   }
 
   if (operation.type === "delete") {
     return {
       type: operation.type,
       path: relativePath,
-      approved: true,
+      destructive: true,
+      destructiveConfirmation: true,
     };
   }
 
@@ -117,7 +130,13 @@ function normalizeOperation(operation, plannedFiles) {
     type: operation.type,
     path: relativePath,
     content: operation.content,
+    destructive: operation.destructive === true,
+    destructiveConfirmation: operation.destructiveConfirmation === true,
   };
+}
+
+function isDestructiveOperation(operation) {
+  return operation.type === "delete" || operation.destructive === true;
 }
 
 function isBinaryLikeContent(content) {
@@ -151,7 +170,8 @@ function createRollbackOperation(relativePath, snapshot) {
     return {
       type: "delete",
       path: relativePath,
-      approved: true,
+      destructive: true,
+      destructiveConfirmation: true,
     };
   }
 

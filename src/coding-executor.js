@@ -36,11 +36,11 @@ function createCodingExecutor(options) {
         throw new Error(`File is outside planned boundaries: ${relativePath}`);
       }
 
-      if (operation.type === "delete") {
-        if (!operation.approved) {
-          throw new Error(`Destructive operation requires approval: ${relativePath}`);
-        }
+      if (isDestructiveOperation(operation) && operation.destructiveConfirmation !== true) {
+        throw new Error(`Destructive confirmation required: ${relativePath}`);
+      }
 
+      if (operation.type === "delete") {
         const existed = fs.existsSync(targetPath);
 
         if (existed) {
@@ -144,6 +144,10 @@ function validateOperation(operation) {
   if ((operation.type === "create" || operation.type === "update") && typeof operation.content !== "string") {
     throw new Error("Coding executor operation content is required.");
   }
+}
+
+function isDestructiveOperation(operation) {
+  return operation.type === "delete" || operation.destructive === true;
 }
 
 function resolveInsideRepository(repositoryRoot, relativePath) {

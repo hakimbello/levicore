@@ -1,6 +1,6 @@
 const UNKNOWN = "UNKNOWN";
 const NONE = "NONE";
-const OPERATION_TYPES = new Set(["create", "update", "delete"]);
+const OPERATION_TYPES = new Set(["create", "update", "delete", "command"]);
 
 function createApprovalSummary(taskPlan) {
   validateTaskPlan(taskPlan);
@@ -11,6 +11,7 @@ function createApprovalSummary(taskPlan) {
   const updatedFiles = hasOperations ? filesForType(operations, "update") : [UNKNOWN];
   const deletedFiles = hasOperations ? filesForType(operations, "delete") : [UNKNOWN];
   const destructiveActions = hasOperations ? destructiveActionsFor(operations) : [UNKNOWN];
+  const destructiveConfirmationRequired = hasOperations ? confirmationRequirement(destructiveActions) : UNKNOWN;
   const totalFilesAffected = hasOperations ? uniqueSorted(operations.map((operation) => operation.path)).length : UNKNOWN;
   const details = {
     taskObjective: stringOrUnknown(taskPlan.objective),
@@ -19,6 +20,7 @@ function createApprovalSummary(taskPlan) {
     filesDeleted: withNone(deletedFiles),
     totalFilesAffected,
     destructiveActions: withNone(destructiveActions),
+    destructiveConfirmationRequired,
     validationCommands: listOrUnknown(taskPlan.validationCommands),
     estimatedCostDecision: costDecision(taskPlan),
     restorePointStatus: restorePointStatus(taskPlan),
@@ -62,6 +64,11 @@ function normalizeOperation(operation) {
   return {
     type: operation.type,
     path: stringOrThrow(operation.path, "Approval summary planned operation path is required."),
+    destructive: operation.destructive === true,
+    destructiveAction: optionalString(operation.destructiveAction),
+    irreversible: operation.irreversible === true,
+    overwrite: operation.overwrite === true,
+    broadRewrite: operation.broadRewrite === true,
   };
 }
 
@@ -71,14 +78,41 @@ function filesForType(operations, type) {
 
 function destructiveActionsFor(operations) {
   return uniqueSorted(
-    operations
-      .filter((operation) => operation.type === "delete")
-      .map((operation) => `Delete ${operation.path}`),
+    operations.flatMap((operation) => {
+      const actions = [];
+
+      if (operation.type === "delete") {
+        actions.push(`Delete ${operation.path}`);
+      }
+
+      if (operation.overwrite) {
+        actions.push(`Overwrite ${operation.path}`);
+      }
+
+      if (operation.broadRewrite) {
+        actions.push(`Broad rewrite ${operation.path}`);
+      }
+
+      if (operation.irreversible) {
+        actions.push(`Irreversible action ${operation.path}`);
+      }
+
+      if (operation.destructive) {
+        actions.push(operation.destructiveAction || `Destructive action ${operation.path}`);
+      }
+
+      return actions;
+    }),
   );
+}
+
+function confirmationRequirement(destructiveActions) {
+  return destructiveActions.length > 0 ? "REQUIRED" : "NOT REQUIRED";
 }
 
 function operationText(operation) {
   const verb = {
+    command: "Run command for",
     create: "Create",
     update: "Update",
     delete: "Delete",
@@ -129,7 +163,8 @@ function renderSummary(details) {
     `Files updated: ${joinList(details.filesUpdated)}`,
     `Files deleted: ${joinList(details.filesDeleted)}`,
     `Total files affected: ${details.totalFilesAffected}`,
-    `Destructive actions: ${joinList(details.destructiveActions)}`,
+    `DESTRUCTIVE ACTIONS: ${joinList(details.destructiveActions)}`,
+    `Destructive confirmation: ${details.destructiveConfirmationRequired}`,
     `Validation commands: ${joinList(details.validationCommands)}`,
     `Estimated cost decision: ${details.estimatedCostDecision}`,
     `Restore-point status: ${details.restorePointStatus}`,
@@ -177,6 +212,14 @@ function stringOrThrow(value, message) {
 function stringOrUnknown(value) {
   if (typeof value !== "string" || value.trim() === "") {
     return UNKNOWN;
+  }
+
+  return value.trim();
+}
+
+function optionalString(value) {
+  if (typeof value !== "string" || value.trim() === "") {
+    return null;
   }
 
   return value.trim();
