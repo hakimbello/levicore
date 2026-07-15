@@ -6,6 +6,643 @@ Phase 2: Real AI Integration
 
 Status: NOT STARTED
 
+## Release 0.3.0 Implementation Milestones
+
+Status: NOT STARTED
+
+This section replaces the single Release 0.3 roadmap with executable implementation milestones.
+
+Release 0.3 implementation rules:
+
+- Planning output from M18 remains evidence, not implementation approval.
+- One task is implemented at a time.
+- Each implementation task requires task-specific owner approval before code changes.
+- Do not duplicate Phase 2 provider, context, fallback, or safety work already approved in PLAN.md.
+- Do not add standalone IDE, autocomplete, marketplace, team collaboration, autonomous deployment, or prompt-engineering-first workflows.
+- Preserve CLI-first architecture and Levi-owned interfaces.
+- No external dependency is approved without OSS evaluation.
+
+## M19 One-Minute Local Setup
+
+Status: NOT STARTED
+
+### M19-001 Local Model Discovery
+
+Task ID: M19-001
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Discover locally available model providers and configured local models without requiring remote credentials or installing software.
+
+Expected files:
+
+- src/local-model-discovery.js
+- src/model-gateway.js
+- src/providers/ollama-provider.js
+
+Acceptance criteria:
+
+- Detects whether supported local provider configuration is present.
+- Detects whether a configured local model is available when the provider can report it.
+- Reports missing local provider, unavailable model, and unsupported provider states clearly.
+- Does not install, download, start services, or make remote calls.
+- Does not expose secrets in output, logs, memory, or reports.
+- Returns UNKNOWN when availability cannot be determined from local evidence.
+
+Status: NOT STARTED
+
+### M19-002 One-Minute Readiness Check
+
+Task ID: M19-002
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Provide a simple local-first readiness result that tells the user whether Levi can run with a local model and what minimal action is needed if not.
+
+Expected files:
+
+- bin/levi.js
+- src/cli-workflow.js
+- src/local-model-discovery.js
+- src/local-readiness-check.js
+
+Acceptance criteria:
+
+- User can run one CLI command to see local readiness.
+- Readiness output uses plain language and does not expose provider internals unless needed for action.
+- Readiness distinguishes ready, not configured, unavailable, unsupported, and UNKNOWN states.
+- Readiness prefers local execution before remote fallback.
+- Readiness does not require prompt engineering, YAML editing, or remote credentials.
+- Existing scan, status, request, approve, execute, validate, and review commands remain functional.
+
+Status: NOT STARTED
+
+### M19-003 Local Setup Validation
+
+Task ID: M19-003
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Validate local model discovery and readiness behavior without requiring a real local model service.
+
+Expected files:
+
+- src/local-model-discovery.js
+- src/local-readiness-check.js
+- src/model-gateway.js
+
+Acceptance criteria:
+
+- Validation covers ready, missing provider, unavailable model, unsupported provider, and UNKNOWN cases.
+- Validation confirms no remote calls occur during local readiness checks.
+- Validation confirms missing local setup returns clear next-step guidance.
+- Validation confirms existing Model Gateway limits and provider boundaries remain intact.
+- Validation commands and results are recorded exactly.
+
+Status: NOT STARTED
+
+## M20 Cost Preview
+
+Status: NOT STARTED
+
+### M20-001 Cost Estimation
+
+Task ID: M20-001
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Estimate task cost class from approved task, selected provider, selected model, and bounded context before execution.
+
+Expected files:
+
+- src/cost-estimator.js
+- src/model-gateway.js
+- src/task-planner.js
+
+Acceptance criteria:
+
+- Produces a plain-language cost class before model execution.
+- Preserves existing Model Gateway spending and iteration limits.
+- Marks exact cost UNKNOWN when provider pricing or usage cannot be determined.
+- Does not call provider billing APIs unless separately approved.
+- Does not expose credentials, tokens, or sensitive provider metadata.
+- Does not block free/local model routing when a configured local model is available.
+
+Status: NOT STARTED
+
+### M20-002 Budget Guardrails
+
+Task ID: M20-002
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Add user-visible budget guardrails that prevent accidental high-cost model execution while preserving existing Model Gateway control.
+
+Expected files:
+
+- src/budget-guardrails.js
+- src/model-gateway.js
+- src/task-planner.js
+
+Acceptance criteria:
+
+- Planned model execution includes budget state before execution.
+- Tasks exceeding configured budget limits are blocked before provider calls.
+- UNKNOWN cost tasks require explicit approval before remote model execution.
+- Local/free-model-first routing remains available when configured.
+- Guardrail failures return clear messages without exposing secrets.
+- Existing spending and iteration limits remain enforced by Model Gateway.
+
+Status: NOT STARTED
+
+### M20-003 Cost Validation
+
+Task ID: M20-003
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Validate cost estimation and budget guardrails across local, remote, fallback, over-budget, and UNKNOWN-cost scenarios.
+
+Expected files:
+
+- src/cost-estimator.js
+- src/budget-guardrails.js
+- src/model-gateway.js
+
+Acceptance criteria:
+
+- Validation covers local/free, remote low-cost, remote high-cost, fallback, over-budget, and UNKNOWN-cost cases.
+- Validation confirms blocked tasks do not call providers.
+- Validation confirms cost estimates appear in task planning or execution reports before model calls.
+- Validation confirms no secrets are written to output, logs, memory, or reports.
+- Validation commands and results are recorded exactly.
+
+Status: NOT STARTED
+
+## M21 Safe Approval Summary
+
+Status: NOT STARTED
+
+### M21-001 Approval Summary
+
+Task ID: M21-001
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Summarize planned actions, expected files, validation commands, cost class, and risk before the user approves execution.
+
+Expected files:
+
+- src/approval-summary.js
+- src/task-planner.js
+- src/cli-workflow.js
+
+Acceptance criteria:
+
+- Approval summary is generated from the approved task plan and cited context only.
+- Summary lists objective, expected files, planned operations, validation commands, cost class, and risks.
+- Summary avoids prompt-engineering instructions and internal provider details.
+- Execution still requires explicit plan approval.
+- Existing task planning behavior remains functional.
+
+Status: NOT STARTED
+
+### M21-002 Destructive Action Highlighting
+
+Task ID: M21-002
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Highlight destructive or irreversible planned actions before approval and require explicit confirmation for them.
+
+Expected files:
+
+- src/approval-summary.js
+- src/coding-executor.js
+- src/safe-patch.js
+
+Acceptance criteria:
+
+- Delete, overwrite, broad file rewrite, shell commands with destructive risk, and irreversible operations are highlighted.
+- Destructive or irreversible operations require explicit approval separate from normal approval.
+- No YOLO, bypass, or unattended destructive mode is added.
+- Highlighting uses structured planned operations, not ad hoc model text.
+- Rejected destructive approvals prevent execution and preserve existing state.
+
+Status: NOT STARTED
+
+### M21-003 Approval Validation
+
+Task ID: M21-003
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Validate approval summaries and destructive action highlighting without weakening existing approval enforcement.
+
+Expected files:
+
+- src/approval-summary.js
+- src/cli-workflow.js
+- src/coding-executor.js
+- src/safe-patch.js
+
+Acceptance criteria:
+
+- Validation covers normal changes, destructive changes, rejected approvals, missing approvals, and approved destructive actions.
+- Validation confirms execution is blocked without required approvals.
+- Validation confirms destructive highlights are visible before execution.
+- Validation confirms existing approval state remains uncorrupted after rejection.
+- Validation commands and results are recorded exactly.
+
+Status: NOT STARTED
+
+## M22 Restore Points
+
+Status: NOT STARTED
+
+### M22-001 Restore Point Creation
+
+Task ID: M22-001
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Create low-overhead restore points before approved file changes are applied.
+
+Expected files:
+
+- src/restore-points.js
+- src/coding-executor.js
+- src/safe-patch.js
+
+Acceptance criteria:
+
+- Restore point is created before applying approved structured operations.
+- Restore point records exact files and pre-change content needed for rollback.
+- Restore point creation stays inside the active repository boundary.
+- Restore point creation excludes secrets, generated files, dependencies, binaries, and unplanned files.
+- Failure to create a required restore point blocks file modification.
+- Restore point metadata does not expose secrets.
+
+Status: NOT STARTED
+
+### M22-002 Restore Workflow
+
+Task ID: M22-002
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Provide a controlled workflow to inspect and restore the latest Levi-managed restore point.
+
+Expected files:
+
+- bin/levi.js
+- src/cli-workflow.js
+- src/restore-points.js
+
+Acceptance criteria:
+
+- User can inspect available restore point metadata.
+- User can restore files changed by the latest Levi-managed operation.
+- Restore applies only inside the active repository.
+- Restore does not affect unrelated files.
+- Restore requires explicit confirmation before changing files.
+- Restore result is reported with exact files changed.
+
+Status: NOT STARTED
+
+### M22-003 Restore Validation
+
+Task ID: M22-003
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Validate restore point creation and restore workflow across success, rejection, and failure cases.
+
+Expected files:
+
+- src/restore-points.js
+- src/coding-executor.js
+- src/safe-patch.js
+- src/cli-workflow.js
+
+Acceptance criteria:
+
+- Validation covers create, inspect, restore, missing restore point, corrupted restore point, and out-of-bound restore attempts.
+- Validation confirms restore does not modify unrelated files.
+- Validation confirms failed restore does not produce COMPLETED status.
+- Validation confirms restored files are reported exactly.
+- Validation commands and results are recorded exactly.
+
+Status: NOT STARTED
+
+## M23 Evidence-Cited Context Preview
+
+Status: NOT STARTED
+
+### M23-001 Context Preview
+
+Task ID: M23-001
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Show the bounded project context Levi will use before model execution.
+
+Expected files:
+
+- src/context-preview.js
+- src/context-builder.js
+- src/cli-workflow.js
+
+Acceptance criteria:
+
+- Preview includes only APPROVED or VERIFIED memory records and cited repository facts.
+- Preview preserves source references for every included fact.
+- Preview excludes secrets, generated files, dependencies, binaries, rejected records, and unverified model output.
+- Preview does not require users to write prompts or configure context manually.
+- Preview marks UNKNOWN context gaps as UNKNOWN.
+
+Status: NOT STARTED
+
+### M23-002 Evidence Display
+
+Task ID: M23-002
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Display evidence sources for context facts in a concise, readable format.
+
+Expected files:
+
+- src/context-preview.js
+- src/project-summary.js
+- src/memory-store.js
+
+Acceptance criteria:
+
+- Evidence display shows source file, deterministic signal, memory source, or UNKNOWN for each context fact.
+- Evidence display separates approved facts, verified facts, and UNKNOWN values.
+- Evidence display does not expose secret content.
+- Evidence display remains concise enough for CLI review.
+- Evidence display does not alter memory records or repository files.
+
+Status: NOT STARTED
+
+### M23-003 Context Validation
+
+Task ID: M23-003
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Validate context preview and evidence display against approved, verified, rejected, unverified, secret, and UNKNOWN records.
+
+Expected files:
+
+- src/context-preview.js
+- src/context-builder.js
+- src/memory-store.js
+- src/project-summary.js
+
+Acceptance criteria:
+
+- Validation confirms rejected and unverified records are excluded.
+- Validation confirms secrets, generated files, dependencies, and binaries are excluded.
+- Validation confirms every displayed fact has evidence or UNKNOWN.
+- Validation confirms context remains isolated to the active project.
+- Validation commands and results are recorded exactly.
+
+Status: NOT STARTED
+
+## M24 Provider Health
+
+Status: NOT STARTED
+
+### M24-001 Provider Health Checks
+
+Task ID: M24-001
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Check configured provider availability and configuration completeness without executing a task.
+
+Expected files:
+
+- src/provider-health.js
+- src/model-gateway.js
+- src/model-provider-interface.js
+
+Acceptance criteria:
+
+- Health check reports configured, missing configuration, unavailable, unsupported, and UNKNOWN states.
+- Health check validates required local and remote provider configuration before model calls.
+- Health check does not expose credentials or secret configuration values.
+- Health check does not modify files or call task execution.
+- Provider-specific details remain behind Levi-owned provider interfaces.
+
+Status: NOT STARTED
+
+### M24-002 Fallback Diagnostics
+
+Task ID: M24-002
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Report primary provider failure and fallback readiness clearly without adding provider-specific logic to the pipeline.
+
+Expected files:
+
+- src/provider-health.js
+- src/model-gateway.js
+- src/code-generation-pipeline.js
+
+Acceptance criteria:
+
+- Diagnostics preserve primary provider failure details without exposing secrets.
+- Diagnostics report whether fallback provider is configured and available.
+- Diagnostics do not execute fallback outside the existing Model Gateway flow.
+- Diagnostics preserve spending and iteration limits.
+- If both primary and fallback are unavailable, output explains the failure clearly.
+
+Status: NOT STARTED
+
+### M24-003 Provider Validation
+
+Task ID: M24-003
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Validate provider health and fallback diagnostics across configured, missing, unavailable, failed-primary, and failed-fallback cases.
+
+Expected files:
+
+- src/provider-health.js
+- src/model-gateway.js
+- src/code-generation-pipeline.js
+
+Acceptance criteria:
+
+- Validation covers local provider health, remote provider health, missing credentials, missing model, unavailable provider, primary failure, and fallback failure.
+- Validation confirms no secrets appear in outputs, logs, memory, or reports.
+- Validation confirms no provider-specific logic enters domain workflow modules.
+- Validation confirms failed providers return clear failure information.
+- Validation commands and results are recorded exactly.
+
+Status: NOT STARTED
+
+## M25 Context Performance
+
+Status: NOT STARTED
+
+### M25-001 Context Budget
+
+Task ID: M25-001
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Bound context size automatically so model requests remain understandable, low-cost, and predictable.
+
+Expected files:
+
+- src/context-budget.js
+- src/context-builder.js
+- src/prompt-engine.js
+
+Acceptance criteria:
+
+- Context budget applies automatically without requiring user tuning.
+- Budgeting preserves approved requirements, task plan boundaries, validation commands, risks, and explicit exclusions.
+- Budgeting preserves source evidence for included facts.
+- Excluded context is reported as omitted with reason, not silently hidden.
+- Budgeting does not include secrets, rejected records, or unverified model output.
+
+Status: NOT STARTED
+
+### M25-002 Context Cache
+
+Task ID: M25-002
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Cache deterministic context assembly results where safe to reduce repeated context-building overhead.
+
+Expected files:
+
+- src/context-cache.js
+- src/context-builder.js
+- src/memory-store.js
+
+Acceptance criteria:
+
+- Cache stores only safe deterministic context metadata and cited facts.
+- Cache remains isolated by project.
+- Cache invalidates when relevant repository facts, memory records, or task plan inputs change.
+- Cache excludes secrets, generated files, dependencies, binaries, rejected records, and unverified output.
+- Cache miss or invalidation falls back to deterministic context building.
+
+Status: NOT STARTED
+
+### M25-003 Performance Validation
+
+Task ID: M25-003
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Validate context budgeting and caching for correctness, invalidation, and bounded performance behavior.
+
+Expected files:
+
+- src/context-budget.js
+- src/context-cache.js
+- src/context-builder.js
+
+Acceptance criteria:
+
+- Validation covers budget inclusion, budget omission, cache hit, cache miss, cache invalidation, and UNKNOWN context values.
+- Validation confirms source evidence is preserved after budgeting and caching.
+- Validation confirms excluded unsafe records do not enter cache or context.
+- Validation records timing or operation-count evidence sufficient to verify bounded behavior.
+- Validation commands and results are recorded exactly.
+
+Status: NOT STARTED
+
+## M26 Prompt-Free Task Intake
+
+Status: NOT STARTED
+
+### M26-001 Natural Language Task Intake
+
+Task ID: M26-001
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Accept natural-language task requests and convert them into structured intake data without requiring prompt templates from the user.
+
+Expected files:
+
+- src/task-intake.js
+- src/cli-workflow.js
+- bin/levi.js
+
+Acceptance criteria:
+
+- Intake captures user objective, repository path, task text, and requested action class.
+- Intake does not require prompt engineering, YAML configuration, or manual context selection.
+- Intake preserves the original user request exactly.
+- Intake does not modify files or execute tasks.
+- Intake passes structured data to scope checking and planning only.
+
+Status: NOT STARTED
+
+### M26-002 Intent Classification
+
+Task ID: M26-002
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Classify task intent into supported Levi workflow categories before planning.
+
+Expected files:
+
+- src/intent-classifier.js
+- src/task-intake.js
+- src/scope-checker.js
+- src/task-planner.js
+
+Acceptance criteria:
+
+- Classifies requests as implementation, analysis, validation, review, planning, or UNKNOWN.
+- Out-of-scope or ambiguous requests are routed through existing Scope Service behavior.
+- UNKNOWN intent is marked UNKNOWN and does not proceed silently.
+- Classification does not approve work or execute changes.
+- Classification preserves the original user request for review.
+
+Status: NOT STARTED
+
+### M26-003 Intake Validation
+
+Task ID: M26-003
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Validate natural-language intake and intent classification without adding prompt-engineering requirements.
+
+Expected files:
+
+- src/task-intake.js
+- src/intent-classifier.js
+- src/scope-checker.js
+- src/task-planner.js
+- src/cli-workflow.js
+
+Acceptance criteria:
+
+- Validation covers implementation, analysis, validation, review, planning, ambiguous, out-of-scope, and UNKNOWN requests.
+- Validation confirms intake does not modify files or execute commands.
+- Validation confirms out-of-scope work stops before file modification.
+- Validation confirms ambiguous work is marked ASSUMPTION REQUIRES APPROVAL.
+- Validation commands and results are recorded exactly.
+
+Status: NOT STARTED
+
 ## Completion Rules
 
 - One task at a time.
@@ -849,5 +1486,124 @@ Acceptance criteria:
 - Full functional assistant audit is repeated after M17 fix tasks.
 - Bug sweep is repeated after M17 fix tasks.
 - Final verdict is FUNCTIONAL_INTERNAL_ASSISTANT_100_PERCENT or BLOCKED.
+
+Status: NOT STARTED
+
+## Release 0.3.0 Competitive Analysis
+
+Status: NOT STARTED
+
+Planning-only milestone for post-MVP competitive research and release planning. No implementation is approved by this milestone.
+
+### M18-001 Competitive Analysis
+
+Task ID: M18-001
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Research the selected coding assistant competitors and document evidence-backed findings for installation experience, first-time user experience, project understanding, context management, model support, local model support, remote model support, editing workflow, safety features, approval workflow, rollback capability, performance, cost, offline capability, extensibility, user complaints, most requested features, and biggest bottlenecks.
+
+Expected files:
+
+- COMPETITOR_ANALYSIS.md
+
+Acceptance criteria:
+
+- Covers Cursor, Claude Code, OpenAI Codex, GitHub Copilot, Cline, Roo Code, Continue, and Windsurf.
+- Every recommendation is backed by cited evidence.
+- Findings separate verified evidence from UNKNOWN items.
+- Analysis preserves Levi's philosophy: Apple simplicity, local-first operation, safety, low cost, trust, and minimal configuration.
+- No implementation files are modified.
+
+Status: NOT STARTED
+
+### M18-002 Feature Matrix
+
+Task ID: M18-002
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Create a competitor feature matrix that compares the researched tools against Levi's target philosophy and identifies must-have and nice-to-have capabilities for Release 0.3.0 consideration.
+
+Expected files:
+
+- FEATURE_MATRIX.md
+
+Acceptance criteria:
+
+- Matrix includes all competitors from M18-001.
+- Matrix evaluates installation, onboarding, context, model support, local model support, remote model support, editing, safety, approvals, rollback, performance, cost, offline capability, and extensibility.
+- Must-have items are clearly separated from nice-to-have items.
+- Each must-have recommendation includes evidence from M18-001 or is marked UNKNOWN.
+- No implementation files are modified.
+
+Status: NOT STARTED
+
+### M18-003 Bottleneck Analysis
+
+Task ID: M18-003
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Identify the biggest bottlenecks, user complaints, and repeated friction points across competitor tools, then map opportunities where Levi can clearly differentiate.
+
+Expected files:
+
+- BOTTLENECK_ANALYSIS.md
+
+Acceptance criteria:
+
+- Lists the top cross-competitor bottlenecks with cited evidence.
+- Separates common user complaints from inferred product risks.
+- Highlights opportunities aligned with Levi's philosophy.
+- Does not add roadmap items without evidence and justification.
+- No implementation files are modified.
+
+Status: NOT STARTED
+
+### M18-004 Release 0.3 Roadmap
+
+Task ID: M18-004
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Propose an evidence-backed Release 0.3.0 roadmap based on the competitive analysis, feature matrix, and bottleneck analysis.
+
+Expected files:
+
+- RELEASE_0_3_PLAN.md
+
+Acceptance criteria:
+
+- Roadmap separates must-have items from nice-to-have items.
+- Every roadmap item cites supporting evidence from M18-001, M18-002, or M18-003.
+- Roadmap highlights Levi differentiation opportunities.
+- Roadmap does not change MVP scope or architecture.
+- No implementation files are modified.
+
+Status: NOT STARTED
+
+### M18-005 Release Approval Review
+
+Task ID: M18-005
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Review the Release 0.3.0 planning documents for evidence quality, scope discipline, Levi philosophy alignment, and owner approval readiness.
+
+Expected files:
+
+- COMPETITOR_ANALYSIS.md
+- FEATURE_MATRIX.md
+- BOTTLENECK_ANALYSIS.md
+- RELEASE_0_3_PLAN.md
+
+Acceptance criteria:
+
+- Confirms all recommendations are evidence-backed or explicitly marked UNKNOWN.
+- Confirms must-have and nice-to-have items are separated.
+- Confirms no implementation work was performed.
+- Confirms no controlling documents other than PLAN.md were changed during M18 planning approval.
+- Produces an owner approval recommendation of APPROVE, REVISE, or BLOCKED.
 
 Status: NOT STARTED
