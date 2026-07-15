@@ -33,15 +33,20 @@ function createCodeGenerationPipeline(options) {
       outputInstructions: OUTPUT_INSTRUCTIONS,
     });
     const routeResult = await routePrompt(options.modelGateway, prompt.prompt);
-    const providerResponse = await requestProvider(routeResult, prompt.prompt);
+    const providerAttempt = await requestProviderWithFallback(
+      options.modelGateway,
+      routeResult,
+      prompt.prompt,
+    );
+    const providerResponse = providerAttempt.response;
     const operations = parseProposedOperations(providerResponse, input.taskPlan);
 
     return {
       status: "PROPOSED",
       operations,
-      routing: sanitizeRouting(routeResult.routing),
+      routing: sanitizeRouting(providerAttempt.routing),
       usage: {
-        gateway: sanitizeValue(routeResult.usage || {}),
+        gateway: sanitizeValue(providerAttempt.usage || {}),
         provider: sanitizeValue(providerResponse.usage || {}),
       },
       providerResponse: {
@@ -83,16 +88,52 @@ function validateGenerationInput(input) {
   }
 }
 
-async function routePrompt(modelGateway, prompt) {
+async function requestProviderWithFallback(modelGateway, routeResult, prompt) {
   try {
-    const routeResult = await modelGateway.route({ prompt });
-    validateRouteResult(routeResult);
-    return routeResult;
-  } catch (error) {
-    const routingError = new Error("Code generation routing failed.");
-    routingError.code = "CODE_GENERATION_ROUTING_FAILED";
-    routingError.cause = error;
-    throw routingError;
+    const response = await requestProvider(routeResult, prompt);
+
+    return {
+      response,
+      routing: routeResult.routing,
+      usage: routeResult.usage,
+    };
+  } catch (primaryError) {
+    if (!routeResult.fallback) {
+      throw primaryError;
+    }
+
+    let fallbackRoute;
+
+    try {
+      fallbackRoute = await routePrompt(modelGateway, prompt, {
+        preferredProvider: routeResult.fallback.name,
+      });
+    } catch (routingError) {
+      const fallbackRoutingError = new Error("Code generation fallback routing failed.");
+      fallbackRoutingError.code = "CODE_GENERATION_FALLBACK_ROUTING_FAILED";
+      fallbackRoutingError.primaryProvider = routeResult.provider.name;
+      fallbackRoutingError.fallbackProvider = routeResult.fallback.name;
+      fallbackRoutingError.cause = routingError;
+      throw fallbackRoutingError;
+    }
+
+    try {
+      const response = await requestProvider(fallbackRoute, prompt);
+
+      return {
+        response,
+        routing: fallbackRouting(routeResult.routing, fallbackRoute.routing, primaryError),
+        usage: fallbackRoute.usage,
+      };
+    } catch (fallbackError) {
+      const providerError = new Error("Code generation provider and fallback failed.");
+      providerError.code = "CODE_GENERATION_PROVIDER_AND_FALLBACK_FAILED";
+      providerError.primaryProvider = routeResult.provider.name;
+      providerError.fallbackProvider = fallbackRoute.provider.name;
+      providerError.primaryCause = primaryError;
+      providerError.cause = fallbackError;
+      throw providerError;
+    }
   }
 }
 
@@ -110,6 +151,19 @@ async function requestProvider(routeResult, prompt) {
   }
 }
 
+async function routePrompt(modelGateway, prompt, requestOverrides) {
+  try {
+    const routeResult = await modelGateway.route({ prompt, ...(requestOverrides || {}) });
+    validateRouteResult(routeResult);
+    return routeResult;
+  } catch (error) {
+    const routingError = new Error("Code generation routing failed.");
+    routingError.code = "CODE_GENERATION_ROUTING_FAILED";
+    routingError.cause = error;
+    throw routingError;
+  }
+}
+
 function validateRouteResult(routeResult) {
   if (!isPlainObject(routeResult)) {
     throw new Error("Model gateway route result is required.");
@@ -122,6 +176,26 @@ function validateRouteResult(routeResult) {
   if (!isPlainObject(routeResult.routing)) {
     throw new Error("Model gateway routing metadata is required.");
   }
+}
+
+function fallbackRouting(primaryRouting, fallbackRouteRouting, primaryError) {
+  return {
+    selectedModel: fallbackRouteRouting.selectedModel,
+    selectedProvider: fallbackRouteRouting.selectedProvider,
+    reason: fallbackRouteRouting.reason,
+    estimatedCostClass: fallbackRouteRouting.estimatedCostClass,
+    primary: {
+      selectedModel: primaryRouting.selectedModel,
+      selectedProvider: primaryRouting.selectedProvider,
+      reason: primaryRouting.reason,
+      estimatedCostClass: primaryRouting.estimatedCostClass,
+      failure: primaryError.message,
+    },
+    fallback: {
+      ...(primaryRouting.fallback || {}),
+      selected: true,
+    },
+  };
 }
 
 function validateProviderResponse(response) {
@@ -239,6 +313,7 @@ function sanitizeRouting(routing) {
     selectedProvider: routing.selectedProvider,
     reason: routing.reason,
     estimatedCostClass: routing.estimatedCostClass,
+    primary: sanitizeValue(routing.primary || null),
     fallback: sanitizeValue(routing.fallback || null),
   };
 }

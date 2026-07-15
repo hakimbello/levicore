@@ -17,7 +17,7 @@ function printUsage() {
   console.error("Usage: levi <init|status|request|approve|execute|validate|review|scan> <repository-path> [args]");
 }
 
-function main(argv) {
+async function main(argv) {
   const [command, repositoryPath, ...args] = argv;
 
   if (!command || !repositoryPath) {
@@ -33,14 +33,14 @@ function main(argv) {
   }
 
   try {
-    return dispatchCommand(command, intake.path, args);
+    return await dispatchCommand(command, intake.path, args);
   } catch (error) {
     console.error(error.message);
     return 1;
   }
 }
 
-function dispatchCommand(command, repositoryPath, args) {
+async function dispatchCommand(command, repositoryPath, args) {
   if (command === "scan") {
     console.log(`Repository path is valid: ${repositoryPath}`);
     printJson(summarizeProject(scanRepository(repositoryPath)));
@@ -58,7 +58,7 @@ function dispatchCommand(command, repositoryPath, args) {
   }
 
   if (command === "request") {
-    const result = requestTask(repositoryPath, args[0]);
+    const result = requestTask(repositoryPath, args[0], args.slice(1));
     printJson(result.payload);
     return result.exitCode;
   }
@@ -69,8 +69,9 @@ function dispatchCommand(command, repositoryPath, args) {
   }
 
   if (command === "execute") {
-    printJson(executeApprovedPlan(repositoryPath));
-    return 0;
+    const execution = await executeApprovedPlan(repositoryPath);
+    printJson(execution);
+    return execution.status === "COMPLETED" ? 0 : 1;
   }
 
   if (command === "validate") {
@@ -93,4 +94,6 @@ function printJson(value) {
   console.log(JSON.stringify(value, null, 2));
 }
 
-process.exitCode = main(process.argv.slice(2));
+main(process.argv.slice(2)).then((exitCode) => {
+  process.exitCode = exitCode;
+});

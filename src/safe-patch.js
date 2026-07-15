@@ -4,6 +4,7 @@ const { createCodingExecutor } = require("./coding-executor");
 
 const OPERATION_TYPES = new Set(["create", "update", "delete"]);
 const OPERATION_KEYS = new Set(["type", "path", "content", "approved"]);
+const BINARY_LIKE_CONTENT_PATTERN = /[\u0000-\u0008\u000B\u000E-\u001F\u007F]/;
 
 function applySafePatch(options) {
   validateOptions(options);
@@ -92,6 +93,10 @@ function normalizeOperation(operation, plannedFiles) {
     throw new Error("Safe patch create or update content is required.");
   }
 
+  if ((operation.type === "create" || operation.type === "update") && isBinaryLikeContent(operation.content)) {
+    throw new Error("Safe patch binary-like content is rejected.");
+  }
+
   if (operation.type === "delete" && operation.content !== undefined) {
     throw new Error("Safe patch delete operation must not include content.");
   }
@@ -113,6 +118,10 @@ function normalizeOperation(operation, plannedFiles) {
     path: relativePath,
     content: operation.content,
   };
+}
+
+function isBinaryLikeContent(content) {
+  return BINARY_LIKE_CONTENT_PATTERN.test(content);
 }
 
 function snapshotTarget(repositoryRoot, relativePath) {

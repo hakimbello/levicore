@@ -1,8 +1,12 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { createCodingExecutor } = require("./coding-executor");
-const { createCompletionReport } = require("./completion-reporter");
+const { createCodeGenerationPipeline } = require("./code-generation-pipeline");
+const { createCompletionReport, recordVerifiedTaskOutcome } = require("./completion-reporter");
 const { createMemoryStore } = require("./memory-store");
+const { createModelGateway } = require("./model-gateway");
+const { summarizeProject } = require("./project-summary");
+const { scanRepository } = require("./repository-scanner");
+const { applySafePatch } = require("./safe-patch");
 const { checkScope } = require("./scope-checker");
 const { approveTaskPlan, createTaskPlan } = require("./task-planner");
 const { runValidation } = require("./validation-runner");
@@ -19,6 +23,13 @@ const APPROVED_REQUIREMENTS = [
   { id: "LC-MVP-009", title: "Completion Reporting" },
   { id: "LC-MVP-010", title: "Primary User Interface" },
 ];
+const SOURCE_EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".ts", ".tsx", ".py", ".go", ".rs", ".rb", ".java", ".cs"]);
+const JAVASCRIPT_EXTENSIONS = new Set([".js", ".jsx", ".mjs"]);
+const DEFAULT_LIMITS = {
+  maxSteps: 10,
+  maxMilliseconds: 10000,
+  maxCost: 1,
+};
 
 function initializeProject(repositoryPath) {
   const state = loadState(repositoryPath);
@@ -34,7 +45,7 @@ function inspectStatus(repositoryPath) {
   return loadState(repositoryPath);
 }
 
-function requestTask(repositoryPath, requirementId) {
+function requestTask(repositoryPath, requirementId, requestArgs) {
   if (!requirementId) {
     throw new Error("Usage: levi request <repository-path> <requirement-id>");
   }
@@ -48,17 +59,31 @@ function requestTask(repositoryPath, requirementId) {
     };
   }
 
-  const plan = createTaskPlan({
+  const repositorySummary = summarizeProject(scanRepository(repositoryPath));
+  const expectedFile = normalizeExpectedPath(
+    requestArgs && requestArgs.length > 0 ? requestArgs[0] : selectDefaultExpectedFile(repositorySummary),
+  );
+  const validationCommand =
+    requestArgs && requestArgs.length > 1
+      ? requestArgs.slice(1).join(" ")
+      : defaultValidationCommand(expectedFile);
+  const objective = `Apply an approved assistant change to ${expectedFile} for ${requirementId}.`;
+  const plan = {
+    ...createTaskPlan({
     requirementId,
-    expectedFiles: ["UNKNOWN"],
-    acceptanceCriteria: ["UNKNOWN"],
-    validationCommands: ["UNKNOWN"],
-    risks: ["UNKNOWN"],
-    exclusions: ["UNKNOWN"],
-  });
+      expectedFiles: [expectedFile],
+      acceptanceCriteria: [`${expectedFile} is updated only through approved structured operations.`],
+      validationCommands: [validationCommand],
+      risks: ["Low: execution is limited to approved planned files and validation blocks completion."],
+      exclusions: ["Do not change files outside the approved expected files."],
+    }),
+    objective,
+    scopeBoundaries: [`Only ${expectedFile} may be changed by the assistant patch.`],
+  };
   const state = loadState(repositoryPath);
   state.request = { requirementId, scope };
   state.plan = plan;
+  state.repositorySummary = repositorySummary;
   saveState(repositoryPath, state);
   return {
     exitCode: 0,
@@ -85,26 +110,93 @@ function executeApprovedPlan(repositoryPath) {
     throw new Error("No approved task plan exists to execute.");
   }
 
-  const executor = createCodingExecutor({
-    repositoryRoot: repositoryPath,
-    plannedFiles: [".levi/state.json"],
+  if (state.plan.approvalState !== "APPROVED") {
+    throw new Error("Task plan must be APPROVED before execution.");
+  }
+
+  const repositorySummary = summarizeProject(scanRepository(repositoryPath));
+  const memoryStore = createMemoryStore(path.join(repositoryPath, ".levi", "memory.json"));
+  const gateway = createModelGateway({
+    providers: [createCliLocalProvider(repositoryPath, state.plan)],
     limits: {
-      maxSteps: 1,
-      maxMilliseconds: 10000,
-      maxCost: 1,
+      maxSpend: 1,
+      maxIterations: 2,
     },
   });
+  const pipeline = createCodeGenerationPipeline({ modelGateway: gateway });
 
-  return executor.execute({
-    operations: [
-      {
-        type: "update",
-        path: ".levi/state.json",
-        content: `${JSON.stringify({ ...state, executed: true }, null, 2)}\n`,
-        cost: 1,
-      },
-    ],
-  });
+  return pipeline
+    .generate({
+      projectId: "default",
+      taskPlan: state.plan,
+      approvedRequirements: APPROVED_REQUIREMENTS,
+      projectSummary: repositorySummary,
+      memoryStore,
+    })
+    .then((generation) => {
+      const patch = applySafePatch({
+        repositoryRoot: repositoryPath,
+        plannedFiles: state.plan.expectedFiles,
+        operations: generation.operations,
+        limits: {
+          ...DEFAULT_LIMITS,
+          maxSteps: Math.max(generation.operations.length, 1),
+        },
+      });
+
+      state.generation = generation;
+      state.patch = patch;
+
+      if (patch.status !== "COMPLETED") {
+        state.execution = {
+          status: "FAILED",
+          error: patch.error,
+        };
+        saveState(repositoryPath, state);
+        return state.execution;
+      }
+
+      const validation = runValidation({
+        repositoryRoot: repositoryPath,
+        commands: state.plan.validationCommands,
+      });
+      const report = createCompletionReport({
+        requirementId: state.plan.requirementId,
+        filesChanged: patch.changes.filter((change) => change.changed).map((change) => change.path),
+        changeSummary: patch.summary,
+        validationResults: validation.results,
+        knownFailures: validation.status === "FAILED" ? ["Validation failed."] : [],
+        remainingWork: validation.status === "FAILED" ? ["Resolve failed validation."] : [],
+        status: validation.status === "COMPLETED" ? "COMPLETED" : "FAILED",
+      });
+      const memoryRecord = recordVerifiedTaskOutcome(memoryStore, "default", report);
+
+      state.repositorySummary = repositorySummary;
+      state.validation = validation;
+      state.report = report;
+      state.memoryRecord = memoryRecord;
+      state.execution = {
+        status: report.status,
+      };
+      saveState(repositoryPath, state);
+
+      return {
+        status: report.status,
+        generation,
+        patch,
+        validation,
+        report,
+        memoryRecord,
+      };
+    })
+    .catch((error) => {
+      state.execution = {
+        status: "FAILED",
+        error: error.message,
+      };
+      saveState(repositoryPath, state);
+      return state.execution;
+    });
 }
 
 function validateProject(repositoryPath, commandParts) {
@@ -124,6 +216,10 @@ function validateProject(repositoryPath, commandParts) {
 
 function reviewProject(repositoryPath) {
   const state = loadState(repositoryPath);
+
+  if (state.report) {
+    return state.report;
+  }
 
   if (!state.request || !state.validation) {
     throw new Error("A request and validation result are required before review.");
@@ -155,6 +251,132 @@ function reviewProject(repositoryPath) {
   state.report = report;
   saveState(repositoryPath, state);
   return report;
+}
+
+function selectDefaultExpectedFile(repositorySummary) {
+  const sourceFile = repositorySummary.files.find((file) => {
+    if (!file || typeof file.path !== "string") {
+      return false;
+    }
+
+    if (file.path.startsWith(".levi/")) {
+      return false;
+    }
+
+    return SOURCE_EXTENSIONS.has(path.extname(file.path).toLowerCase());
+  });
+
+  if (!sourceFile) {
+    throw new Error("No supported source file exists for a default assistant task plan.");
+  }
+
+  return sourceFile.path;
+}
+
+function normalizeExpectedPath(filePath) {
+  if (typeof filePath !== "string" || filePath.trim() === "") {
+    throw new Error("Task request expected file is required.");
+  }
+
+  if (path.isAbsolute(filePath) || filePath.includes("\0")) {
+    throw new Error("Task request expected file must be relative.");
+  }
+
+  const parts = filePath.split(/[\\/]+/).filter(Boolean);
+
+  if (parts.length === 0 || parts.some((part) => part === "." || part === "..")) {
+    throw new Error("Task request expected file must stay inside the repository.");
+  }
+
+  return parts.join("/");
+}
+
+function defaultValidationCommand(expectedFile) {
+  if (JAVASCRIPT_EXTENSIONS.has(path.extname(expectedFile).toLowerCase())) {
+    return `node --check ${quoteCommandArg(expectedFile)}`;
+  }
+
+  return `node -e "require('node:fs').accessSync(process.argv[1])" ${quoteCommandArg(expectedFile)}`;
+}
+
+function quoteCommandArg(value) {
+  if (/^[A-Za-z0-9_./-]+$/.test(value)) {
+    return value;
+  }
+
+  return `"${value.replace(/"/g, '\\"')}"`;
+}
+
+function createCliLocalProvider(repositoryPath, taskPlan) {
+  return {
+    name: "levi-local-planned-provider",
+    type: "local",
+    model: "levi-local-structured-operation",
+    reason: "Local structured provider for the approved CLI assistant pipeline.",
+    estimateCost() {
+      return {
+        amount: 0,
+        costClass: "free-local",
+      };
+    },
+    async sendRequest() {
+      return {
+        content: JSON.stringify({
+          operations: taskPlan.expectedFiles.map((expectedFile) => plannedOperation(repositoryPath, expectedFile)),
+        }),
+        finishReason: "stop",
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+        },
+      };
+    },
+  };
+}
+
+function plannedOperation(repositoryPath, expectedFile) {
+  const targetPath = path.join(repositoryPath, expectedFile);
+  const exists = fs.existsSync(targetPath);
+  const content = exists ? fs.readFileSync(targetPath, "utf8") : "";
+
+  return {
+    type: exists ? "update" : "create",
+    path: expectedFile,
+    content: nextContent(expectedFile, content),
+  };
+}
+
+function nextContent(expectedFile, content) {
+  const marker = markerForFile(expectedFile);
+
+  if (content.includes(marker.trim())) {
+    return content;
+  }
+
+  const separator = content === "" || content.endsWith("\n") ? "" : "\n";
+  return `${content}${separator}${marker}`;
+}
+
+function markerForFile(expectedFile) {
+  const extension = path.extname(expectedFile).toLowerCase();
+
+  if (JAVASCRIPT_EXTENSIONS.has(extension) || extension === ".ts" || extension === ".tsx") {
+    return "// Levi assistant validated change\n";
+  }
+
+  if (extension === ".py" || extension === ".rb") {
+    return "# Levi assistant validated change\n";
+  }
+
+  if (extension === ".css") {
+    return "/* Levi assistant validated change */\n";
+  }
+
+  if (extension === ".html") {
+    return "<!-- Levi assistant validated change -->\n";
+  }
+
+  return "Levi assistant validated change.\n";
 }
 
 function loadState(repositoryPath) {
