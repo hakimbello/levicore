@@ -160,6 +160,7 @@ function executeApprovedPlan(repositoryPath) {
         repositoryRoot: repositoryPath,
         plannedFiles: state.plan.expectedFiles,
         operations: generation.operations,
+        requirementId: state.plan.requirementId,
         limits: {
           ...DEFAULT_LIMITS,
           maxSteps: Math.max(generation.operations.length, 1),

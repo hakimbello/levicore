@@ -61,17 +61,18 @@ function restoreFromRestorePoint(options) {
   }
 
   const actions = restorePoint.files.map((file) => restoreAction(repositoryRoot, file));
+  const currentSnapshots = actions.map(snapshotRestoreTarget);
 
-  for (const action of actions) {
-    if (action.type === "write") {
-      fs.mkdirSync(path.dirname(action.targetPath), { recursive: true });
-      fs.writeFileSync(action.targetPath, action.content, "utf8");
-      continue;
+  try {
+    applyRestoreActions(actions);
+  } catch (error) {
+    try {
+      rollbackRestoreTargets(currentSnapshots);
+    } catch (rollbackError) {
+      return restoreResult("FAILED", restorePoint, [], `${error.message}; rollback failed: ${rollbackError.message}`);
     }
 
-    if (action.type === "delete" && fs.existsSync(action.targetPath)) {
-      fs.unlinkSync(action.targetPath);
-    }
+    return restoreResult("FAILED", restorePoint, [], error.message);
   }
 
   return restoreResult("COMPLETED", restorePoint, actions, null);
@@ -217,6 +218,82 @@ function restoreAction(repositoryRoot, file) {
     targetPath,
     content: null,
   };
+}
+
+function snapshotRestoreTarget(action) {
+  if (!fs.existsSync(action.targetPath)) {
+    return {
+      path: action.path,
+      targetPath: action.targetPath,
+      existed: false,
+      content: null,
+    };
+  }
+
+  const stats = fs.statSync(action.targetPath);
+
+  if (!stats.isFile()) {
+    throw new Error(`Restore target is not a file: ${action.path}`);
+  }
+
+  const content = fs.readFileSync(action.targetPath, "utf8");
+
+  if (isBinaryLikeContent(content)) {
+    throw new Error(`Restore binary-like current content is rejected: ${action.path}`);
+  }
+
+  return {
+    path: action.path,
+    targetPath: action.targetPath,
+    existed: true,
+    content,
+  };
+}
+
+function applyRestoreActions(actions) {
+  for (const action of actions) {
+    applyRestoreAction(action);
+  }
+}
+
+function applyRestoreAction(action) {
+  if (action.type === "write") {
+    fs.mkdirSync(path.dirname(action.targetPath), { recursive: true });
+    fs.writeFileSync(action.targetPath, action.content, "utf8");
+    return;
+  }
+
+  if (action.type === "delete" && fs.existsSync(action.targetPath)) {
+    fs.unlinkSync(action.targetPath);
+  }
+}
+
+function rollbackRestoreTargets(snapshots) {
+  const errors = [];
+
+  for (const snapshot of snapshots.slice().reverse()) {
+    try {
+      restoreCurrentSnapshot(snapshot);
+    } catch (error) {
+      errors.push(error.message);
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new Error(errors.join("; "));
+  }
+}
+
+function restoreCurrentSnapshot(snapshot) {
+  if (snapshot.existed) {
+    fs.mkdirSync(path.dirname(snapshot.targetPath), { recursive: true });
+    fs.writeFileSync(snapshot.targetPath, snapshot.content, "utf8");
+    return;
+  }
+
+  if (fs.existsSync(snapshot.targetPath)) {
+    fs.unlinkSync(snapshot.targetPath);
+  }
 }
 
 function restoreResult(status, restorePoint, actions, error) {
