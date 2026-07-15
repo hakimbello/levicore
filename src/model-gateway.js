@@ -3,6 +3,7 @@ const {
   validateProviderCostEstimate,
   validateProviderRequest,
 } = require("./model-provider-interface");
+const { discoverLocalModels: discoverLocalModelEvidence } = require("./local-model-discovery");
 
 function createModelGateway(options) {
   validateOptions(options);
@@ -23,6 +24,40 @@ function createModelGateway(options) {
 
   function getProviders() {
     return providers.slice();
+  }
+
+  function discoverLocalModels(discoveryOptions = {}) {
+    if (
+      !discoveryOptions ||
+      typeof discoveryOptions !== "object" ||
+      Array.isArray(discoveryOptions)
+    ) {
+      throw new Error("Local model discovery options must be an object.");
+    }
+
+    const configuredLocalModels = providers
+      .filter((provider) => provider.type === "local")
+      .map((provider) => provider.model);
+    const hasOllamaOptions = Object.prototype.hasOwnProperty.call(discoveryOptions, "ollama");
+    const localOptions = hasOllamaOptions ? discoveryOptions.ollama : discoveryOptions;
+
+    if (!localOptions || typeof localOptions !== "object" || Array.isArray(localOptions)) {
+      throw new Error("Local model discovery options must be an object.");
+    }
+
+    const ollamaOptions = {
+      ...localOptions,
+      requiredModels: mergeModelLists(localOptions.requiredModels, configuredLocalModels),
+    };
+
+    if (hasOllamaOptions) {
+      return discoverLocalModelEvidence({
+        ...discoveryOptions,
+        ollama: ollamaOptions,
+      });
+    }
+
+    return discoverLocalModelEvidence(ollamaOptions);
   }
 
   async function route(request) {
@@ -71,6 +106,7 @@ function createModelGateway(options) {
   }
 
   return {
+    discoverLocalModels,
     getProviders,
     registerProvider,
     route,
@@ -101,6 +137,28 @@ function selectFallback(primary, providers) {
   return providers.find((provider) => provider.name !== primary.name) || null;
 }
 
+function mergeModelLists(first, second) {
+  const modelNames = new Set();
+
+  for (const list of [first, second]) {
+    if (list === undefined) {
+      continue;
+    }
+
+    if (!Array.isArray(list)) {
+      throw new Error("Local model discovery model lists must be arrays.");
+    }
+
+    for (const modelName of list) {
+      if (typeof modelName === "string" && modelName.trim() !== "") {
+        modelNames.add(modelName.trim());
+      }
+    }
+  }
+
+  return Array.from(modelNames);
+}
+
 function validateOptions(options) {
   if (!options || typeof options !== "object" || Array.isArray(options)) {
     throw new Error("Model gateway options are required.");
@@ -128,4 +186,5 @@ function validateOptions(options) {
 }
 module.exports = {
   createModelGateway,
+  discoverLocalModels: discoverLocalModelEvidence,
 };

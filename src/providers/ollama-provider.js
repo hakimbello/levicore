@@ -5,6 +5,7 @@ const {
   validateProviderRequest,
   validateProviderResponse,
 } = require("../model-provider-interface");
+const { discoverOllama } = require("../local-model-discovery");
 
 const DEFAULT_ENDPOINT = "http://127.0.0.1:11434";
 const DEFAULT_TIMEOUT_MS = 30000;
@@ -235,4 +236,5 @@ function requireString(value, fieldName) {
 
 module.exports = {
   createOllamaProvider,
+  discoverOllama,
 };

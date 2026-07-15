@@ -4,6 +4,7 @@ const {
   approvePlan,
   executeApprovedPlan,
   initializeProject,
+  inspectLocalReadiness,
   inspectStatus,
   requestTask,
   reviewProject,
@@ -14,7 +15,7 @@ const { scanRepository } = require("../src/repository-scanner");
 const { summarizeProject } = require("../src/project-summary");
 
 function printUsage() {
-  console.error("Usage: levi <init|status|request|approve|execute|validate|review|scan> <repository-path> [args]");
+  console.error("Usage: levi <init|status|readiness|request|approve|execute|validate|review|scan> <repository-path> [args]");
 }
 
 async function main(argv) {
@@ -54,6 +55,11 @@ async function dispatchCommand(command, repositoryPath, args) {
 
   if (command === "status") {
     printJson(inspectStatus(repositoryPath));
+    return 0;
+  }
+
+  if (command === "readiness") {
+    console.log(inspectLocalReadiness(repositoryPath).text);
     return 0;
   }
 

@@ -3,6 +3,7 @@ const path = require("node:path");
 const { createCodeGenerationPipeline } = require("./code-generation-pipeline");
 const { createCompletionReport, recordVerifiedTaskOutcome } = require("./completion-reporter");
 const { createMemoryStore } = require("./memory-store");
+const { createLocalReadinessReport } = require("./local-readiness-check");
 const { createModelGateway } = require("./model-gateway");
 const { summarizeProject } = require("./project-summary");
 const { scanRepository } = require("./repository-scanner");
@@ -43,6 +44,10 @@ function initializeProject(repositoryPath) {
 
 function inspectStatus(repositoryPath) {
   return loadState(repositoryPath);
+}
+
+function inspectLocalReadiness() {
+  return createLocalReadinessReport();
 }
 
 function requestTask(repositoryPath, requirementId, requestArgs) {
@@ -403,6 +408,7 @@ module.exports = {
   approvePlan,
   executeApprovedPlan,
   initializeProject,
+  inspectLocalReadiness,
   inspectStatus,
   requestTask,
   reviewProject,
