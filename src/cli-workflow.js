@@ -3,6 +3,8 @@ const path = require("node:path");
 const { createApprovalDecision, createApprovalSummary } = require("./approval-summary");
 const { createCodeGenerationPipeline } = require("./code-generation-pipeline");
 const { createCompletionReport, recordVerifiedTaskOutcome } = require("./completion-reporter");
+const { buildContext } = require("./context-builder");
+const { createContextPreview } = require("./context-preview");
 const { createMemoryStore } = require("./memory-store");
 const { createLocalReadinessReport } = require("./local-readiness-check");
 const { createModelGateway } = require("./model-gateway");
@@ -88,6 +90,7 @@ function requestTask(repositoryPath, requirementId, requestArgs) {
   plan.scopeBoundaries = [`Only ${expectedFile} may be changed by the assistant patch.`];
   plan.approvalSummary = createApprovalSummary(plan);
   plan.approvalDecision = createApprovalDecision(plan);
+  plan.contextPreview = createPreviewForPlan(repositoryPath, plan, repositorySummary);
   const state = loadState(repositoryPath);
   state.request = { requirementId, scope };
   state.plan = plan;
@@ -109,6 +112,11 @@ function approvePlan(repositoryPath) {
   state.plan = approveTaskPlan(state.plan);
   state.plan.approvalSummary = createApprovalSummary(state.plan);
   state.plan.approvalDecision = createApprovalDecision(state.plan);
+  state.plan.contextPreview = createPreviewForPlan(
+    repositoryPath,
+    state.plan,
+    summarizeProject(scanRepository(repositoryPath)),
+  );
   saveState(repositoryPath, state);
   return state.plan;
 }
@@ -313,6 +321,19 @@ function latestRestorePoint(state) {
   }
 
   return null;
+}
+
+function createPreviewForPlan(repositoryPath, plan, repositorySummary) {
+  const memoryStore = createMemoryStore(path.join(repositoryPath, ".levi", "memory.json"));
+  const context = buildContext({
+    projectId: "default",
+    taskPlan: plan,
+    approvedRequirements: APPROVED_REQUIREMENTS,
+    projectSummary: repositorySummary,
+    memoryStore,
+  });
+
+  return createContextPreview(context);
 }
 
 function selectDefaultExpectedFile(repositorySummary) {

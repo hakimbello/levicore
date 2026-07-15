@@ -29,6 +29,16 @@ function buildContext(input) {
     approvedRequirements: sanitizeCollection(input.approvedRequirements || []),
     repositoryFacts,
     projectMemory,
+    contextBudget: {
+      repositoryFacts: `${repositoryFacts.length}/${limits.maxRepositoryFacts}`,
+      memoryRecords: `${projectMemory.length}/${limits.maxMemoryRecords}`,
+      serializedCharacters: stableSerialize({
+        approvedRequirements: sanitizeCollection(input.approvedRequirements || []),
+        projectMemory,
+        repositoryFacts,
+        taskPlan: sanitizeValue(input.taskPlan),
+      }).length,
+    },
   };
 }
 
