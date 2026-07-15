@@ -22,6 +22,42 @@ function checkProviderHealth(input = {}) {
   }));
 }
 
+function createFallbackDiagnostics(input = {}) {
+  validateFallbackInput(input);
+
+  const checkedAt = input.providerHealth.checkedAt;
+  const providers = input.providers;
+  const primaryIndex = providerIndex(providers, input.primaryProvider);
+  const fallbackIndex = providerIndex(providers, input.fallbackProvider);
+  const primaryProvider = input.primaryProvider
+    ? providerDiagnostic(input.primaryProvider, healthAt(input.providerHealth, primaryIndex), primaryIndex)
+    : null;
+  const fallbackProvider = input.fallbackProvider
+    ? providerDiagnostic(input.fallbackProvider, healthAt(input.providerHealth, fallbackIndex), fallbackIndex)
+    : null;
+  const fallbackExecution = fallbackExecutionState(primaryProvider, fallbackProvider);
+
+  return {
+    checkedAt,
+    selectedPrimaryProvider: primaryProvider,
+    selectedFallbackProvider: fallbackProvider,
+    providerPriorityOrder: providers.map((provider, index) =>
+      providerPriorityEntry(provider, healthAt(input.providerHealth, index), index),
+    ),
+    fallbackCandidates: providers
+      .map((provider, index) => ({ provider, index }))
+      .filter((entry) => entry.provider !== input.primaryProvider)
+      .map((entry) => providerPriorityEntry(entry.provider, healthAt(input.providerHealth, entry.index), entry.index)),
+    fallbackSelectionReason: fallbackSelectionReason(primaryProvider, fallbackProvider),
+    fallbackExecutionAvailable: fallbackExecution.available,
+    fallbackExecutionStatus: fallbackExecution.status,
+    reason: fallbackExecution.reason,
+    primaryFailure: normalizeFailure(input.primaryFailure),
+    usage: sanitizePlainObject(input.usage || {}),
+    limits: sanitizePlainObject(input.limits || {}),
+  };
+}
+
 async function checkSingleProvider(provider, checkedAt) {
   const base = baseResult(provider, checkedAt);
   const configState = configurationState(provider);
@@ -148,6 +184,107 @@ function baseResult(provider, checkedAt) {
   };
 }
 
+function providerDiagnostic(provider, health, index) {
+  return {
+    priority: index >= 0 ? index + 1 : "UNKNOWN",
+    providerName: stringOrUnknown(provider && provider.name),
+    providerType: stringOrUnknown(provider && provider.type),
+    model: stringOrUnknown(provider && provider.model),
+    availability: stringOrUnknown(health && health.availability),
+    healthStatus: stringOrUnknown(health && health.healthStatus),
+    reason: sanitizeReason(health && health.reason),
+    lastCheckedAt: stringOrUnknown(health && health.lastCheckedAt),
+    pricingEvidenceStatus: stringOrUnknown(health && health.pricingEvidenceStatus),
+  };
+}
+
+function providerPriorityEntry(provider, health, index) {
+  return {
+    priority: index + 1,
+    providerName: stringOrUnknown(provider && provider.name),
+    providerType: stringOrUnknown(provider && provider.type),
+    model: stringOrUnknown(provider && provider.model),
+    healthStatus: stringOrUnknown(health && health.healthStatus),
+    pricingEvidenceStatus: stringOrUnknown(health && health.pricingEvidenceStatus),
+  };
+}
+
+function fallbackExecutionState(primaryProvider, fallbackProvider) {
+  if (!fallbackProvider) {
+    if (primaryProvider && primaryProvider.healthStatus === "UNAVAILABLE") {
+      return {
+        available: false,
+        status: "NO_FALLBACK",
+        reason: "Primary provider is unavailable and no fallback provider is registered.",
+      };
+    }
+
+    return {
+      available: false,
+      status: "NO_FALLBACK",
+      reason: "No fallback provider is registered.",
+    };
+  }
+
+  if (isExecutionReady(fallbackProvider.healthStatus)) {
+    if (primaryProvider && primaryProvider.healthStatus === "HEALTHY") {
+      return {
+        available: true,
+        status: "AVAILABLE",
+        reason: "Primary provider is healthy and fallback is ready if the primary provider fails.",
+      };
+    }
+
+    return {
+      available: true,
+      status: "AVAILABLE",
+      reason: "Fallback provider is ready if the selected primary provider cannot complete the request.",
+    };
+  }
+
+  if (
+    primaryProvider &&
+    primaryProvider.healthStatus === "UNAVAILABLE" &&
+    fallbackProvider.healthStatus === "UNAVAILABLE"
+  ) {
+    return {
+      available: false,
+      status: "UNAVAILABLE",
+      reason: "Primary and fallback providers are unavailable.",
+    };
+  }
+
+  if (fallbackProvider.healthStatus === "UNAVAILABLE") {
+    return {
+      available: false,
+      status: "UNAVAILABLE",
+      reason: "Fallback provider is unavailable.",
+    };
+  }
+
+  return {
+    available: false,
+    status: "UNKNOWN",
+    reason: "Fallback availability is UNKNOWN.",
+  };
+}
+
+function fallbackSelectionReason(primaryProvider, fallbackProvider) {
+  if (!primaryProvider) {
+    return "No primary provider is selected.";
+  }
+
+  if (!fallbackProvider) {
+    return "No fallback provider is registered after the selected primary provider.";
+  }
+
+  return `Fallback provider ${fallbackProvider.providerName} was selected because it is the next provider in the registered priority order after primary provider ${primaryProvider.providerName}.`;
+}
+
+function isExecutionReady(healthStatus) {
+  return healthStatus === "HEALTHY" || healthStatus === "DEGRADED";
+}
+
 function normalizeHealthStatus(healthStatus, availability) {
   if (HEALTH_STATUSES.has(healthStatus)) {
     return healthStatus;
@@ -236,6 +373,34 @@ function normalizeCheckedAt(checkedAt) {
   return checkedAt;
 }
 
+function normalizeFailure(failure) {
+  if (failure === undefined || failure === null) {
+    return null;
+  }
+
+  if (typeof failure === "string") {
+    return {
+      code: "UNKNOWN",
+      providerName: "UNKNOWN",
+      message: sanitizeReason(failure),
+    };
+  }
+
+  if (!isPlainObject(failure) && !(failure instanceof Error)) {
+    return {
+      code: "UNKNOWN",
+      providerName: "UNKNOWN",
+      message: "Primary provider failure details are UNKNOWN.",
+    };
+  }
+
+  return {
+    code: stringOrUnknown(failure.code),
+    providerName: stringOrUnknown(failure.providerName),
+    message: sanitizeReason(failure.message),
+  };
+}
+
 function sanitizeReason(reason) {
   const text = typeof reason === "string" && reason.trim() !== "" ? reason : "Provider health is UNKNOWN.";
 
@@ -259,6 +424,75 @@ function validateInput(input) {
   }
 }
 
+function validateFallbackInput(input) {
+  if (!isPlainObject(input)) {
+    throw new Error("Fallback diagnostics input is required.");
+  }
+
+  if (!Array.isArray(input.providers)) {
+    throw new Error("Fallback diagnostics providers must be an array.");
+  }
+
+  if (!isPlainObject(input.providerHealth) || !Array.isArray(input.providerHealth.providers)) {
+    throw new Error("Fallback diagnostics provider health is required.");
+  }
+
+  if (typeof input.providerHealth.checkedAt !== "string" || input.providerHealth.checkedAt.trim() === "") {
+    throw new Error("Fallback diagnostics provider health checkedAt is required.");
+  }
+}
+
+function healthAt(providerHealth, index) {
+  if (index < 0) {
+    return null;
+  }
+
+  return providerHealth.providers[index] || null;
+}
+
+function providerIndex(providers, provider) {
+  if (!provider) {
+    return -1;
+  }
+
+  const directIndex = providers.indexOf(provider);
+
+  if (directIndex >= 0) {
+    return directIndex;
+  }
+
+  return providers.findIndex((candidate) =>
+    candidate &&
+    candidate.name === provider.name &&
+    candidate.type === provider.type &&
+    candidate.model === provider.model,
+  );
+}
+
+function sanitizePlainObject(value) {
+  if (!isPlainObject(value)) {
+    return {};
+  }
+
+  const sanitized = {};
+
+  for (const key of Object.keys(value).sort()) {
+    const child = value[key];
+
+    if (isPlainObject(child)) {
+      sanitized[key] = sanitizePlainObject(child);
+    } else if (Array.isArray(child)) {
+      sanitized[key] = child.map((entry) => (isPlainObject(entry) ? sanitizePlainObject(entry) : entry));
+    } else if (typeof child === "string") {
+      sanitized[key] = sanitizeReason(child);
+    } else {
+      sanitized[key] = child;
+    }
+  }
+
+  return sanitized;
+}
+
 function stringOrUnknown(value) {
   return typeof value === "string" && value.trim() !== "" ? value : "UNKNOWN";
 }
@@ -272,4 +506,5 @@ module.exports = {
   PRICING_EVIDENCE_PRESENT,
   PRICING_EVIDENCE_UNKNOWN,
   checkProviderHealth,
+  createFallbackDiagnostics,
 };

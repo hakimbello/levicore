@@ -6,7 +6,10 @@ const {
 const { ALLOWED, BLOCKED, UNKNOWN, checkBudget } = require("./budget-guardrails");
 const { estimateTaskCost } = require("./cost-estimator");
 const { discoverLocalModels: discoverLocalModelEvidence } = require("./local-model-discovery");
-const { checkProviderHealth: checkProviderHealthForProviders } = require("./provider-health");
+const {
+  checkProviderHealth: checkProviderHealthForProviders,
+  createFallbackDiagnostics,
+} = require("./provider-health");
 
 function createModelGateway(options) {
   validateOptions(options);
@@ -117,6 +120,52 @@ function createModelGateway(options) {
     });
   }
 
+  async function inspectFallbackDiagnostics(request = {}, diagnosticOptions = {}) {
+    validateProviderRequest(request);
+
+    if (
+      !diagnosticOptions ||
+      typeof diagnosticOptions !== "object" ||
+      Array.isArray(diagnosticOptions)
+    ) {
+      throw new Error("Fallback diagnostics options must be an object.");
+    }
+
+    const providerHealth = await checkProviderHealth({
+      checkedAt: diagnosticOptions.checkedAt,
+    });
+
+    if (providers.length === 0) {
+      return createFallbackDiagnostics({
+        providers,
+        providerHealth,
+        primaryProvider: null,
+        fallbackProvider: null,
+        primaryFailure: diagnosticOptions.primaryFailure,
+        usage: {
+          spent,
+          iterations,
+        },
+        limits: options.limits,
+      });
+    }
+
+    const preview = estimateCost(request);
+
+    return createFallbackDiagnostics({
+      providers,
+      providerHealth,
+      primaryProvider: preview.provider,
+      fallbackProvider: preview.fallback,
+      primaryFailure: diagnosticOptions.primaryFailure,
+      usage: {
+        spent,
+        iterations,
+      },
+      limits: options.limits,
+    });
+  }
+
   async function route(request) {
     validateProviderRequest(request);
 
@@ -153,6 +202,7 @@ function createModelGateway(options) {
     estimateCost,
     estimateCostDecision,
     getProviders,
+    inspectFallbackDiagnostics,
     registerProvider,
     route,
   };
