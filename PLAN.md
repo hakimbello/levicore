@@ -643,6 +643,300 @@ Acceptance criteria:
 
 Status: NOT STARTED
 
+## Phase 5: Release 0.3 Certification
+
+Status: NOT STARTED
+
+Purpose: Certify Release 0.3 before Release 0.4 planning begins.
+
+### M27-001 Release 0.3 End-to-End Audit
+
+Task ID: M27-001
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Audit the complete Release 0.3 workflow from local readiness through task intake, planning, context, cost, approval, controlled provider routing, safe patching, validation, completion reporting, memory persistence, and restore.
+
+Expected files:
+
+- No implementation files expected unless an audit finding is approved as a separate task.
+
+Acceptance criteria:
+
+- Audit runs against a temporary repository outside LeviCore.
+- Audit covers local setup readiness, prompt-free intake, intent classification, context preview, context budget, context cache, cost estimation, budget guardrails, approval summary, destructive confirmation, provider health, fallback diagnostics, safe patching, validation, completion reporting, memory persistence, and restore.
+- Audit includes approved success paths and failure paths for unsafe, ambiguous, out-of-scope, provider failure, malformed output, validation failure, and restore failure cases.
+- Audit records exact commands, working directories, exit codes, results, changed files, known failures, and remaining work.
+- Audit does not modify implementation files unless a separate fix task is approved.
+
+Status: NOT STARTED
+
+### M27-FIX-001 Intake-To-Plan Handoff
+
+Task ID: M27-FIX-001
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Carry the validated plain-language intake through scope checking and task planning without replacing it with a canned requirement or objective.
+
+Expected files:
+
+- src/task-intake.js
+- src/intent-classifier.js
+- src/scope-checker.js
+- src/task-planner.js
+- src/cli-workflow.js
+
+Acceptance criteria:
+
+- Original request remains preserved.
+- Normalized objective drives the task plan.
+- Task type drives relevant planning behavior.
+- No hard-coded LC-MVP requirement replaces post-MVP intake.
+- Missing information blocks planning with clear questions.
+- Ambiguous and rejected intake cannot proceed.
+- Plan contains no canned marker objective.
+
+Status: NOT STARTED
+
+### M27-FIX-002 Real Plan Generation
+
+Task ID: M27-FIX-002
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Generate a real approved implementation plan from the validated intake and repository evidence.
+
+Expected files:
+
+- src/task-planner.js
+- src/project-summary.js
+- src/repository-scanner.js
+- src/scope-checker.js
+- src/cli-workflow.js
+
+Acceptance criteria:
+
+- Plan describes the requested product or feature.
+- Expected files come from repository evidence and task needs.
+- Acceptance criteria reflect the actual request.
+- Validation commands reflect the target project.
+- No UNKNOWN placeholders when evidence exists.
+- No hard-coded index.html or canned marker operation.
+- Plan remains bounded and requires approval.
+
+Status: NOT STARTED
+
+### M27-FIX-003 Public Provider Consistency
+
+Task ID: M27-FIX-003
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Make public readiness, routing, and execution use the same registered provider configuration.
+
+Expected files:
+
+- src/model-gateway.js
+- src/model-provider-interface.js
+- src/provider-health.js
+- src/local-readiness-check.js
+- src/code-generation-pipeline.js
+- src/cli-workflow.js
+
+Acceptance criteria:
+
+- No hidden structured provider is used when readiness reports no provider.
+- Controlled providers are allowed only in explicit test mode.
+- Public execution fails clearly when no usable provider exists.
+- Readiness and execution report the same provider state.
+- Local-first routing remains preserved.
+
+Status: NOT STARTED
+
+### M27-FIX-004 Real Public Execution
+
+Task ID: M27-FIX-004
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Connect the approved real task plan to context, prompt, provider, operation validation, safe patch, validation, reporting, and memory through the public CLI.
+
+Expected files:
+
+- bin/levi.js
+- src/cli-workflow.js
+- src/context-builder.js
+- src/prompt-engine.js
+- src/model-gateway.js
+- src/code-generation-pipeline.js
+- src/coding-executor.js
+- src/safe-patch.js
+- src/validation-runner.js
+- src/completion-reporter.js
+- src/memory-store.js
+
+Acceptance criteria:
+
+- The requested website or feature drives generated operations.
+- Execution no longer appends a canned marker.
+- Actual planned files are created or updated.
+- Provider output is treated as untrusted.
+- Safe patch boundaries remain enforced.
+- Failed generation or validation prevents completion.
+- Completion report describes actual work.
+
+Status: NOT STARTED
+
+### M27-FIX-005 Public Cost Decision Enforcement
+
+Task ID: M27-FIX-005
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Require a valid public pre-execution cost decision.
+
+Expected files:
+
+- src/cost-estimator.js
+- src/budget-guardrails.js
+- src/approval-summary.js
+- src/model-gateway.js
+- src/code-generation-pipeline.js
+- src/cli-workflow.js
+
+Acceptance criteria:
+
+- FREE local tasks proceed according to policy.
+- Known remote cost uses budget guardrails.
+- UNKNOWN cost requires explicit approval.
+- BLOCKED cost cannot execute.
+- Approval summary and execution use the same cost decision.
+- No hidden bypass exists.
+
+Status: NOT STARTED
+
+### M27-FIX-006 Internal Metadata Exclusion
+
+Task ID: M27-FIX-006
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Exclude Levi runtime metadata from repository scanning, context, project facts, and model input.
+
+Expected files:
+
+- src/repository-scanner.js
+- src/project-summary.js
+- src/context-builder.js
+- src/context-preview.js
+- src/context-cache.js
+- src/prompt-engine.js
+
+Acceptance criteria:
+
+- .levi directory is ignored by scanner.
+- .levi/state.json and .levi/memory.json never enter context.
+- Runtime metadata remains available to Levi internally.
+- Existing secret and generated-file exclusions remain intact.
+
+Status: NOT STARTED
+
+### M27-FIX-007 Exact Restore Identity
+
+Task ID: M27-FIX-007
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Return the target repository to its exact pre-task state after restore.
+
+Expected files:
+
+- src/restore-points.js
+- src/coding-executor.js
+- src/safe-patch.js
+- src/cli-workflow.js
+
+Acceptance criteria:
+
+- Tracked files match pre-change state.
+- Files created by Levi are removed.
+- Files deleted by Levi are recreated.
+- Runtime metadata created solely for the task is cleaned or restored to its prior state.
+- Pre-existing .levi state is preserved.
+- Exact directory identity check passes for the approved test fixture.
+- No unrelated files are removed.
+
+Status: NOT STARTED
+
+### M27-REAUDIT-001 Release 0.3 Certification Reaudit
+
+Task ID: M27-REAUDIT-001
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Repeat the full real website-building certification audit after all fixes.
+
+Expected files:
+
+- No implementation files expected unless a reaudit finding is approved as a separate task.
+
+Acceptance criteria:
+
+- Full real website-building certification audit is repeated after all M27 fix tasks.
+- Final verdict is recorded as RELEASE_0_3_CERTIFIED or BLOCKED.
+
+Final verdict:
+
+- RELEASE_0_3_CERTIFIED
+- BLOCKED
+
+Status: NOT STARTED
+
+### M27-002 Dogfooding Readiness Review
+
+Task ID: M27-002
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Review whether Release 0.3 is ready for personal dogfooding by a solo builder without manual prompt, context, routing, patch, pricing, cache, or restore configuration.
+
+Expected files:
+
+- No implementation files expected unless a review finding is approved as a separate task.
+
+Acceptance criteria:
+
+- Review confirms a normal user can start with local-first setup and plain-language task intake.
+- Review confirms users do not manually configure prompts, context selection, routing, patch schemas, pricing internals, cache behavior, or restore internals.
+- Review confirms approval, destructive confirmation, validation, completion reporting, and restore behavior remain understandable and safe.
+- Review confirms real website-building work is credible for personal dogfooding or lists exact blockers.
+- Review records exact evidence, commands, results, blockers, and owner recommendation.
+
+Status: NOT STARTED
+
+### M27-003 Release 0.3 Certification
+
+Task ID: M27-003
+
+Requirement ID: POST_MVP until approved by the owner
+
+Objective: Certify Release 0.3 completion status after the end-to-end audit and dogfooding readiness review are complete.
+
+Expected files:
+
+- No implementation files expected unless a certification blocker is approved as a separate task.
+
+Acceptance criteria:
+
+- Certification reviews M27-001 and M27-002 results.
+- Certification confirms all Release 0.3 blockers are resolved or explicitly records BLOCKED.
+- Certification confirms no Release 0.4 planning begins before Release 0.3 certification.
+- Certification records final verdict as RELEASE_0_3_CERTIFIED or BLOCKED.
+- Certification records exact validation commands and results.
+
+Status: NOT STARTED
+
 ## Completion Rules
 
 - One task at a time.
