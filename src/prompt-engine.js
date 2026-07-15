@@ -16,6 +16,7 @@ function buildPrompt(input) {
     section("Approved Requirements", serializeCollection(input.approvedRequirements)),
     section("Cited Repository Facts", serializeCollection(input.repositoryFacts)),
     section("Verified Project Memory", serializeCollection(filterMemory(input.projectMemory))),
+    section("Required Output", listValues(input.outputInstructions || "UNKNOWN")),
   ];
 
   return {
