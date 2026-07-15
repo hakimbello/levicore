@@ -725,3 +725,129 @@ Acceptance criteria:
 - No feature creep or architecture changes are introduced during the audit.
 
 Status: NOT STARTED
+
+### M17-FIX-001 Remote Fallback Execution
+
+Task ID: M17-FIX-001
+
+Requirement ID: LC-MVP-006
+
+Objective: When the selected provider fails, execute the approved fallback provider through the existing Model Gateway flow.
+
+Expected files:
+
+- src/code-generation-pipeline.js
+- src/model-gateway.js only if required by the existing architecture
+
+Acceptance criteria:
+
+- Primary provider failure is detected.
+- Approved fallback provider is invoked.
+- Routing record preserves primary and fallback details.
+- Spending and iteration limits remain enforced.
+- If fallback also fails, return a clear failure.
+- No provider-specific logic enters the pipeline.
+
+Status: NOT STARTED
+
+### M17-FIX-002 Binary Write Rejection
+
+Task ID: M17-FIX-002
+
+Requirement ID: LC-MVP-007
+
+Objective: Reject binary-like create or update content before Safe Patch writes files.
+
+Expected files:
+
+- src/safe-patch.js
+
+Acceptance criteria:
+
+- NUL-byte content is rejected.
+- Binary-like content is rejected before any file change.
+- Text content remains accepted.
+- Stop-on-first-failure remains intact.
+- No partial write occurs.
+
+Status: NOT STARTED
+
+### M17-FIX-003 Approval Enforcement
+
+Task ID: M17-FIX-003
+
+Requirement ID: LC-MVP-005
+
+Objective: Prevent execution unless the current task plan has explicit APPROVED state.
+
+Expected files:
+
+- src/cli-workflow.js
+
+Acceptance criteria:
+
+- Requested but unapproved plans cannot execute.
+- Approved plans can execute.
+- Missing plans fail clearly.
+- Existing state remains uncorrupted after rejection.
+
+Status: NOT STARTED
+
+### M17-FIX-004 Real CLI Pipeline Integration
+
+Task ID: M17-FIX-004
+
+Requirement ID: LC-MVP-010
+
+Objective: Connect the public CLI workflow to the real internal assistant pipeline.
+
+Required flow:
+
+request
+-> real task plan
+-> approve
+-> context builder
+-> prompt engine
+-> model gateway
+-> provider response
+-> code generation pipeline
+-> safe patch
+-> validation runner
+-> completion reporter
+-> verified memory
+
+Expected files:
+
+- src/cli-workflow.js
+- bin/levi.js only if command dispatch changes are required
+- Existing Phase 2 modules only where integration requires it
+
+Acceptance criteria:
+
+- request no longer stores UNKNOWN placeholder plan fields.
+- execute no longer only updates .levi/state.json.
+- CLI uses existing Levi Core modules.
+- User does not manually configure prompts, context, routing, or patch schemas.
+- File changes require approved plan boundaries.
+- Failed generation, patching, or validation prevents COMPLETED.
+- Completion report reflects actual changed files and actual validation results.
+- Verified outcomes persist to memory.
+- Existing scan, status, and review commands remain functional.
+
+Status: NOT STARTED
+
+### M17-REAUDIT-001 Functional Assistant Reaudit
+
+Task ID: M17-REAUDIT-001
+
+Requirement ID: LC-MVP-009
+
+Objective: Repeat the full functional assistant audit and bug sweep.
+
+Acceptance criteria:
+
+- Full functional assistant audit is repeated after M17 fix tasks.
+- Bug sweep is repeated after M17 fix tasks.
+- Final verdict is FUNCTIONAL_INTERNAL_ASSISTANT_100_PERCENT or BLOCKED.
+
+Status: NOT STARTED
