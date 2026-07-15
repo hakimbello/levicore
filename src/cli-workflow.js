@@ -13,6 +13,7 @@ const { removeProjectDecisions, reviewProjectDecisions } = require("./project-de
 const { summarizeProject } = require("./project-summary");
 const { scanRepository } = require("./repository-scanner");
 const { applySafePatch } = require("./safe-patch");
+const { searchProjectSummary, searchStructuralIndex } = require("./structural-search");
 const { inspectRestorePoint, restoreFromRestorePoint } = require("./restore-points");
 const { checkScope } = require("./scope-checker");
 const { createTaskIntake } = require("./task-intake");
@@ -458,6 +459,22 @@ function removeProjectDecisionRecords(repositoryPath, decisionIds, confirmation,
   });
 }
 
+function searchProjectStructure(indexOrSummary, filters = {}, options = {}) {
+  if (indexOrSummary && Array.isArray(indexOrSummary.symbols)) {
+    return searchStructuralIndex({
+      structuralIndex: indexOrSummary,
+      filters,
+      limit: options.limit,
+    });
+  }
+
+  return searchProjectSummary({
+    projectSummary: indexOrSummary,
+    filters,
+    limit: options.limit,
+  });
+}
+
 function latestRestorePoint(state) {
   if (state && state.patch && state.patch.restorePoint) {
     return state.patch.restorePoint;
@@ -745,5 +762,6 @@ module.exports = {
   restoreProject,
   reviewProject,
   reviewProjectDecisionRecords,
+  searchProjectStructure,
   validateProject,
 };
