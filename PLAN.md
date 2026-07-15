@@ -937,6 +937,755 @@ Acceptance criteria:
 
 Status: NOT STARTED
 
+## Phase 6: Release 0.4A Daily-Use Foundation
+
+Status: NOT STARTED
+
+Purpose: Make Levi reliable for daily personal use by adding durable project knowledge, durable decisions, structural search, project health, and a simple UI while preserving Release 0.3 safety, cost, evidence, validation, and restore behavior.
+
+Release 0.4A implementation rules:
+
+- Planning output from this phase remains implementation guidance, not code approval.
+- One task is implemented at a time.
+- Each implementation task requires task-specific owner approval before code changes.
+- Preserve Levi Core module boundaries and Levi-owned interfaces.
+- Levi Core retains business logic; UI work remains a thin interface over Levi Core.
+- Do not add prompt-engineering-first workflows, exposed patch schemas, primary-workflow provider configuration, standalone IDE parity, autocomplete parity, marketplace behavior, autonomous deployment, or team collaboration features.
+- No external dependency is approved without OSS evaluation.
+
+## M28 Project Knowledge
+
+Status: NOT STARTED
+
+Purpose: Build durable, evidence-backed understanding of project architecture, conventions, commands, dependencies, and business rules.
+
+### M28-001 Project Knowledge Extraction
+
+Task ID: M28-001
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Extract evidence-backed project knowledge from repository structure, source files, documentation, manifests, and existing Levi facts without treating inference as approved truth.
+
+Expected files:
+
+- src/project-knowledge.js
+- src/project-summary.js
+- src/repository-scanner.js
+- src/framework-detection.js
+- src/dependency-analysis.js
+
+Acceptance criteria:
+
+- Extracts architecture, conventions, commands, dependencies, and business rules only from repository evidence.
+- Preserves source evidence for every extracted fact.
+- Marks absent or unclear knowledge as UNKNOWN.
+- Excludes secrets, generated files, dependencies, binaries, runtime metadata, and unverified model output.
+- Does not modify project files or execute providers.
+
+Status: NOT STARTED
+
+### M28-002 Project Knowledge Approval And Storage
+
+Task ID: M28-002
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Let the user review extracted project knowledge and store only approved or verified records for future planning.
+
+Expected files:
+
+- src/project-knowledge.js
+- src/memory-store.js
+- src/cli-workflow.js
+
+Acceptance criteria:
+
+- Extracted knowledge remains pending until approved or verified.
+- Approved knowledge records include source evidence, confidence state, timestamp, and project identity.
+- Rejected knowledge does not affect planning, context, execution, or memory retrieval.
+- Stored project knowledge remains isolated to the active project.
+- Approval and storage do not modify user project files.
+
+Status: NOT STARTED
+
+### M28-003 Project Knowledge Retrieval
+
+Task ID: M28-003
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Retrieve relevant approved project knowledge for planning, context preview, and task review without requiring manual context selection.
+
+Expected files:
+
+- src/project-knowledge.js
+- src/memory-store.js
+- src/context-builder.js
+- src/context-preview.js
+- src/task-planner.js
+
+Acceptance criteria:
+
+- Retrieves only approved or verified project knowledge for the active project.
+- Returns relevant knowledge with evidence references and confidence state.
+- Does not include rejected, stale, unverified, secret, generated, dependency, binary, or runtime metadata records.
+- Planning uses retrieved project knowledge only through approved evidence.
+- Retrieval is deterministic for the same repository state, task input, and memory state.
+
+Status: NOT STARTED
+
+### M28-004 Project Knowledge Validation
+
+Task ID: M28-004
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Validate project knowledge extraction, approval, storage, and retrieval across supported and failure cases.
+
+Expected files:
+
+- src/project-knowledge.js
+- src/memory-store.js
+- src/context-builder.js
+- src/context-preview.js
+- src/task-planner.js
+- src/cli-workflow.js
+
+Acceptance criteria:
+
+- Validation covers architecture facts, conventions, commands, dependencies, business rules, UNKNOWN values, rejected records, and stale evidence.
+- Validation confirms project knowledge affects planning only after approval or verification.
+- Validation confirms secrets, generated files, dependencies, binaries, runtime metadata, and unverified model output are excluded.
+- Validation confirms project isolation and deterministic repeated output.
+- Existing Release 0.3 scan, intake, planning, context, execution, validation, memory, and restore behavior does not regress.
+
+Status: NOT STARTED
+
+## M29 Durable Project Decisions
+
+Status: NOT STARTED
+
+Purpose: Preserve approved project rules such as framework choices, coding standards, protected systems, and validation requirements.
+
+### M29-001 Decision Record
+
+Task ID: M29-001
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Record durable project decisions with approval evidence, scope, status, and source references.
+
+Expected files:
+
+- src/project-decisions.js
+- src/memory-store.js
+- src/cli-workflow.js
+
+Acceptance criteria:
+
+- Records approved project decisions for framework choices, coding standards, protected systems, validation requirements, and business rules.
+- Each decision includes approval evidence, source, scope, timestamp, status, and project identity.
+- Decisions begin in a non-enforcing state until explicitly approved.
+- Rejected or incomplete decision records cannot affect planning or execution.
+- Decision records remain isolated to the active project.
+
+Status: NOT STARTED
+
+### M29-002 Decision Enforcement
+
+Task ID: M29-002
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Apply active approved project decisions during scope checking and task planning so plans respect durable project rules.
+
+Expected files:
+
+- src/project-decisions.js
+- src/scope-checker.js
+- src/task-planner.js
+- src/context-builder.js
+- src/approval-summary.js
+
+Acceptance criteria:
+
+- Active approved decisions are included as planning constraints with evidence.
+- Plans that conflict with approved decisions are blocked or require explicit user review before execution.
+- Rejected, removed, expired, incomplete, or unapproved decisions do not affect planning.
+- Decision enforcement does not bypass normal task approval, cost approval, destructive confirmation, or safe patch boundaries.
+- Decision enforcement remains deterministic and explainable in the plan or approval summary.
+
+Status: NOT STARTED
+
+### M29-003 Decision Review And Removal
+
+Task ID: M29-003
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Let users inspect, review, deactivate, and remove durable project decisions without corrupting project memory.
+
+Expected files:
+
+- src/project-decisions.js
+- src/memory-store.js
+- src/cli-workflow.js
+
+Acceptance criteria:
+
+- Users can list active, inactive, rejected, and removed project decisions.
+- Decision removal or deactivation requires explicit user approval.
+- Removed or inactive decisions stop affecting future planning.
+- Decision history preserves enough evidence to explain prior planning behavior.
+- Removing a decision does not remove unrelated project knowledge, memory, task outcomes, or runtime metadata.
+
+Status: NOT STARTED
+
+### M29-004 Decision Validation
+
+Task ID: M29-004
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Validate durable decision recording, enforcement, review, deactivation, removal, and project isolation.
+
+Expected files:
+
+- src/project-decisions.js
+- src/memory-store.js
+- src/scope-checker.js
+- src/task-planner.js
+- src/context-builder.js
+- src/cli-workflow.js
+
+Acceptance criteria:
+
+- Validation covers approved, rejected, incomplete, conflicting, inactive, removed, and stale decisions.
+- Validation confirms active approved decisions affect planning only through approved evidence.
+- Validation confirms removed or rejected decisions do not affect future plans.
+- Validation confirms normal approval, cost, destructive confirmation, safe patch, validation, and restore behavior remain intact.
+- Validation records exact commands and results.
+
+Status: NOT STARTED
+
+## M30 Structural Code Search
+
+Status: NOT STARTED
+
+Purpose: Find functions, classes, modules, imports, routes, and related code using deterministic repository structure rather than text matching alone.
+
+### M30-001 Symbol Index
+
+Task ID: M30-001
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Build a deterministic symbol index for supported source files using repository evidence and safe parsing.
+
+Expected files:
+
+- src/structural-index.js
+- src/repository-scanner.js
+- src/project-summary.js
+
+Acceptance criteria:
+
+- Indexes supported functions, classes, modules, imports, exports, routes, and entry points when evidence exists.
+- Marks unsupported languages or parse failures as UNKNOWN without inventing structure.
+- Excludes secrets, generated files, dependencies, binaries, runtime metadata, and ignored directories.
+- Does not execute project code or providers.
+- Index output is deterministic for the same repository state.
+
+Status: NOT STARTED
+
+### M30-002 Structural Search
+
+Task ID: M30-002
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Provide deterministic structural search for symbols, modules, imports, routes, and files without relying on text matching alone.
+
+Expected files:
+
+- src/structural-search.js
+- src/structural-index.js
+- src/cli-workflow.js
+
+Acceptance criteria:
+
+- Searches by symbol name, symbol kind, module path, import, export, route, and file relationship where indexed evidence exists.
+- Returns source locations, evidence, and UNKNOWN values for unsupported or absent structure.
+- Does not return secret, generated, dependency, binary, runtime metadata, or ignored-directory content.
+- Search results are deterministic and bounded.
+- Search does not modify files, execute providers, or run project code.
+
+Status: NOT STARTED
+
+### M30-003 Relationship Search
+
+Task ID: M30-003
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Find deterministic relationships between symbols, imports, modules, routes, entry points, tests, and related files.
+
+Expected files:
+
+- src/structural-search.js
+- src/structural-index.js
+- src/project-summary.js
+- src/context-builder.js
+
+Acceptance criteria:
+
+- Reports relationships only when repository evidence supports them.
+- Shows callers, imports, exports, route handlers, related tests, and likely entry points when available.
+- Marks ambiguous or unsupported relationships as UNKNOWN.
+- Relationship search can support task planning and context selection without exposing prompt configuration.
+- Relationship results remain isolated to the active repository.
+
+Status: NOT STARTED
+
+### M30-004 Structural Search Validation
+
+Task ID: M30-004
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Validate symbol indexing, structural search, relationship search, exclusions, deterministic output, and failure handling.
+
+Expected files:
+
+- src/structural-index.js
+- src/structural-search.js
+- src/repository-scanner.js
+- src/context-builder.js
+- src/cli-workflow.js
+
+Acceptance criteria:
+
+- Validation covers functions, classes, modules, imports, exports, routes, entry points, tests, unsupported files, parse failures, and UNKNOWN results.
+- Validation confirms secret, generated, dependency, binary, runtime metadata, and ignored-directory exclusions remain intact.
+- Validation confirms structural search can answer real repository questions with cited evidence.
+- Validation confirms repeated searches produce deterministic output.
+- Existing Release 0.3 scan, planning, context, execution, validation, memory, and restore behavior does not regress.
+
+Status: NOT STARTED
+
+## M31 Project Health
+
+Status: NOT STARTED
+
+Purpose: Provide one plain-language view of build status, tests, provider readiness, project knowledge, context quality, restore readiness, and known problems.
+
+### M31-001 Project Health Signals
+
+Task ID: M31-001
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Collect deterministic project health signals from existing Levi modules without executing unsafe work or providers.
+
+Expected files:
+
+- src/project-health.js
+- src/project-summary.js
+- src/local-readiness-check.js
+- src/provider-health.js
+- src/context-preview.js
+- src/restore-points.js
+- src/validation-runner.js
+
+Acceptance criteria:
+
+- Collects build status, test signals, provider readiness, project knowledge state, context quality, restore readiness, and known problems when evidence exists.
+- Marks missing or unavailable signals as UNKNOWN.
+- Does not run unapproved validation commands, providers, prompts, patches, or project code.
+- Does not expose secrets or runtime metadata content.
+- Signal collection is deterministic for the same repository and Levi state.
+
+Status: NOT STARTED
+
+### M31-002 Project Health Summary
+
+Task ID: M31-002
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Present collected health signals as one concise plain-language project health summary.
+
+Expected files:
+
+- src/project-health.js
+- src/cli-workflow.js
+- src/completion-reporter.js
+
+Acceptance criteria:
+
+- Summary shows clear status for build, tests, provider readiness, project knowledge, context quality, restore readiness, and known problems.
+- Summary separates verified evidence, approved knowledge, warnings, blockers, and UNKNOWN values.
+- Summary is concise enough for daily use.
+- Summary does not expose prompt internals, patch schemas, provider secrets, or runtime metadata internals.
+- Existing status, scan, readiness, review, and validation commands remain functional.
+
+Status: NOT STARTED
+
+### M31-003 Health Recommendations
+
+Task ID: M31-003
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Provide plain-language next-step recommendations from project health signals without approving or executing work.
+
+Expected files:
+
+- src/project-health.js
+- src/task-planner.js
+- src/cli-workflow.js
+
+Acceptance criteria:
+
+- Recommendations are based only on verified signals, approved project knowledge, approved decisions, or UNKNOWN gaps.
+- Recommendations do not create tasks, approve plans, execute providers, apply patches, or run validation.
+- Recommendations prioritize blockers, safety issues, cost risks, restore readiness, and missing evidence.
+- User-facing wording remains short and plain.
+- Recommendations preserve scope enforcement and do not add unapproved features.
+
+Status: NOT STARTED
+
+### M31-004 Project Health Validation
+
+Task ID: M31-004
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Validate project health signals, summaries, recommendations, exclusions, deterministic output, and Release 0.3 regressions.
+
+Expected files:
+
+- src/project-health.js
+- src/project-summary.js
+- src/local-readiness-check.js
+- src/provider-health.js
+- src/context-preview.js
+- src/restore-points.js
+- src/validation-runner.js
+- src/cli-workflow.js
+
+Acceptance criteria:
+
+- Validation covers healthy, warning, blocked, UNKNOWN, missing provider, missing validation, missing restore, incomplete knowledge, and known-problem states.
+- Validation confirms summaries and recommendations are evidence-backed and concise.
+- Validation confirms project health does not execute providers, prompts, patches, or unapproved validation commands.
+- Validation confirms secret, runtime metadata, generated-file, dependency, and binary exclusions remain intact.
+- Existing Release 0.3 scan, intake, planning, cost, approval, execution, validation, memory, and restore behavior does not regress.
+
+Status: NOT STARTED
+
+## M32 Simple User Interface
+
+Status: NOT STARTED
+
+Purpose: Provide a beautiful, calm, fast, and easy-to-navigate user interface for the daily Levi workflow while keeping Levi Core as the business-logic owner.
+
+UI principles:
+
+- Apple-inspired simplicity without copying Apple assets or layouts.
+- One primary action per screen.
+- Plain language.
+- Progressive disclosure.
+- Advanced controls hidden by default.
+- Light and dark appearance.
+- Strong typography and spacing.
+- Clear status, cost, safety, restore, and evidence information.
+- No prompt-engineering interface.
+- No exposed patch schemas.
+- No provider configuration on the primary workflow.
+- Beautiful, calm, fast, and easy to navigate.
+- Levi Core retains all business logic.
+- UI remains a thin interface over Levi Core.
+
+### M32-001 UI Product Requirements
+
+Task ID: M32-001
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Define the simple UI product requirements, primary user journey, screen inventory, accessibility expectations, and explicit exclusions.
+
+Expected files:
+
+- UI_PRODUCT_REQUIREMENTS.md
+- PLAN.md only if owner-approved follow-up task details must be refined
+
+Acceptance criteria:
+
+- Defines the primary daily-use journey: open project, submit request, review plan, approve, observe execution, inspect results, and restore.
+- Documents one primary action per screen and progressive disclosure behavior.
+- Explicitly excludes prompt-engineering UI, exposed patch schemas, provider configuration in the primary workflow, standalone IDE behavior, autocomplete, marketplace, autonomous deployment, and team collaboration.
+- Defines light, dark, responsive, accessibility, evidence, cost, safety, restore, and status expectations.
+- Does not modify implementation files.
+
+Status: NOT STARTED
+
+### M32-002 UI Architecture
+
+Task ID: M32-002
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Define a thin UI architecture over Levi Core with clear boundaries, screen routing, state flow, and validation strategy.
+
+Expected files:
+
+- UI_ARCHITECTURE.md
+- src/ui-bridge.js
+- src/ui-server.js
+- ui/index.html
+- ui/app.js
+- ui/styles.css
+
+Acceptance criteria:
+
+- UI architecture keeps all business logic inside Levi Core modules.
+- UI communicates through a thin adapter or bridge that calls existing Levi Core workflows.
+- UI state does not become a second source of truth for task state, memory, cost, restore, provider routing, or validation.
+- Architecture defines responsive and accessible screen structure without copying Apple assets or layouts.
+- Architecture does not approve external dependencies without OSS evaluation.
+
+Status: NOT STARTED
+
+### M32-003 Home And Task Intake Screen
+
+Task ID: M32-003
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Build the home and task intake screen so a new user understands the primary action and can submit a plain-language request.
+
+Expected files:
+
+- src/ui-bridge.js
+- src/ui-server.js
+- ui/index.html
+- ui/app.js
+- ui/styles.css
+
+Acceptance criteria:
+
+- A new user can identify the primary action without documentation.
+- User can open or select a project and submit a plain-language request.
+- Intake preserves the exact original request and passes through existing Levi Core intake and classification.
+- Screen shows clear project, readiness, evidence, and safety status without prompt-engineering controls.
+- Light, dark, responsive, keyboard, and screen-reader behavior meet the approved UI requirements.
+
+Status: NOT STARTED
+
+### M32-004 Plan And Approval Screen
+
+Task ID: M32-004
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Build the plan and approval screen so users can review a real bounded plan, evidence, cost, safety, and required approvals.
+
+Expected files:
+
+- src/ui-bridge.js
+- src/ui-server.js
+- ui/app.js
+- ui/styles.css
+
+Acceptance criteria:
+
+- Screen displays objective, expected files, acceptance criteria, validation commands, evidence, cost decision, risks, and destructive confirmation state.
+- User can approve or reject a plan through existing Levi Core approval workflow.
+- Cost approval does not substitute for normal task approval.
+- Destructive confirmation remains separate from normal approval.
+- Screen does not expose prompt internals, patch schemas, provider routing configuration, or manual context selection.
+
+Status: NOT STARTED
+
+### M32-005 Execution And Completion Screen
+
+Task ID: M32-005
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Build the execution and completion screen so users can observe progress, validation, changed files, completion status, and remaining work.
+
+Expected files:
+
+- src/ui-bridge.js
+- src/ui-server.js
+- ui/app.js
+- ui/styles.css
+
+Acceptance criteria:
+
+- Screen shows task state, provider readiness state, safe patch progress, validation results, changed files, completion report, and remaining work.
+- Failed generation, patching, validation, or completion prevents a completed UI state.
+- Completion report reflects actual changed files and actual commands from Levi Core.
+- Provider output remains untrusted and hidden behind validated Levi Core results.
+- Screen remains calm, readable, responsive, and accessible during long-running work.
+
+Status: NOT STARTED
+
+### M32-006 Project Health Screen
+
+Task ID: M32-006
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Build the project health screen for concise daily status, readiness, known problems, and next-step recommendations.
+
+Expected files:
+
+- src/ui-bridge.js
+- src/ui-server.js
+- ui/app.js
+- ui/styles.css
+
+Acceptance criteria:
+
+- Screen displays build status, tests, provider readiness, project knowledge, context quality, restore readiness, and known problems.
+- Health recommendations are concise, evidence-backed, and non-executing.
+- UNKNOWN values are visible without implying false completion.
+- Screen does not expose provider secrets, runtime metadata internals, prompt controls, or patch schemas.
+- Existing CLI health and status behavior remains functional.
+
+Status: NOT STARTED
+
+### M32-007 Restore And History Screen
+
+Task ID: M32-007
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Build the restore and history screen so users can inspect task history, completion reports, memory outcomes, and restore points safely.
+
+Expected files:
+
+- src/ui-bridge.js
+- src/ui-server.js
+- ui/app.js
+- ui/styles.css
+
+Acceptance criteria:
+
+- Screen lists task history, completion reports, changed files, validation results, verified memory outcomes, and restore points.
+- User can inspect a restore point before restoring.
+- Restore requires explicit confirmation and uses existing Levi Core restore workflow.
+- Restore results show exact restored files and runtime metadata state at a safe summary level.
+- No unrelated files, memory, or runtime history are removed through the UI.
+
+Status: NOT STARTED
+
+### M32-008 Advanced Settings
+
+Task ID: M32-008
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Provide optional advanced settings for diagnostics and preferences without cluttering or controlling the primary workflow.
+
+Expected files:
+
+- src/ui-bridge.js
+- src/ui-server.js
+- ui/app.js
+- ui/styles.css
+
+Acceptance criteria:
+
+- Advanced settings are hidden by default and not required for the primary workflow.
+- Settings can display diagnostics, project paths, provider readiness details, budget preferences, and restore/history controls only where approved.
+- Settings do not expose prompt-engineering interfaces, patch schemas, primary-workflow provider routing configuration, or secret values.
+- Changes that affect cost, destructive behavior, credentials, external communication, or restore require explicit confirmation.
+- Defaults preserve local-first, safe, low-configuration Release 0.3 behavior.
+
+Status: NOT STARTED
+
+### M32-009 Accessibility And Responsive Validation
+
+Task ID: M32-009
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Validate the UI for accessibility, responsive layout, light and dark appearance, keyboard navigation, plain language, and screen clarity.
+
+Expected files:
+
+- src/ui-bridge.js
+- src/ui-server.js
+- ui/index.html
+- ui/app.js
+- ui/styles.css
+
+Acceptance criteria:
+
+- Validation covers desktop, tablet, and mobile viewport sizes.
+- Validation covers keyboard navigation, focus states, contrast, labels, semantic structure, and screen-reader names.
+- Validation confirms light and dark appearance remain readable and calm.
+- Validation confirms each screen has one primary action and progressive disclosure works.
+- Validation confirms text does not overflow, overlap, or hide status, cost, safety, restore, or evidence information.
+
+Status: NOT STARTED
+
+### M32-010 UI End-to-End Certification
+
+Task ID: M32-010
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Certify the UI end-to-end workflow through the public interface without regressing Levi Core behavior.
+
+Expected files:
+
+- src/ui-bridge.js
+- src/ui-server.js
+- ui/index.html
+- ui/app.js
+- ui/styles.css
+
+Acceptance criteria:
+
+- A user can open a project, submit a request, review a plan, approve it, observe execution, inspect results, and restore changes through the UI.
+- UI uses existing Levi Core scan, readiness, intake, planning, context, cost, approval, execution, validation, completion, memory, and restore workflows.
+- UI does not duplicate business logic from Levi Core.
+- UI does not expose prompt-engineering controls, patch schemas, or primary-workflow provider configuration.
+- Existing Release 0.3 CLI functionality does not regress.
+
+Status: NOT STARTED
+
+### M32-011 Release 0.4A Certification
+
+Task ID: M32-011
+
+Requirement ID: POST_MVP until approved by owner
+
+Objective: Certify Release 0.4A Daily-Use Foundation after project knowledge, durable decisions, structural search, project health, and UI tasks are complete.
+
+Expected files:
+
+- No implementation files expected unless a certification blocker is approved as a separate task.
+
+Acceptance criteria:
+
+- A new user opens Levi and understands the primary action without documentation.
+- A user can open a project, submit a request, review a plan, approve it, observe execution, inspect results, and restore changes.
+- Project Knowledge and Durable Decisions affect planning only through approved evidence.
+- Structural Search supports real repository questions.
+- Project Health presents concise actionable information.
+- Advanced settings remain optional.
+- Existing Release 0.3 functionality does not regress.
+- Final verdict is either RELEASE_0_4A_CERTIFIED or BLOCKED.
+
+Status: NOT STARTED
+
 ## Completion Rules
 
 - One task at a time.
