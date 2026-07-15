@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { createCodingExecutor } = require("./coding-executor");
+const { createRestorePoint } = require("./restore-points");
 
 const OPERATION_TYPES = new Set(["create", "update", "delete"]);
 const OPERATION_KEYS = new Set([
@@ -27,11 +28,19 @@ function applySafePatch(options) {
   let operations;
   const changes = [];
   const rollback = [];
+  let restorePoint;
 
   try {
     operations = options.operations.map((operation) => normalizeOperation(operation, plannedFiles));
+    restorePoint = createRestorePoint({
+      repositoryRoot,
+      plannedFiles: Array.from(plannedFiles),
+      operations,
+      requirementId: options.requirementId,
+      timestamp: options.restorePointTimestamp,
+    });
   } catch (error) {
-    return result("FAILED", changes, rollback, error.message);
+    return result("FAILED", changes, rollback, null, error.message);
   }
 
   for (const operation of operations) {
@@ -47,11 +56,11 @@ function applySafePatch(options) {
         rollback.push(createRollbackOperation(operation.path, snapshot));
       }
     } catch (error) {
-      return result("FAILED", changes, rollback, error.message);
+      return result("FAILED", changes, rollback, restorePoint, error.message);
     }
   }
 
-  return result("COMPLETED", changes, rollback, null);
+  return result("COMPLETED", changes, rollback, restorePoint, null);
 }
 
 function validateOptions(options) {
@@ -73,6 +82,14 @@ function validateOptions(options) {
 
   if (!isPlainObject(options.limits)) {
     throw new Error("Safe patch limits are required.");
+  }
+
+  if (options.requirementId !== undefined && typeof options.requirementId !== "string") {
+    throw new Error("Safe patch requirementId must be a string.");
+  }
+
+  if (options.restorePointTimestamp !== undefined && typeof options.restorePointTimestamp !== "string") {
+    throw new Error("Safe patch restorePointTimestamp must be a string.");
   }
 }
 
@@ -182,7 +199,7 @@ function createRollbackOperation(relativePath, snapshot) {
   };
 }
 
-function result(status, changes, rollback, error) {
+function result(status, changes, rollback, restorePoint, error) {
   return {
     status,
     changes: changes.map((change) => ({
@@ -191,6 +208,7 @@ function result(status, changes, rollback, error) {
       changed: change.changed,
     })),
     rollback: rollback.map((operation) => ({ ...operation })),
+    restorePoint,
     summary: summarize(status, changes, error),
     error,
   };
