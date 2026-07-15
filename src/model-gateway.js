@@ -6,6 +6,7 @@ const {
 const { ALLOWED, BLOCKED, UNKNOWN, checkBudget } = require("./budget-guardrails");
 const { estimateTaskCost } = require("./cost-estimator");
 const { discoverLocalModels: discoverLocalModelEvidence } = require("./local-model-discovery");
+const { checkProviderHealth: checkProviderHealthForProviders } = require("./provider-health");
 
 function createModelGateway(options) {
   validateOptions(options);
@@ -101,6 +102,21 @@ function createModelGateway(options) {
     return estimateCost(request).costDecision;
   }
 
+  function checkProviderHealth(healthOptions = {}) {
+    if (
+      !healthOptions ||
+      typeof healthOptions !== "object" ||
+      Array.isArray(healthOptions)
+    ) {
+      throw new Error("Provider health options must be an object.");
+    }
+
+    return checkProviderHealthForProviders({
+      ...healthOptions,
+      providers,
+    });
+  }
+
   async function route(request) {
     validateProviderRequest(request);
 
@@ -132,6 +148,7 @@ function createModelGateway(options) {
   }
 
   return {
+    checkProviderHealth,
     discoverLocalModels,
     estimateCost,
     estimateCostDecision,

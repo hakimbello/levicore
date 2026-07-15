@@ -1,4 +1,19 @@
 const PROVIDER_TYPES = new Set(["local", "remote"]);
+const HEALTH_STATUSES = new Set(["HEALTHY", "DEGRADED", "UNAVAILABLE", "UNKNOWN"]);
+const PROVIDER_AVAILABILITY_STATES = new Set([
+  "CONFIGURED",
+  "MISSING_CONFIGURATION",
+  "AVAILABLE",
+  "UNAVAILABLE",
+  "UNSUPPORTED",
+  "UNKNOWN",
+]);
+const HEALTH_EVIDENCE_TYPES = new Set([
+  "LOCAL_DETERMINISTIC",
+  "REMOTE_APPROVED",
+  "CONFIGURATION",
+  "UNKNOWN",
+]);
 
 function validateProvider(provider) {
   if (!isPlainObject(provider)) {
@@ -15,6 +30,10 @@ function validateProvider(provider) {
 
   requireFunction(provider.estimateCost, "provider estimateCost");
   requireFunction(provider.sendRequest, "provider sendRequest");
+
+  if (provider.checkHealth !== undefined) {
+    requireFunction(provider.checkHealth, "provider checkHealth");
+  }
 }
 
 function validateProviderRequest(request) {
@@ -59,6 +78,26 @@ function validateProviderResponse(response) {
   }
 }
 
+function validateProviderHealthEvidence(evidence) {
+  if (!isPlainObject(evidence)) {
+    throw new Error("Model provider health evidence is required.");
+  }
+
+  if (!PROVIDER_AVAILABILITY_STATES.has(evidence.availability)) {
+    throw new Error("Model provider health availability is invalid.");
+  }
+
+  if (evidence.healthStatus !== undefined && !HEALTH_STATUSES.has(evidence.healthStatus)) {
+    throw new Error("Model provider health status is invalid.");
+  }
+
+  if (!HEALTH_EVIDENCE_TYPES.has(evidence.evidenceType)) {
+    throw new Error("Model provider health evidence type is invalid.");
+  }
+
+  requireString(evidence.reason, "health reason");
+}
+
 function createProviderError(options) {
   if (!isPlainObject(options)) {
     throw new Error("Model provider error options are required.");
@@ -91,10 +130,14 @@ function requireString(value, fieldName) {
 }
 
 module.exports = {
+  HEALTH_EVIDENCE_TYPES,
+  HEALTH_STATUSES,
+  PROVIDER_AVAILABILITY_STATES,
   PROVIDER_TYPES,
   createProviderError,
   validateProvider,
   validateProviderCostEstimate,
+  validateProviderHealthEvidence,
   validateProviderRequest,
   validateProviderResponse,
 };
