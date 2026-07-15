@@ -235,6 +235,59 @@ function removeApprovedProjectKnowledge(options) {
   };
 }
 
+function retrieveProjectKnowledge(options) {
+  validateRetrievalOptions(options);
+
+  const projectId = stringOrUnknown(options.projectId || "default");
+  const filters = normalizeRetrievalFilters(options);
+  const records = options.memoryStore
+    .listRecords(projectId)
+    .filter((record) => isApprovedProjectKnowledgeRecord(record, projectId))
+    .map(projectKnowledgeRecordToFact)
+    .filter((fact) => matchesRetrievalFilters(fact, filters));
+  const facts = uniqueRetrievalFacts(records).sort(compareRetrievalFacts);
+
+  return {
+    status: facts.length > 0 ? "FOUND" : "EMPTY",
+    unknown: facts.length > 0 ? null : UNKNOWN,
+    projectId,
+    filters,
+    count: facts.length,
+    facts,
+  };
+}
+
+function retrieveProjectKnowledgeForContext(options) {
+  const result = retrieveProjectKnowledge(options);
+
+  return {
+    status: result.status,
+    unknown: result.unknown,
+    projectId: result.projectId,
+    filters: result.filters,
+    count: result.count,
+    facts: result.facts.map((fact) => ({
+      id: fact.id,
+      projectId: fact.projectId,
+      category: fact.category,
+      value: fact.value,
+      confidenceState: fact.confidenceState,
+      approvedTimestamp: fact.approvedTimestamp,
+      evidence: fact.evidence,
+    })),
+  };
+}
+
+function validateRetrievalOptions(options) {
+  if (!isPlainObject(options)) {
+    throw new Error("Project knowledge retrieval options are required.");
+  }
+
+  if (!isMemoryStore(options.memoryStore)) {
+    throw new Error("Project knowledge retrieval requires a memoryStore.");
+  }
+}
+
 function validateApprovalOptions(options) {
   if (!isPlainObject(options)) {
     throw new Error("Project knowledge approval options are required.");
@@ -410,7 +463,7 @@ function isApprovedProjectKnowledgeRecord(record, projectId) {
     return false;
   }
 
-  if (record.projectId !== undefined && record.projectId !== projectId) {
+  if (record.projectId !== projectId) {
     return false;
   }
 
@@ -426,7 +479,165 @@ function isApprovedProjectKnowledgeRecord(record, projectId) {
     return false;
   }
 
-  return record.value.value !== UNKNOWN && !containsUnsafePath(record) && !containsModelOutputEvidence(record);
+  if (record.value.approvalState && record.value.approvalState !== APPROVED) {
+    return false;
+  }
+
+  return (
+    record.value.value !== undefined &&
+    record.value.value !== UNKNOWN &&
+    normalizeEvidence(record.value.evidence || record.source.evidence).length > 0 &&
+    !containsUnsafePath(record) &&
+    !containsSecretValue(record) &&
+    !containsModelOutputEvidence(record)
+  );
+}
+
+function normalizeRetrievalFilters(options) {
+  return {
+    categories: normalizeStringFilter(options.categories || options.category),
+    factIds: normalizeStringFilter(options.factIds || options.factId),
+    sourceEvidence: normalizeSourceEvidenceFilter(options.sourceEvidence || options.source || options.evidence),
+    keywords: normalizeStringFilter(options.keywords || options.keyword),
+    confidenceStates: normalizeStringFilter(options.confidenceStates || options.confidenceState),
+  };
+}
+
+function normalizeStringFilter(value) {
+  const values = uniqueSorted(asArray(value).map(stringOrUnknown).filter((entry) => entry !== UNKNOWN));
+
+  return values;
+}
+
+function normalizeSourceEvidenceFilter(value) {
+  return asArray(value)
+    .map((entry) => {
+      if (typeof entry === "string") {
+        const text = stringOrUnknown(entry);
+        return text === UNKNOWN ? null : { source: text, signal: UNKNOWN };
+      }
+
+      if (!isPlainObject(entry)) {
+        return null;
+      }
+
+      const source = stringOrUnknown(entry.source);
+      const signal = stringOrUnknown(entry.signal);
+
+      if (source === UNKNOWN && signal === UNKNOWN) {
+        return null;
+      }
+
+      return { source, signal };
+    })
+    .filter(Boolean)
+    .sort(compareStable);
+}
+
+function projectKnowledgeRecordToFact(record) {
+  const evidence = normalizeEvidence(record.value.evidence || record.source.evidence);
+  const extractedConfidenceState = stringOrUnknown(record.value.extractedConfidenceState);
+
+  return {
+    id: stringOrUnknown(record.id),
+    projectId: stringOrUnknown(record.projectId),
+    category: record.value.category,
+    value: sanitizeValue(record.value.value),
+    confidenceState: record.confidenceState,
+    extractedConfidenceState: extractedConfidenceState === UNKNOWN ? record.confidenceState : extractedConfidenceState,
+    approvedTimestamp: stringOrUnknown(record.timestamp),
+    evidence,
+    source: {
+      kind: "project-knowledge",
+      category: record.value.category,
+      evidence,
+    },
+  };
+}
+
+function matchesRetrievalFilters(fact, filters) {
+  return (
+    matchesStringFilter(fact.category, filters.categories) &&
+    matchesStringFilter(fact.id, filters.factIds) &&
+    matchesConfidenceFilter(fact, filters.confidenceStates) &&
+    matchesSourceEvidenceFilter(fact, filters.sourceEvidence) &&
+    matchesKeywordFilter(fact, filters.keywords)
+  );
+}
+
+function matchesStringFilter(value, filterValues) {
+  return filterValues.length === 0 || filterValues.includes(value);
+}
+
+function matchesConfidenceFilter(fact, confidenceStates) {
+  return (
+    confidenceStates.length === 0 ||
+    confidenceStates.includes(fact.confidenceState) ||
+    confidenceStates.includes(fact.extractedConfidenceState)
+  );
+}
+
+function matchesSourceEvidenceFilter(fact, sourceEvidence) {
+  if (sourceEvidence.length === 0) {
+    return true;
+  }
+
+  return sourceEvidence.some((expected) =>
+    fact.evidence.some((actual) => {
+      const sourceMatches = expected.source === UNKNOWN || actual.source === expected.source;
+      const signalMatches = expected.signal === UNKNOWN || actual.signal === expected.signal;
+      return sourceMatches && signalMatches;
+    })
+  );
+}
+
+function matchesKeywordFilter(fact, keywords) {
+  if (keywords.length === 0) {
+    return true;
+  }
+
+  const haystack = stableSerialize({
+    id: fact.id,
+    category: fact.category,
+    value: fact.value,
+    evidence: fact.evidence,
+  }).toLowerCase();
+
+  return keywords.some((keyword) => haystack.includes(keyword.toLowerCase()));
+}
+
+function uniqueRetrievalFacts(facts) {
+  const byFingerprint = new Map();
+
+  for (const fact of facts) {
+    const fingerprint = stableSerialize({
+      projectId: fact.projectId,
+      category: fact.category,
+      value: fact.value,
+    });
+
+    if (!byFingerprint.has(fingerprint)) {
+      byFingerprint.set(fingerprint, fact);
+      continue;
+    }
+
+    const current = byFingerprint.get(fingerprint);
+
+    if (compareRetrievalFacts(fact, current) < 0) {
+      byFingerprint.set(fingerprint, fact);
+    }
+  }
+
+  return Array.from(byFingerprint.values());
+}
+
+function compareRetrievalFacts(left, right) {
+  return (
+    left.category.localeCompare(right.category) ||
+    stableSerialize(left.value).localeCompare(stableSerialize(right.value)) ||
+    left.approvedTimestamp.localeCompare(right.approvedTimestamp) ||
+    left.id.localeCompare(right.id)
+  );
 }
 
 function projectKnowledgeFingerprint(projectId, fact) {
@@ -1180,4 +1391,6 @@ module.exports = {
   extractProjectKnowledge,
   rejectProjectKnowledgeFact,
   removeApprovedProjectKnowledge,
+  retrieveProjectKnowledge,
+  retrieveProjectKnowledgeForContext,
 };
