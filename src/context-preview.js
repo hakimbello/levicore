@@ -1,23 +1,54 @@
+const path = require("node:path");
+
 const UNKNOWN = "UNKNOWN";
 const NONE = "NONE";
 const CONTROL_CONFIDENCE_STATES = new Set(["APPROVED", "VERIFIED"]);
 const SECRET_KEY_PATTERN = /(api[_-]?key|auth|credential|password|private[_-]?key|secret|token)/i;
 const SECRET_VALUE_PATTERN = /\b(api[_-]?key|password|secret|token)\s*[:=]/i;
+const SECRET_PATH_PATTERN = /(^|\/|[._-])(env|secret|credential|private[-_]?key|api[-_]?key|token)($|\/|[._-])/i;
+const SUPPORTED_SOURCE_EXTENSIONS = new Set([
+  ".c",
+  ".cc",
+  ".cpp",
+  ".cs",
+  ".css",
+  ".go",
+  ".h",
+  ".hpp",
+  ".html",
+  ".java",
+  ".js",
+  ".jsx",
+  ".json",
+  ".md",
+  ".mjs",
+  ".py",
+  ".rb",
+  ".rs",
+  ".ts",
+  ".tsx",
+  ".txt",
+  ".yml",
+  ".yaml",
+]);
 
 function createContextPreview(context) {
   validateContext(context);
 
   const taskPlan = isPlainObject(context.taskPlan) ? context.taskPlan : {};
+  const repositoryRoot = stringOrNull(context.repositoryRoot || context.root);
+  const approved = approvedRequirements(context.approvedRequirements);
   const details = {
     activeTask: {
       requirementId: stringOrUnknown(taskPlan.requirementId),
       objective: stringOrUnknown(taskPlan.objective),
     },
-    approvedRequirements: approvedRequirements(context.approvedRequirements),
+    approvedRequirements: approved,
     selectedFiles: listOrUnknown(taskPlan.expectedFiles),
-    projectFacts: projectFacts(context.repositoryFacts),
-    fileEvidence: fileEvidence(context.repositoryFacts),
-    verifiedMemory: verifiedMemory(context.projectMemory),
+    projectFacts: projectFacts(context.repositoryFacts, repositoryRoot),
+    factGroups: factGroups(context.repositoryFacts, repositoryRoot, approved),
+    fileEvidence: fileEvidence(context.repositoryFacts, repositoryRoot),
+    verifiedMemory: verifiedMemory(context.projectMemory, repositoryRoot),
     contextBudget: contextBudget(context.contextBudget),
   };
 
@@ -52,13 +83,13 @@ function approvedRequirements(requirements) {
     .sort();
 }
 
-function projectFacts(facts) {
+function projectFacts(facts, repositoryRoot) {
   if (!Array.isArray(facts) || facts.length === 0) {
     return [
       {
         category: UNKNOWN,
         value: UNKNOWN,
-        evidence: [UNKNOWN],
+        evidence: [unknownEvidence()],
       },
     ];
   }
@@ -68,19 +99,43 @@ function projectFacts(facts) {
       return {
         category: UNKNOWN,
         value: stringOrUnknown(fact),
-        evidence: [UNKNOWN],
+        evidence: [unknownEvidence()],
       };
     }
 
     return {
       category: stringOrUnknown(fact.category),
       value: previewValue(fact.value),
-      evidence: evidenceLines(fact.evidence),
+      evidence: evidenceItems(fact.evidence, repositoryRoot),
     };
   });
 }
 
-function fileEvidence(facts) {
+function factGroups(facts, repositoryRoot, approved) {
+  const grouped = {
+    approved,
+    verified: [],
+    unknown: [],
+  };
+
+  for (const fact of projectFacts(facts, repositoryRoot)) {
+    const line = projectFactLine(fact);
+
+    if (fact.value === UNKNOWN || fact.evidence.every((entry) => entry.source === UNKNOWN)) {
+      grouped.unknown.push(line);
+      continue;
+    }
+
+    grouped.verified.push(line);
+  }
+
+  grouped.verified = grouped.verified.length === 0 ? [NONE] : grouped.verified.sort();
+  grouped.unknown = grouped.unknown.length === 0 ? [NONE] : grouped.unknown.sort();
+
+  return grouped;
+}
+
+function fileEvidence(facts, repositoryRoot) {
   if (!Array.isArray(facts)) {
     return [UNKNOWN];
   }
@@ -97,7 +152,7 @@ function fileEvidence(facts) {
         continue;
       }
 
-      const source = stringOrUnknown(evidence.source);
+      const source = normalizeSourcePath(evidence.source, repositoryRoot);
 
       if (source !== UNKNOWN) {
         sources.push(source);
@@ -108,15 +163,21 @@ function fileEvidence(facts) {
   return uniqueSorted(sources).length === 0 ? [UNKNOWN] : uniqueSorted(sources);
 }
 
-function verifiedMemory(records) {
+function verifiedMemory(records, repositoryRoot) {
   if (!Array.isArray(records) || records.length === 0) {
     return [NONE];
   }
 
   const memory = records
-    .filter((record) => isPlainObject(record) && CONTROL_CONFIDENCE_STATES.has(record.confidenceState))
+    .filter((record) => {
+      if (!isPlainObject(record) || !CONTROL_CONFIDENCE_STATES.has(record.confidenceState)) {
+        return false;
+      }
+
+      return !isPlainObject(record.source) || record.source.kind !== "model-output";
+    })
     .map((record) => {
-      const source = isPlainObject(record.source) ? previewValue(record.source) : UNKNOWN;
+      const source = memorySource(record.source, repositoryRoot);
       return [
         `Type: ${stringOrUnknown(record.type)}`,
         `State: ${stringOrUnknown(record.confidenceState)}`,
@@ -127,6 +188,25 @@ function verifiedMemory(records) {
     .sort();
 
   return memory.length === 0 ? [NONE] : memory;
+}
+
+function memorySource(source, repositoryRoot) {
+  if (!isPlainObject(source)) {
+    return UNKNOWN;
+  }
+
+  const kind = stringOrUnknown(source.kind);
+  const sourcePath = normalizeSourcePath(source.source || source.path || source.file, repositoryRoot);
+
+  if (sourcePath !== UNKNOWN) {
+    return `${kind}: ${sourcePath}`;
+  }
+
+  if (source.source !== undefined || source.path !== undefined || source.file !== undefined) {
+    return kind;
+  }
+
+  return previewValue(source);
 }
 
 function contextBudget(budget) {
@@ -150,8 +230,10 @@ function renderPreview(details) {
     "Context preview",
     `Active task: ${details.activeTask.requirementId}. ${details.activeTask.objective}`,
     `Approved requirements: ${joinList(details.approvedRequirements)}`,
+    `Approved facts: ${joinList(details.factGroups.approved)}`,
     `Selected files: ${joinList(details.selectedFiles)}`,
-    `Project facts: ${details.projectFacts.map(projectFactLine).join(" | ")}`,
+    `Verified project facts: ${joinList(details.factGroups.verified)}`,
+    `UNKNOWN facts: ${joinList(details.factGroups.unknown)}`,
     `File evidence: ${joinList(details.fileEvidence)}`,
     `Verified memory: ${joinList(details.verifiedMemory)}`,
     `Context budget: facts ${details.contextBudget.repositoryFacts}; memory ${details.contextBudget.memoryRecords}; characters ${details.contextBudget.serializedCharacters}`,
@@ -159,33 +241,108 @@ function renderPreview(details) {
 }
 
 function projectFactLine(fact) {
-  return `${fact.category}: ${fact.value} (evidence: ${joinList(fact.evidence)})`;
+  return `${fact.category}: ${fact.value} (evidence: ${joinList(fact.evidence.map(evidenceLine))})`;
 }
 
-function evidenceLines(evidence) {
+function evidenceItems(evidence, repositoryRoot) {
   if (!Array.isArray(evidence) || evidence.length === 0) {
-    return [UNKNOWN];
+    return [unknownEvidence()];
   }
 
-  const lines = evidence
+  const items = evidence
     .map((entry) => {
       if (!isPlainObject(entry)) {
-        return UNKNOWN;
+        return unknownEvidence();
       }
 
-      const source = stringOrUnknown(entry.source);
+      const source = normalizeSourcePath(entry.source, repositoryRoot);
       const signal = stringOrUnknown(entry.signal);
+      const type = evidenceType(entry);
 
       if (source === UNKNOWN && signal === UNKNOWN) {
-        return UNKNOWN;
+        return unknownEvidence();
       }
 
-      return `${source}: ${signal}`;
+      return { source, type, signal };
     })
-    .filter((line) => line !== UNKNOWN)
-    .sort();
+    .filter((entry) => entry.source !== UNKNOWN)
+    .sort(compareEvidence);
 
-  return lines.length === 0 ? [UNKNOWN] : lines;
+  return items.length === 0 ? [unknownEvidence()] : items;
+}
+
+function evidenceLine(evidence) {
+  if (!isPlainObject(evidence) || evidence.source === UNKNOWN) {
+    return UNKNOWN;
+  }
+
+  return `${evidence.source} [${evidence.type}]: ${evidence.signal}`;
+}
+
+function evidenceType(entry) {
+  return stringOrUnknown(entry.type || entry.evidenceType || "source");
+}
+
+function unknownEvidence() {
+  return {
+    source: UNKNOWN,
+    type: UNKNOWN,
+    signal: UNKNOWN,
+  };
+}
+
+function normalizeSourcePath(source, repositoryRoot) {
+  const text = stringOrUnknown(source);
+
+  if (text === UNKNOWN) {
+    return UNKNOWN;
+  }
+
+  const slashPath = text.replace(/\\/g, "/");
+  let relativePath = slashPath;
+
+  if (path.isAbsolute(text) || /^[A-Za-z]:\//.test(slashPath)) {
+    if (!repositoryRoot) {
+      return UNKNOWN;
+    }
+
+    const normalizedRoot = path.resolve(repositoryRoot);
+    const normalizedSource = path.resolve(text);
+    const relativeToRoot = path.relative(normalizedRoot, normalizedSource);
+
+    if (relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot)) {
+      return UNKNOWN;
+    }
+
+    relativePath = relativeToRoot.replace(/\\/g, "/");
+  }
+
+  const parts = relativePath.split("/").filter(Boolean);
+
+  if (parts.length === 0 || parts.some((part) => part === "." || part === "..")) {
+    return UNKNOWN;
+  }
+
+  const normalized = parts.join("/");
+
+  if (SECRET_PATH_PATTERN.test(normalized)) {
+    return UNKNOWN;
+  }
+
+  const extension = path.extname(normalized).toLowerCase();
+
+  if (extension && !SUPPORTED_SOURCE_EXTENSIONS.has(extension)) {
+    return UNKNOWN;
+  }
+
+  return normalized;
+}
+
+function compareEvidence(left, right) {
+  const leftText = evidenceLine(left);
+  const rightText = evidenceLine(right);
+
+  return leftText.localeCompare(rightText);
 }
 
 function previewValue(value) {
@@ -273,6 +430,11 @@ function stringOrUnknown(value) {
 
   const text = String(value).trim();
   return text === "" ? UNKNOWN : text;
+}
+
+function stringOrNull(value) {
+  const text = stringOrUnknown(value);
+  return text === UNKNOWN ? null : text;
 }
 
 function isPlainObject(value) {
