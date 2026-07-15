@@ -16,6 +16,14 @@ function createTaskPlan(input) {
     approvalState: APPROVAL_STATES.AWAITING_APPROVAL,
   };
 
+  if (input.objective !== undefined) {
+    plan.objective = normalizeOptionalString(input.objective, "objective");
+  }
+
+  if (input.plannedOperations !== undefined) {
+    plan.plannedOperations = normalizePlannedOperations(input.plannedOperations);
+  }
+
   if (input.costEstimate !== undefined) {
     plan.costEstimate = normalizeCostEstimate(input.costEstimate);
   }
@@ -63,6 +71,14 @@ function validatePlan(plan) {
 
   if (plan.costEstimate !== undefined) {
     normalizeCostEstimate(plan.costEstimate);
+  }
+
+  if (plan.objective !== undefined) {
+    normalizeOptionalString(plan.objective, "objective");
+  }
+
+  if (plan.plannedOperations !== undefined) {
+    normalizePlannedOperations(plan.plannedOperations);
   }
 
   if (plan.budgetState !== undefined) {
@@ -132,6 +148,34 @@ function normalizeBudgetState(budgetState) {
   }
 
   return JSON.parse(JSON.stringify(budgetState));
+}
+
+function normalizePlannedOperations(plannedOperations) {
+  if (!Array.isArray(plannedOperations)) {
+    throw new Error("Task plan plannedOperations must be an array.");
+  }
+
+  return plannedOperations.map((operation) => {
+    if (!operation || typeof operation !== "object" || Array.isArray(operation)) {
+      throw new Error("Task plan planned operation must be an object.");
+    }
+
+    if (!["create", "update", "delete"].includes(operation.type)) {
+      throw new Error("Task plan planned operation type is invalid.");
+    }
+
+    requireString(operation.path, "plannedOperation.path");
+
+    return {
+      type: operation.type,
+      path: operation.path,
+    };
+  });
+}
+
+function normalizeOptionalString(value, fieldName) {
+  requireString(value, fieldName);
+  return value;
 }
 
 function requireString(value, fieldName) {

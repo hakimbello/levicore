@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { createApprovalSummary } = require("./approval-summary");
 const { createCodeGenerationPipeline } = require("./code-generation-pipeline");
 const { createCompletionReport, recordVerifiedTaskOutcome } = require("./completion-reporter");
 const { createMemoryStore } = require("./memory-store");
@@ -73,18 +74,18 @@ function requestTask(repositoryPath, requirementId, requestArgs) {
       ? requestArgs.slice(1).join(" ")
       : defaultValidationCommand(expectedFile);
   const objective = `Apply an approved assistant change to ${expectedFile} for ${requirementId}.`;
-  const plan = {
-    ...createTaskPlan({
+  const plan = createTaskPlan({
     requirementId,
-      expectedFiles: [expectedFile],
-      acceptanceCriteria: [`${expectedFile} is updated only through approved structured operations.`],
-      validationCommands: [validationCommand],
-      risks: ["Low: execution is limited to approved planned files and validation blocks completion."],
-      exclusions: ["Do not change files outside the approved expected files."],
-    }),
     objective,
-    scopeBoundaries: [`Only ${expectedFile} may be changed by the assistant patch.`],
-  };
+    expectedFiles: [expectedFile],
+    acceptanceCriteria: [`${expectedFile} is updated only through approved structured operations.`],
+    validationCommands: [validationCommand],
+    risks: ["Low: execution is limited to approved planned files and validation blocks completion."],
+    exclusions: ["Do not change files outside the approved expected files."],
+    plannedOperations: [plannedOperationSummary(repositoryPath, expectedFile)],
+  });
+  plan.scopeBoundaries = [`Only ${expectedFile} may be changed by the assistant patch.`];
+  plan.approvalSummary = createApprovalSummary(plan);
   const state = loadState(repositoryPath);
   state.request = { requirementId, scope };
   state.plan = plan;
@@ -104,6 +105,7 @@ function approvePlan(repositoryPath) {
   }
 
   state.plan = approveTaskPlan(state.plan);
+  state.plan.approvalSummary = createApprovalSummary(state.plan);
   saveState(repositoryPath, state);
   return state.plan;
 }
@@ -348,6 +350,15 @@ function plannedOperation(repositoryPath, expectedFile) {
     type: exists ? "update" : "create",
     path: expectedFile,
     content: nextContent(expectedFile, content),
+  };
+}
+
+function plannedOperationSummary(repositoryPath, expectedFile) {
+  const targetPath = path.join(repositoryPath, expectedFile);
+
+  return {
+    type: fs.existsSync(targetPath) ? "update" : "create",
+    path: expectedFile,
   };
 }
 
