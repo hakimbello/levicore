@@ -1,8 +1,9 @@
 const ASSUMPTION_REQUIRES_APPROVAL = "ASSUMPTION REQUIRES APPROVAL";
 const UNKNOWN = "UNKNOWN";
 const INTAKE_BLOCKING_STATUSES = new Set(["MORE_INFORMATION_REQUIRED", "AMBIGUOUS", "REJECTED"]);
+const { enforceProjectDecisions } = require("./project-decisions");
 
-function checkScope(request, approvedRequirements) {
+function checkScope(request, approvedRequirements, options = {}) {
   validateInputs(request, approvedRequirements);
 
   const intakeBlock = intakeBlockFor(request);
@@ -43,7 +44,28 @@ function checkScope(request, approvedRequirements) {
     };
   }
 
-  return {
+  const decisionEnforcement = hasDecisionInputs(options)
+    ? enforceProjectDecisions({
+        projectId: options.projectId || "default",
+        memoryStore: options.memoryStore,
+        decisionRecords: options.decisionRecords,
+        task: {
+          objective: request.normalizedObjective || request.originalRequest,
+        },
+      })
+    : null;
+
+  if (decisionEnforcement && decisionEnforcement.status === "BLOCKED") {
+    return {
+      status: "BLOCKED",
+      proceedToPlanning: false,
+      requirement,
+      decisionEnforcement,
+      reason: decisionEnforcement.reason,
+    };
+  }
+
+  const result = {
     status: "IN_SCOPE",
     proceedToPlanning: true,
     requirement,
@@ -54,6 +76,12 @@ function checkScope(request, approvedRequirements) {
       requestedActionClass: request.requestedActionClass,
     },
   };
+
+  if (decisionEnforcement) {
+    result.decisionEnforcement = decisionEnforcement;
+  }
+
+  return result;
 }
 
 function intakeBlockFor(request) {
@@ -106,6 +134,14 @@ function validateInputs(request, approvedRequirements) {
 
 function arrayOrEmpty(value) {
   return Array.isArray(value) ? [...value].sort() : [];
+}
+
+function hasDecisionInputs(options) {
+  return Boolean(
+    options &&
+      typeof options === "object" &&
+      (Array.isArray(options.decisionRecords) || (options.memoryStore && typeof options.memoryStore.listRecords === "function")),
+  );
 }
 
 module.exports = {

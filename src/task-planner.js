@@ -1,4 +1,5 @@
 const path = require("node:path");
+const { enforceProjectDecisions } = require("./project-decisions");
 
 const UNKNOWN = "UNKNOWN";
 const APPROVAL_STATES = {
@@ -87,18 +88,40 @@ function createTaskPlanFromIntake(input) {
     throw new Error("Task plan needs repository evidence or a more specific target file before planning can continue.");
   }
 
+  const plannedOperations = plannedOperationsFor(repositorySummary, expectedFiles);
+  const baseValidationCommands = validationCommandsFor(repositorySummary, expectedFiles);
+  const decisionEnforcement = decisionInputsPresent(input)
+    ? enforceProjectDecisions({
+        projectId: input.projectId || "default",
+        memoryStore: input.memoryStore,
+        decisionRecords: input.decisionRecords,
+        task: {
+          objective: intake.normalizedObjective,
+          expectedFiles,
+          plannedOperations,
+          validationCommands: baseValidationCommands,
+        },
+      })
+    : null;
+  const decisionValidationCommands = decisionEnforcement ? decisionEnforcement.validationCommands : [];
+  const decisionConstraints = decisionEnforcement ? decisionEnforcement.constraints : [];
   const plan = createTaskPlan({
     requirementId: scope.requirement.id,
     objective: intake.normalizedObjective,
     expectedFiles,
     acceptanceCriteria: acceptanceCriteriaFor(intake, expectedFiles),
-    validationCommands: validationCommandsFor(repositorySummary, expectedFiles),
-    risks: risksFor(intake),
+    validationCommands: uniqueSorted([...baseValidationCommands, ...decisionValidationCommands]),
+    risks: risksFor(intake, decisionEnforcement),
     exclusions: exclusionsFor(expectedFiles),
-    plannedOperations: plannedOperationsFor(repositorySummary, expectedFiles),
+    plannedOperations,
   });
-
-  return {
+  const scopeBoundaries = [
+    `Plan only for the requested objective: ${intake.normalizedObjective}.`,
+    `Limit file changes to: ${expectedFiles.join(", ")}.`,
+    "Execution requires explicit approval before any file modification.",
+    ...decisionConstraints.map((constraint) => `Project decision constraint: ${constraint}.`),
+  ];
+  const output = {
     ...plan,
     originalRequest: intake.originalRequest,
     normalizedObjective: intake.normalizedObjective,
@@ -106,13 +129,16 @@ function createTaskPlanFromIntake(input) {
     requestedActionClass: intake.requestedActionClass || UNKNOWN,
     intakeStatus: intake.status,
     scopeDecision: scope.status,
-    scopeBoundaries: [
-      `Plan only for the requested objective: ${intake.normalizedObjective}.`,
-      `Limit file changes to: ${expectedFiles.join(", ")}.`,
-      "Execution requires explicit approval before any file modification.",
-    ],
+    scopeBoundaries,
     evidence: evidenceFor(repositorySummary, expectedFiles),
   };
+
+  if (decisionEnforcement) {
+    output.decisionEnforcement = decisionEnforcement;
+    output.decisionConstraints = decisionConstraints;
+  }
+
+  return output;
 }
 
 function approveTaskPlan(plan) {
@@ -542,7 +568,7 @@ function plannedOperationsFor(repositorySummary, expectedFiles) {
   }));
 }
 
-function risksFor(intake) {
+function risksFor(intake, decisionEnforcement) {
   const risks = ["Low: planning only; execution remains blocked until explicit approval."];
 
   if (intake.requestedActionClass === "REFACTOR") {
@@ -551,6 +577,10 @@ function risksFor(intake) {
 
   if (intake.requestedActionClass === "FIX") {
     risks.push("Medium: bug fixes require validation evidence from the target project before completion.");
+  }
+
+  if (decisionEnforcement && decisionEnforcement.status !== "ALLOWED") {
+    risks.push(`Decision enforcement ${decisionEnforcement.status}: ${decisionEnforcement.reason}`);
   }
 
   return risks;
@@ -639,6 +669,13 @@ function quoteCommandArg(value) {
 
 function uniqueSorted(values) {
   return Array.from(new Set(values)).sort();
+}
+
+function decisionInputsPresent(input) {
+  return Boolean(
+    Array.isArray(input.decisionRecords) ||
+      (input.memoryStore && typeof input.memoryStore.listRecords === "function"),
+  );
 }
 
 function normalizePlannedOperations(plannedOperations) {

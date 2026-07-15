@@ -7,6 +7,12 @@ const VERIFIED = "VERIFIED";
 const REJECTED = "REJECTED";
 const NON_ENFORCING = "NON_ENFORCING";
 const APPROVE_PROJECT_DECISION = "APPROVE_PROJECT_DECISION";
+const ENFORCEMENT_STATUSES = {
+  ALLOWED: "ALLOWED",
+  APPROVAL_REQUIRED: "APPROVAL_REQUIRED",
+  BLOCKED: "BLOCKED",
+  UNKNOWN: UNKNOWN,
+};
 const CONTROL_CONFIDENCE_STATES = new Set([APPROVED, VERIFIED]);
 const DECISION_CATEGORIES = [
   "architecture",
@@ -19,6 +25,7 @@ const DECISION_CATEGORIES = [
   "naming convention",
   "business rule",
 ];
+const CONFLICT_CATEGORIES = new Set(["architecture", "framework", "language", "dependency policy", "protected subsystem"]);
 const SOURCE_EXTENSIONS = new Set([
   ".c",
   ".cc",
@@ -119,6 +126,62 @@ function recordProjectDecisions(options) {
     records,
     results,
   };
+}
+
+function enforceProjectDecisions(options = {}) {
+  const projectId = stringOrUnknown(options.projectId || "default");
+  const task = normalizeEnforcementTask(options.task || options);
+  const decisions = activeDecisionRecords(options, projectId).map(decisionFromRecord);
+  const matched = decisions.map((decision) => evaluateDecision(decision, task)).filter(Boolean);
+  const conflicts = conflictingDecisionCategories(matched);
+
+  if (task.objective === UNKNOWN && task.expectedFiles.length === 0) {
+    return enforcementResult({
+      status: ENFORCEMENT_STATUSES.UNKNOWN,
+      projectId,
+      reason: "Decision enforcement needs a task objective or planned files.",
+      matched,
+      conflicts,
+    });
+  }
+
+  if (conflicts.length > 0) {
+    return enforcementResult({
+      status: ENFORCEMENT_STATUSES.APPROVAL_REQUIRED,
+      projectId,
+      reason: `Conflicting active project decisions require review: ${conflicts.join(", ")}.`,
+      matched,
+      conflicts,
+    });
+  }
+
+  if (matched.some((decision) => decision.status === ENFORCEMENT_STATUSES.BLOCKED)) {
+    return enforcementResult({
+      status: ENFORCEMENT_STATUSES.BLOCKED,
+      projectId,
+      reason: firstReason(matched, ENFORCEMENT_STATUSES.BLOCKED),
+      matched,
+      conflicts,
+    });
+  }
+
+  if (matched.some((decision) => decision.status === ENFORCEMENT_STATUSES.APPROVAL_REQUIRED)) {
+    return enforcementResult({
+      status: ENFORCEMENT_STATUSES.APPROVAL_REQUIRED,
+      projectId,
+      reason: firstReason(matched, ENFORCEMENT_STATUSES.APPROVAL_REQUIRED),
+      matched,
+      conflicts,
+    });
+  }
+
+  return enforcementResult({
+    status: ENFORCEMENT_STATUSES.ALLOWED,
+    projectId,
+    reason: matched.length > 0 ? "Active project decisions are reflected as planning constraints." : "No active project decision restricts this task.",
+    matched,
+    conflicts,
+  });
 }
 
 function validateRecordOptions(options) {
@@ -276,6 +339,10 @@ function isApprovedDecisionRecord(record, projectId) {
     return false;
   }
 
+  if (["REMOVED", "REJECTED", "UNRESOLVED"].includes(record.value.enforcementState)) {
+    return false;
+  }
+
   if (!DECISION_CATEGORIES.includes(record.value.category)) {
     return false;
   }
@@ -287,6 +354,230 @@ function isApprovedDecisionRecord(record, projectId) {
     !containsSecretValue(record) &&
     !containsModelOutputEvidence(record)
   );
+}
+
+function activeDecisionRecords(options, projectId) {
+  const records = Array.isArray(options.decisionRecords)
+    ? options.decisionRecords
+    : options.memoryStore && typeof options.memoryStore.listRecords === "function"
+      ? options.memoryStore.listRecords(projectId)
+      : [];
+
+  return records.filter((record) => isApprovedDecisionRecord(record, projectId)).sort(compareStable);
+}
+
+function decisionFromRecord(record) {
+  return {
+    decisionId: record.value.decisionId || record.id,
+    projectId: record.projectId,
+    category: record.value.category,
+    statement: record.value.statement,
+    scope: record.value.scope || "PROJECT",
+    approvalStatus: record.value.approvalStatus,
+    enforcementState: record.value.enforcementState || NON_ENFORCING,
+    evidence: normalizeEvidence(record.value.evidence || record.source.evidence),
+    approvalTimestamp: record.value.approvalTimestamp || record.timestamp,
+    confidence: record.value.confidence || record.confidenceState,
+  };
+}
+
+function normalizeEnforcementTask(task) {
+  return {
+    objective: stringOrUnknown(task.objective || task.normalizedObjective || task.originalRequest),
+    expectedFiles: normalizeStringArray(task.expectedFiles || task.files || task.plannedFiles),
+    plannedOperations: normalizeOperations(task.plannedOperations),
+    validationCommands: normalizeStringArray(task.validationCommands),
+  };
+}
+
+function normalizeStringArray(value) {
+  return uniqueSorted(asArray(value).map(stringOrUnknown).filter((entry) => entry !== UNKNOWN));
+}
+
+function normalizeOperations(operations) {
+  if (!Array.isArray(operations)) {
+    return [];
+  }
+
+  return operations
+    .filter(isPlainObject)
+    .map((operation) => ({
+      type: stringOrUnknown(operation.type),
+      path: stringOrUnknown(operation.path),
+    }))
+    .filter((operation) => operation.path !== UNKNOWN)
+    .sort(compareStable);
+}
+
+function evaluateDecision(decision, task) {
+  const text = taskText(task);
+  const decisionText = `${decision.statement} ${decision.scope}`.toLowerCase();
+  const matched = decisionApplies(decision, task, text);
+
+  if (!matched) {
+    return null;
+  }
+
+  if (decision.category === "dependency policy") {
+    const status = blockingPolicyText(decisionText)
+      ? ENFORCEMENT_STATUSES.BLOCKED
+      : ENFORCEMENT_STATUSES.APPROVAL_REQUIRED;
+
+    return decisionMatch(decision, status, `Dependency policy applies: ${decision.statement}`);
+  }
+
+  if (decision.category === "protected subsystem") {
+    return decisionMatch(
+      decision,
+      ENFORCEMENT_STATUSES.APPROVAL_REQUIRED,
+      `Protected subsystem changes require explicit approval: ${decision.statement}`,
+    );
+  }
+
+  if (decision.category === "validation requirement") {
+    return {
+      ...decisionMatch(decision, ENFORCEMENT_STATUSES.ALLOWED, `Validation requirement applies: ${decision.statement}`),
+      validationCommand: validationCommandFor(decision.statement),
+    };
+  }
+
+  return decisionMatch(decision, ENFORCEMENT_STATUSES.ALLOWED, `Planning constraint applies: ${decision.statement}`);
+}
+
+function decisionApplies(decision, task, text) {
+  if (decision.category === "validation requirement") {
+    return true;
+  }
+
+  if (decision.category === "dependency policy") {
+    return /\b(dependencies|dependency|package|npm|install|library|module)\b/i.test(text) || task.expectedFiles.some(isDependencyManifest);
+  }
+
+  if (decision.category === "protected subsystem") {
+    return tokenOverlap(decision.statement, text) || tokenOverlap(decision.scope, text);
+  }
+
+  return tokenOverlap(decision.statement, text) || tokenOverlap(decision.scope, text);
+}
+
+function taskText(task) {
+  return `${task.objective} ${task.expectedFiles.join(" ")} ${task.plannedOperations
+    .map((operation) => `${operation.type} ${operation.path}`)
+    .join(" ")} ${task.validationCommands.join(" ")}`.toLowerCase();
+}
+
+function isDependencyManifest(filePath) {
+  return /(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|requirements\.txt|pyproject\.toml|poetry\.lock|cargo\.toml|go\.mod)$/i.test(filePath);
+}
+
+function tokenOverlap(source, target) {
+  const tokens = meaningfulTokens(source);
+
+  if (tokens.length === 0) {
+    return false;
+  }
+
+  return tokens.some((token) => target.includes(token));
+}
+
+function meaningfulTokens(value) {
+  return uniqueSorted(
+    stringOrUnknown(value)
+      .toLowerCase()
+      .split(/[^a-z0-9_.-]+/)
+      .filter((token) => token.length > 3)
+      .filter((token) => !["approved", "decision", "project", "should", "must", "requires", "require", "always", "never", "only"].includes(token)),
+  );
+}
+
+function blockingPolicyText(text) {
+  return /\b(block|blocked|forbid|forbidden|prohibit|prohibited|must not|do not|never|disallow|disallowed)\b/i.test(text);
+}
+
+function validationCommandFor(statement) {
+  const text = stringOrUnknown(statement);
+
+  if (text === UNKNOWN) {
+    return UNKNOWN;
+  }
+
+  const quoted = text.match(/["'`]([^"'`]+)["'`]/);
+
+  if (quoted) {
+    return quoted[1].trim();
+  }
+
+  const runMatch = text.match(/\b(?:run|require|requires)\s+(.+?)\.?$/i);
+
+  if (runMatch) {
+    return runMatch[1].trim();
+  }
+
+  return text;
+}
+
+function decisionMatch(decision, status, reason) {
+  return {
+    status,
+    reason,
+    decisionId: decision.decisionId,
+    category: decision.category,
+    statement: decision.statement,
+    evidence: decision.evidence,
+    confidence: decision.confidence,
+    approvalTimestamp: decision.approvalTimestamp,
+  };
+}
+
+function conflictingDecisionCategories(matches) {
+  const byCategory = new Map();
+
+  for (const match of matches) {
+    if (!CONFLICT_CATEGORIES.has(match.category)) {
+      continue;
+    }
+
+    const existing = byCategory.get(match.category) || new Set();
+    existing.add(match.statement);
+    byCategory.set(match.category, existing);
+  }
+
+  return Array.from(byCategory.entries())
+    .filter(([, statements]) => statements.size > 1)
+    .map(([category]) => category)
+    .sort();
+}
+
+function enforcementResult(input) {
+  const matches = input.matched.sort(compareStable);
+
+  return {
+    status: input.status,
+    projectId: input.projectId,
+    reason: input.reason,
+    decisions: matches.map((match) => ({
+      decisionId: match.decisionId,
+      category: match.category,
+      statement: match.statement,
+      status: match.status,
+      reason: match.reason,
+      evidence: match.evidence,
+      confidence: match.confidence,
+      approvalTimestamp: match.approvalTimestamp,
+    })),
+    constraints: uniqueSorted(matches.map((match) => `${match.category}: ${match.statement}`)),
+    validationCommands: uniqueSorted(
+      matches
+        .map((match) => match.validationCommand)
+        .filter((command) => command && command !== UNKNOWN),
+    ),
+    conflicts: input.conflicts,
+  };
+}
+
+function firstReason(matches, status) {
+  const match = matches.find((candidate) => candidate.status === status);
+  return match ? match.reason : "Project decision enforcement requires review.";
 }
 
 function projectDecisionId(projectId, decision) {
@@ -447,6 +738,10 @@ function asArray(value) {
   return Array.isArray(value) ? value : [value];
 }
 
+function uniqueSorted(values) {
+  return Array.from(new Set(values)).sort();
+}
+
 function stringOrUnknown(value) {
   if (value === undefined || value === null) {
     return UNKNOWN;
@@ -502,8 +797,10 @@ function isPlainObject(value) {
 module.exports = {
   APPROVE_PROJECT_DECISION,
   DECISION_CATEGORIES,
+  ENFORCEMENT_STATUSES,
   NON_ENFORCING,
   UNKNOWN,
+  enforceProjectDecisions,
   recordProjectDecision,
   recordProjectDecisions,
 };

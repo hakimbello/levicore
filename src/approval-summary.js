@@ -33,6 +33,7 @@ function createApprovalSummary(taskPlan) {
     validationCommands: listOrUnknown(taskPlan.validationCommands),
     estimatedCostDecision: costDecision(taskPlan),
     restorePointStatus: restorePointStatus(taskPlan),
+    decisionEnforcement: decisionEnforcementText(taskPlan),
     risks: listOrUnknown(taskPlan.risks),
     plannedOperations: hasOperations ? operations.map(operationText) : [UNKNOWN],
   };
@@ -56,6 +57,7 @@ function createApprovalDecision(taskPlan) {
       validationCommands: [UNKNOWN],
       costDecision: UNKNOWN,
       restorePointStatus: UNKNOWN,
+      decisionEnforcement: UNKNOWN,
       reason: "No task plan exists.",
       nextRequiredAction: "Create an approved task plan before execution.",
     };
@@ -81,6 +83,7 @@ function createApprovalDecision(taskPlan) {
     validationCommands: summary.details.validationCommands,
     costDecision: summary.details.estimatedCostDecision,
     restorePointStatus: summary.details.restorePointStatus,
+    decisionEnforcement: summary.details.decisionEnforcement,
     reason: decision.reason,
     nextRequiredAction: decision.nextRequiredAction,
   };
@@ -172,6 +175,12 @@ function confirmationRequirement(destructiveActions) {
 function blockingIssueFor(taskPlan) {
   if (!isPlainObject(taskPlan)) {
     return "No task plan exists.";
+  }
+
+  const decisionIssue = decisionBlockingIssue(taskPlan);
+
+  if (decisionIssue) {
+    return decisionIssue;
   }
 
   const plannedFiles = plannedFileSet(taskPlan.expectedFiles);
@@ -330,6 +339,34 @@ function restorePointStatus(taskPlan) {
   return UNKNOWN;
 }
 
+function decisionEnforcementText(taskPlan) {
+  if (!isPlainObject(taskPlan.decisionEnforcement)) {
+    return UNKNOWN;
+  }
+
+  const status = stringOrUnknown(taskPlan.decisionEnforcement.status);
+  const reason = stringOrUnknown(taskPlan.decisionEnforcement.reason);
+  const decisions = Array.isArray(taskPlan.decisionEnforcement.decisions)
+    ? taskPlan.decisionEnforcement.decisions
+        .map((decision) => `${stringOrUnknown(decision.decisionId)} ${stringOrUnknown(decision.category)}`)
+        .sort()
+    : [UNKNOWN];
+
+  return `${status}. Reason: ${reason}. Decisions: ${joinList(decisions)}.`;
+}
+
+function decisionBlockingIssue(taskPlan) {
+  if (!isPlainObject(taskPlan.decisionEnforcement)) {
+    return null;
+  }
+
+  if (taskPlan.decisionEnforcement.status === "BLOCKED") {
+    return `Project decision blocks execution: ${stringOrUnknown(taskPlan.decisionEnforcement.reason)}`;
+  }
+
+  return null;
+}
+
 function renderSummary(details) {
   return [
     "Safe approval summary",
@@ -343,6 +380,7 @@ function renderSummary(details) {
     `Validation commands: ${joinList(details.validationCommands)}`,
     `Estimated cost decision: ${details.estimatedCostDecision}`,
     `Restore-point status: ${details.restorePointStatus}`,
+    `Decision enforcement: ${details.decisionEnforcement}`,
     `Risks: ${joinList(details.risks)}`,
     `Planned operations: ${joinList(details.plannedOperations)}`,
   ].join("\n");
@@ -360,6 +398,7 @@ function renderDecision(details) {
     `Validation commands: ${joinList(details.validationCommands)}`,
     `Cost decision: ${details.costDecision}`,
     `Restore-point status: ${details.restorePointStatus}`,
+    `Decision enforcement: ${details.decisionEnforcement}`,
     `Reason: ${details.reason}`,
     `Next required action: ${details.nextRequiredAction}`,
   ].join("\n");
