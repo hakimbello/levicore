@@ -3,6 +3,7 @@ const {
   validateProviderCostEstimate,
   validateProviderRequest,
 } = require("./model-provider-interface");
+const { ALLOWED, checkBudget } = require("./budget-guardrails");
 const { estimateTaskCost } = require("./cost-estimator");
 const { discoverLocalModels: discoverLocalModelEvidence } = require("./local-model-discovery");
 
@@ -65,12 +66,19 @@ function createModelGateway(options) {
     const provider = selectProviderForRequest(request);
     const fallback = selectFallback(provider, providers);
     const costEstimate = estimateTaskCost({ provider, request });
+    const budget = request.budgetCeiling
+      ? checkBudget({
+          costEstimate,
+          budgetCeiling: request.budgetCeiling,
+        })
+      : null;
 
     return {
       provider,
       fallback,
       costEstimate,
-      routing: routingMetadata(provider, fallback, costEstimate),
+      budget,
+      routing: routingMetadata(provider, fallback, costEstimate, budget),
       usage: {
         spent,
         iterations,
@@ -86,6 +94,7 @@ function createModelGateway(options) {
     }
 
     const preview = estimateCost(request);
+    enforceBudget(preview.budget);
     const executionCost = preview.provider.estimateCost(request);
     validateProviderCostEstimate(executionCost);
 
@@ -126,13 +135,14 @@ function createModelGateway(options) {
   }
 }
 
-function routingMetadata(provider, fallback, costEstimate) {
+function routingMetadata(provider, fallback, costEstimate, budget) {
   return {
     selectedModel: provider.model,
     selectedProvider: provider.name,
     reason: provider.reason,
     estimatedCostClass: costEstimate.costClass,
     costEstimate,
+    budget,
     fallback: fallback
       ? {
           model: fallback.model,
@@ -140,6 +150,18 @@ function routingMetadata(provider, fallback, costEstimate) {
         }
       : null,
   };
+}
+
+function enforceBudget(budget) {
+  if (!budget || budget.status === ALLOWED) {
+    return;
+  }
+
+  if (budget.status === "APPROVAL_REQUIRED") {
+    throw new Error("Model gateway budget approval required.");
+  }
+
+  throw new Error("Model gateway budget ceiling exceeded.");
 }
 
 function selectProvider(request, providers) {

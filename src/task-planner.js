@@ -20,6 +20,10 @@ function createTaskPlan(input) {
     plan.costEstimate = normalizeCostEstimate(input.costEstimate);
   }
 
+  if (input.budgetState !== undefined) {
+    plan.budgetState = normalizeBudgetState(input.budgetState);
+  }
+
   return plan;
 }
 
@@ -60,6 +64,10 @@ function validatePlan(plan) {
   if (plan.costEstimate !== undefined) {
     normalizeCostEstimate(plan.costEstimate);
   }
+
+  if (plan.budgetState !== undefined) {
+    normalizeBudgetState(plan.budgetState);
+  }
 }
 
 function attachCostEstimate(plan, costEstimate) {
@@ -68,6 +76,15 @@ function attachCostEstimate(plan, costEstimate) {
   return {
     ...plan,
     costEstimate: normalizeCostEstimate(costEstimate),
+  };
+}
+
+function attachBudgetState(plan, budgetState) {
+  validatePlan(plan);
+
+  return {
+    ...plan,
+    budgetState: normalizeBudgetState(budgetState),
   };
 }
 
@@ -89,6 +106,34 @@ function normalizeCostEstimate(costEstimate) {
   return JSON.parse(JSON.stringify(costEstimate));
 }
 
+function normalizeBudgetState(budgetState) {
+  if (!budgetState || typeof budgetState !== "object" || Array.isArray(budgetState)) {
+    throw new Error("Task plan budgetState must be an object.");
+  }
+
+  if (!["ALLOWED", "APPROVAL_REQUIRED", "BLOCKED"].includes(budgetState.status)) {
+    throw new Error("Task plan budgetState.status is required.");
+  }
+
+  for (const fieldName of ["provider", "model", "reason"]) {
+    requireString(budgetState[fieldName], `budgetState.${fieldName}`);
+  }
+
+  if (budgetState.estimatedCost === undefined) {
+    throw new Error("Task plan budgetState.estimatedCost is required.");
+  }
+
+  if (!budgetState.budgetCeiling || typeof budgetState.budgetCeiling !== "object") {
+    throw new Error("Task plan budgetState.budgetCeiling is required.");
+  }
+
+  if (!budgetState.pricingEvidence || typeof budgetState.pricingEvidence !== "object") {
+    throw new Error("Task plan budgetState.pricingEvidence is required.");
+  }
+
+  return JSON.parse(JSON.stringify(budgetState));
+}
+
 function requireString(value, fieldName) {
   if (typeof value !== "string" || value.trim() === "") {
     throw new Error(`Task plan ${fieldName} is required.`);
@@ -107,6 +152,7 @@ function requireStringArray(value, fieldName) {
 
 module.exports = {
   APPROVAL_STATES,
+  attachBudgetState,
   attachCostEstimate,
   approveTaskPlan,
   canBeginExecution,
