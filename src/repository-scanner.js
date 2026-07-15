@@ -13,6 +13,7 @@ const IGNORED_DIRECTORIES = new Set([
   "node_modules",
   "vendor",
 ]);
+const LEVI_RUNTIME_DIRECTORY = ".levi";
 
 const SUPPORTED_EXTENSIONS = new Set([
   ".c",
@@ -104,6 +105,10 @@ function scanRepository(repositoryPath) {
       const relativePath = toRelativePath(rootPath, entryPath);
 
       if (entry.isDirectory()) {
+        if (entry.name === LEVI_RUNTIME_DIRECTORY) {
+          continue;
+        }
+
         if (IGNORED_DIRECTORIES.has(entry.name)) {
           skipped.push({
             path: relativePath,

@@ -5,17 +5,23 @@ const UNKNOWN = "UNKNOWN";
 const DEPENDENCY_MANIFESTS = new Set(["package.json", "requirements.txt"]);
 
 function summarizeProject(scanResult) {
+  const projectFiles = withoutLeviRuntimeFiles(scanResult.files);
+  const skippedFiles = withoutLeviRuntimeFiles(scanResult.skipped);
+
   return {
     root: scanResult.root,
-    files: scanResult.files,
-    skipped: scanResult.skipped,
+    files: projectFiles,
+    skipped: skippedFiles,
     languages: scanResult.detected.languages,
     frameworks: scanResult.detected.frameworks,
     packageManagers: scanResult.detected.packageManagers,
     entryPoints: scanResult.detected.entryPoints,
     tests: scanResult.detected.tests,
-    majorDirectories: summarizeMajorDirectories(scanResult.files),
-    dependencies: summarizeDependencies(scanResult),
+    majorDirectories: summarizeMajorDirectories(projectFiles),
+    dependencies: summarizeDependencies({
+      ...scanResult,
+      files: projectFiles,
+    }),
   };
 }
 
@@ -59,6 +65,23 @@ function summarizeDependencies(scanResult) {
   }
 
   return manifests.map((manifest) => analyzeDependencyManifest(scanResult.root, manifest.path));
+}
+
+function withoutLeviRuntimeFiles(files) {
+  if (!Array.isArray(files)) {
+    return [];
+  }
+
+  return files.filter((file) => !isLeviRuntimePath(file.path));
+}
+
+function isLeviRuntimePath(filePath) {
+  if (typeof filePath !== "string") {
+    return false;
+  }
+
+  const parts = filePath.replace(/\\/g, "/").split("/").filter(Boolean);
+  return parts[0] === ".levi";
 }
 
 module.exports = {

@@ -101,6 +101,10 @@ function filterMemory(records) {
       return false;
     }
 
+    if (containsLeviRuntimePath(record.source)) {
+      return false;
+    }
+
     return CONTROL_CONFIDENCE_STATES.has(record.confidenceState);
   });
 }
@@ -110,8 +114,16 @@ function sanitizeValue(value) {
     return value.map(sanitizeValue).filter((entry) => entry !== undefined);
   }
 
+  if (typeof value === "string") {
+    return isLeviRuntimePath(value) ? undefined : value;
+  }
+
   if (!isPlainObject(value)) {
     return value;
+  }
+
+  if (hasLeviRuntimePathValue(value)) {
+    return undefined;
   }
 
   const sanitized = {};
@@ -164,6 +176,35 @@ function normalizeLines(lines) {
 function valueOrUnknown(value) {
   const serialized = stableSerialize(value);
   return serialized.trim() === "" ? "UNKNOWN" : serialized;
+}
+
+function isLeviRuntimePath(filePath) {
+  if (typeof filePath !== "string") {
+    return false;
+  }
+
+  const parts = filePath.replace(/\\/g, "/").split("/").filter(Boolean);
+  return parts[0] === ".levi";
+}
+
+function hasLeviRuntimePathValue(value) {
+  return ["path", "file", "source"].some((key) => isLeviRuntimePath(value[key]));
+}
+
+function containsLeviRuntimePath(value) {
+  if (typeof value === "string") {
+    return isLeviRuntimePath(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.some(containsLeviRuntimePath);
+  }
+
+  if (!isPlainObject(value)) {
+    return false;
+  }
+
+  return Object.values(value).some(containsLeviRuntimePath);
 }
 
 function isPlainObject(value) {

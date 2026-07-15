@@ -174,6 +174,10 @@ function verifiedMemory(records, repositoryRoot) {
         return false;
       }
 
+      if (containsLeviRuntimePath(record.source)) {
+        return false;
+      }
+
       return !isPlainObject(record.source) || record.source.kind !== "model-output";
     })
     .map((record) => {
@@ -325,6 +329,10 @@ function normalizeSourcePath(source, repositoryRoot) {
 
   const normalized = parts.join("/");
 
+  if (isLeviRuntimePath(normalized)) {
+    return UNKNOWN;
+  }
+
   if (SECRET_PATH_PATTERN.test(normalized)) {
     return UNKNOWN;
   }
@@ -355,11 +363,19 @@ function sanitizePreviewValue(value) {
   }
 
   if (typeof value === "string") {
+    if (isLeviRuntimePath(value)) {
+      return undefined;
+    }
+
     return SECRET_VALUE_PATTERN.test(value) ? undefined : value;
   }
 
   if (!isPlainObject(value)) {
     return value;
+  }
+
+  if (hasLeviRuntimePathValue(value)) {
+    return undefined;
   }
 
   const sanitized = {};
@@ -435,6 +451,35 @@ function stringOrUnknown(value) {
 function stringOrNull(value) {
   const text = stringOrUnknown(value);
   return text === UNKNOWN ? null : text;
+}
+
+function isLeviRuntimePath(filePath) {
+  if (typeof filePath !== "string") {
+    return false;
+  }
+
+  const parts = filePath.replace(/\\/g, "/").split("/").filter(Boolean);
+  return parts[0] === ".levi";
+}
+
+function hasLeviRuntimePathValue(value) {
+  return ["path", "file", "source"].some((key) => isLeviRuntimePath(value[key]));
+}
+
+function containsLeviRuntimePath(value) {
+  if (typeof value === "string") {
+    return isLeviRuntimePath(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.some(containsLeviRuntimePath);
+  }
+
+  if (!isPlainObject(value)) {
+    return false;
+  }
+
+  return Object.values(value).some(containsLeviRuntimePath);
 }
 
 function isPlainObject(value) {
