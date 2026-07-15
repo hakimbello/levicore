@@ -1,4 +1,7 @@
+const path = require("node:path");
 const CONTROL_CONFIDENCE_STATES = new Set(["APPROVED", "VERIFIED"]);
+const { DEFAULT_TOKEN_CEILING, applyContextBudget } = require("./context-budget");
+
 const DEFAULT_LIMITS = {
   maxRepositoryFacts: 50,
   maxMemoryRecords: 20,
@@ -6,7 +9,33 @@ const DEFAULT_LIMITS = {
   maxMemoryValueLength: 1000,
 };
 const SECRET_KEY_PATTERN = /(api[_-]?key|auth|credential|password|private[_-]?key|secret|token)/i;
+const SECRET_VALUE_PATTERN = /\b(api[_-]?key|password|secret|token)\s*[:=]/i;
 const SECRET_PATH_PATTERN = /(^|\/|[._-])(env|secret|credential|private[-_]?key|api[-_]?key|token)($|\/|[._-])/i;
+const SUPPORTED_EVIDENCE_EXTENSIONS = new Set([
+  ".c",
+  ".cc",
+  ".cpp",
+  ".cs",
+  ".css",
+  ".go",
+  ".h",
+  ".hpp",
+  ".html",
+  ".java",
+  ".js",
+  ".jsx",
+  ".json",
+  ".md",
+  ".mjs",
+  ".py",
+  ".rb",
+  ".rs",
+  ".ts",
+  ".tsx",
+  ".txt",
+  ".yml",
+  ".yaml",
+]);
 
 function buildContext(input) {
   validateInput(input);
@@ -22,8 +51,7 @@ function buildContext(input) {
     limits.maxMemoryRecords,
     limits.maxMemoryValueLength,
   );
-
-  return {
+  const baseContext = {
     projectId: input.projectId,
     repositoryRoot: stringOrUnknown(input.projectSummary.root),
     taskPlan: sanitizeValue(input.taskPlan),
@@ -39,6 +67,17 @@ function buildContext(input) {
         repositoryFacts,
         taskPlan: sanitizeValue(input.taskPlan),
       }).length,
+    },
+  };
+  const budgeted = applyContextBudget(baseContext, {
+    tokenCeiling: DEFAULT_TOKEN_CEILING,
+  });
+
+  return {
+    ...budgeted.context,
+    contextBudget: {
+      ...baseContext.contextBudget,
+      ...budgeted.report,
     },
   };
 }
@@ -111,6 +150,11 @@ function factsFromValue(category, value) {
 
 function factFromEntry(category, entry) {
   const sanitized = sanitizeValue(entry);
+
+  if (sanitized === undefined) {
+    return [];
+  }
+
   const evidence = extractEvidence(sanitized);
 
   if (evidence.length === 0 && sanitized !== "UNKNOWN") {
@@ -133,6 +177,7 @@ function extractEvidence(value) {
 
   return evidence
     .filter((entry) => !isSecretLikePath(entry.source))
+    .filter((entry) => isSupportedEvidencePath(entry.source))
     .sort(compareStable);
 }
 
@@ -179,7 +224,7 @@ function collectEvidence(value, evidence) {
 
 function removeEvidence(value) {
   if (Array.isArray(value)) {
-    return value.map(removeEvidence);
+    return value.map(removeEvidence).filter((entry) => entry !== undefined);
   }
 
   if (!isPlainObject(value)) {
@@ -193,7 +238,11 @@ function removeEvidence(value) {
       continue;
     }
 
-    cleaned[key] = removeEvidence(value[key]);
+    const child = removeEvidence(value[key]);
+
+    if (child !== undefined) {
+      cleaned[key] = child;
+    }
   }
 
   return Object.keys(cleaned).length === 0 ? "UNKNOWN" : cleaned;
@@ -237,6 +286,7 @@ function filterMemory(records, projectId) {
       return true;
     })
     .map(sanitizeValue)
+    .filter(hasMeaningfulMemoryValue)
     .sort(compareStable);
 }
 
@@ -295,6 +345,10 @@ function sanitizeCollection(values) {
 function sanitizeValue(value) {
   if (Array.isArray(value)) {
     return value.map(sanitizeValue).filter((entry) => entry !== undefined);
+  }
+
+  if (typeof value === "string") {
+    return SECRET_VALUE_PATTERN.test(value) ? undefined : value;
   }
 
   if (!isPlainObject(value)) {
@@ -364,8 +418,37 @@ function isSecretLikePath(filePath) {
   return SECRET_PATH_PATTERN.test(filePath);
 }
 
+function isSupportedEvidencePath(filePath) {
+  if (typeof filePath !== "string" || filePath.trim() === "") {
+    return false;
+  }
+
+  const extension = path.extname(filePath).toLowerCase();
+  return extension === "" || SUPPORTED_EVIDENCE_EXTENSIONS.has(extension);
+}
+
 function isMemoryStore(value) {
   return isPlainObject(value) && typeof value.listRecords === "function";
+}
+
+function hasMeaningfulMemoryValue(record) {
+  if (!isPlainObject(record)) {
+    return false;
+  }
+
+  if (record.value === undefined) {
+    return false;
+  }
+
+  if (isPlainObject(record.value) && Object.keys(record.value).length === 0) {
+    return false;
+  }
+
+  if (Array.isArray(record.value) && record.value.length === 0) {
+    return false;
+  }
+
+  return true;
 }
 
 function requireString(value, fieldName) {
