@@ -1,6 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { createApprovalSummary } = require("./approval-summary");
+const { createApprovalDecision, createApprovalSummary } = require("./approval-summary");
 const { createCodeGenerationPipeline } = require("./code-generation-pipeline");
 const { createCompletionReport, recordVerifiedTaskOutcome } = require("./completion-reporter");
 const { createMemoryStore } = require("./memory-store");
@@ -86,6 +86,7 @@ function requestTask(repositoryPath, requirementId, requestArgs) {
   });
   plan.scopeBoundaries = [`Only ${expectedFile} may be changed by the assistant patch.`];
   plan.approvalSummary = createApprovalSummary(plan);
+  plan.approvalDecision = createApprovalDecision(plan);
   const state = loadState(repositoryPath);
   state.request = { requirementId, scope };
   state.plan = plan;
@@ -106,6 +107,7 @@ function approvePlan(repositoryPath) {
 
   state.plan = approveTaskPlan(state.plan);
   state.plan.approvalSummary = createApprovalSummary(state.plan);
+  state.plan.approvalDecision = createApprovalDecision(state.plan);
   saveState(repositoryPath, state);
   return state.plan;
 }
@@ -119,6 +121,18 @@ function executeApprovedPlan(repositoryPath) {
 
   if (state.plan.approvalState !== "APPROVED") {
     throw new Error("Task plan must be APPROVED before execution.");
+  }
+
+  state.plan.approvalDecision = createApprovalDecision(state.plan);
+
+  if (state.plan.approvalDecision.decision !== "APPROVED") {
+    state.execution = {
+      status: "FAILED",
+      error: state.plan.approvalDecision.reason,
+      approvalDecision: state.plan.approvalDecision,
+    };
+    saveState(repositoryPath, state);
+    return state.execution;
   }
 
   const repositorySummary = summarizeProject(scanRepository(repositoryPath));

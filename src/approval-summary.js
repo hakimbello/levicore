@@ -1,6 +1,12 @@
 const UNKNOWN = "UNKNOWN";
 const NONE = "NONE";
 const OPERATION_TYPES = new Set(["create", "update", "delete", "command"]);
+const DECISIONS = {
+  APPROVED: "APPROVED",
+  APPROVAL_REQUIRED: "APPROVAL_REQUIRED",
+  DESTRUCTIVE_CONFIRMATION_REQUIRED: "DESTRUCTIVE_CONFIRMATION_REQUIRED",
+  BLOCKED: "BLOCKED",
+};
 
 function createApprovalSummary(taskPlan) {
   validateTaskPlan(taskPlan);
@@ -31,6 +37,55 @@ function createApprovalSummary(taskPlan) {
   return {
     text: renderSummary(details),
     details,
+  };
+}
+
+function createApprovalDecision(taskPlan) {
+  if (!isPlainObject(taskPlan)) {
+    const details = {
+      decision: DECISIONS.BLOCKED,
+      taskObjective: UNKNOWN,
+      filesCreated: [UNKNOWN],
+      filesUpdated: [UNKNOWN],
+      filesDeleted: [UNKNOWN],
+      totalFilesAffected: UNKNOWN,
+      destructiveActions: [UNKNOWN],
+      validationCommands: [UNKNOWN],
+      costDecision: UNKNOWN,
+      restorePointStatus: UNKNOWN,
+      reason: "No task plan exists.",
+      nextRequiredAction: "Create an approved task plan before execution.",
+    };
+
+    return {
+      ...details,
+      summary: null,
+      text: renderDecision(details),
+    };
+  }
+
+  const summary = createApprovalSummary(taskPlan);
+  const blockingIssue = blockingIssueFor(taskPlan);
+  const decision = decisionFor(taskPlan, summary.details, blockingIssue);
+  const details = {
+    decision: decision.status,
+    taskObjective: summary.details.taskObjective,
+    filesCreated: summary.details.filesCreated,
+    filesUpdated: summary.details.filesUpdated,
+    filesDeleted: summary.details.filesDeleted,
+    totalFilesAffected: summary.details.totalFilesAffected,
+    destructiveActions: summary.details.destructiveActions,
+    validationCommands: summary.details.validationCommands,
+    costDecision: summary.details.estimatedCostDecision,
+    restorePointStatus: summary.details.restorePointStatus,
+    reason: decision.reason,
+    nextRequiredAction: decision.nextRequiredAction,
+  };
+
+  return {
+    ...details,
+    summary,
+    text: renderDecision(details),
   };
 }
 
@@ -69,6 +124,7 @@ function normalizeOperation(operation) {
     irreversible: operation.irreversible === true,
     overwrite: operation.overwrite === true,
     broadRewrite: operation.broadRewrite === true,
+    destructiveConfirmation: operation.destructiveConfirmation === true,
   };
 }
 
@@ -108,6 +164,118 @@ function destructiveActionsFor(operations) {
 
 function confirmationRequirement(destructiveActions) {
   return destructiveActions.length > 0 ? "REQUIRED" : "NOT REQUIRED";
+}
+
+function blockingIssueFor(taskPlan) {
+  if (!isPlainObject(taskPlan)) {
+    return "No task plan exists.";
+  }
+
+  if (isPlainObject(taskPlan.budgetState) && taskPlan.budgetState.status === DECISIONS.BLOCKED) {
+    return stringOrUnknown(taskPlan.budgetState.reason);
+  }
+
+  const plannedFiles = plannedFileSet(taskPlan.expectedFiles);
+
+  if (plannedFiles === null) {
+    return null;
+  }
+
+  const operations = normalizeOperations(taskPlan.plannedOperations);
+
+  if (!operations) {
+    return null;
+  }
+
+  for (const operation of operations) {
+    if (!plannedFiles.has(operation.path)) {
+      return `Operation is outside approved files: ${operation.path}`;
+    }
+  }
+
+  return null;
+}
+
+function decisionFor(taskPlan, details, blockingIssue) {
+  if (blockingIssue) {
+    return {
+      status: DECISIONS.BLOCKED,
+      reason: blockingIssue,
+      nextRequiredAction: "Update the approved plan before execution.",
+    };
+  }
+
+  if (taskPlan.approvalState !== "APPROVED") {
+    return {
+      status: DECISIONS.APPROVAL_REQUIRED,
+      reason: "Task plan approval is required before execution.",
+      nextRequiredAction: "Approve the task plan.",
+    };
+  }
+
+  if (details.destructiveConfirmationRequired === "REQUIRED" && !allDestructiveOperationsConfirmed(taskPlan)) {
+    return {
+      status: DECISIONS.DESTRUCTIVE_CONFIRMATION_REQUIRED,
+      reason: "Destructive actions need separate confirmation.",
+      nextRequiredAction: "Confirm destructive actions before execution.",
+    };
+  }
+
+  if (isPlainObject(taskPlan.budgetState) && taskPlan.budgetState.status === DECISIONS.APPROVAL_REQUIRED) {
+    return {
+      status: DECISIONS.APPROVAL_REQUIRED,
+      reason: stringOrUnknown(taskPlan.budgetState.reason),
+      nextRequiredAction: "Approve the cost decision before execution.",
+    };
+  }
+
+  if (isPlainObject(taskPlan.costEstimate) && taskPlan.costEstimate.costClass === UNKNOWN) {
+    return {
+      status: DECISIONS.APPROVAL_REQUIRED,
+      reason: "Estimated cost is UNKNOWN.",
+      nextRequiredAction: "Approve UNKNOWN cost before execution.",
+    };
+  }
+
+  return {
+    status: DECISIONS.APPROVED,
+    reason: "Task plan is approved and ready for execution.",
+    nextRequiredAction: "Proceed with execution.",
+  };
+}
+
+function allDestructiveOperationsConfirmed(taskPlan) {
+  const operations = normalizeOperations(taskPlan.plannedOperations);
+
+  if (!operations) {
+    return true;
+  }
+
+  return operations.every((operation) => !isDestructiveOperation(operation) || operation.destructiveConfirmation === true);
+}
+
+function isDestructiveOperation(operation) {
+  return (
+    operation.type === "delete" ||
+    operation.destructive === true ||
+    operation.irreversible === true ||
+    operation.overwrite === true ||
+    operation.broadRewrite === true
+  );
+}
+
+function plannedFileSet(expectedFiles) {
+  if (!Array.isArray(expectedFiles) || expectedFiles.length === 0) {
+    return null;
+  }
+
+  const plannedFiles = new Set();
+
+  for (const filePath of expectedFiles) {
+    plannedFiles.add(stringOrThrow(filePath, "Approval summary expected file path is required."));
+  }
+
+  return plannedFiles;
 }
 
 function operationText(operation) {
@@ -173,6 +341,23 @@ function renderSummary(details) {
   ].join("\n");
 }
 
+function renderDecision(details) {
+  return [
+    `Approval decision: ${details.decision}`,
+    `Task objective: ${details.taskObjective}`,
+    `Files created: ${joinList(details.filesCreated)}`,
+    `Files updated: ${joinList(details.filesUpdated)}`,
+    `Files deleted: ${joinList(details.filesDeleted)}`,
+    `Total files affected: ${details.totalFilesAffected}`,
+    `DESTRUCTIVE ACTIONS: ${joinList(details.destructiveActions)}`,
+    `Validation commands: ${joinList(details.validationCommands)}`,
+    `Cost decision: ${details.costDecision}`,
+    `Restore-point status: ${details.restorePointStatus}`,
+    `Reason: ${details.reason}`,
+    `Next required action: ${details.nextRequiredAction}`,
+  ].join("\n");
+}
+
 function listOrUnknown(value) {
   if (!Array.isArray(value) || value.length === 0) {
     return [UNKNOWN];
@@ -230,6 +415,8 @@ function isPlainObject(value) {
 }
 
 module.exports = {
+  DECISIONS,
   UNKNOWN,
+  createApprovalDecision,
   createApprovalSummary,
 };
