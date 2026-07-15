@@ -26,6 +26,7 @@ function createTaskIntake(input) {
   validateInput(input);
 
   const taskText = input.taskText;
+  const requirementId = stringOrUnknown(input.requirementId);
   const normalizedText = normalizeText(taskText);
   const objective = objectiveFromText(normalizedText);
   const requestedActionClass = requestedActionClassFromText(normalizedText);
@@ -37,22 +38,7 @@ function createTaskIntake(input) {
     originalRequest: taskText,
     objective,
     requestedActionClass,
-    requirementId: UNKNOWN,
-    scopeRequest: {
-      requirementId: UNKNOWN,
-      taskText,
-      objective,
-      requestedActionClass,
-      ambiguous: ambiguity.length > 0,
-    },
-    planningRequest: {
-      objective,
-      taskText,
-      requestedActionClass,
-      expectedFiles: [UNKNOWN],
-      acceptanceCriteria: [UNKNOWN],
-      validationCommands: [UNKNOWN],
-    },
+    requirementId,
     missingInformation,
     ambiguity,
     boundaries: {
@@ -71,6 +57,9 @@ function createTaskIntake(input) {
   return {
     ...intake,
     status: normalized.status,
+    repositoryPath: normalized.repositoryPath,
+    originalRequest: normalized.originalRequest,
+    taskText: normalized.taskText,
     normalizedObjective: normalized.normalizedObjective,
     taskType: normalized.taskType,
     missingInformation: normalized.missingInformation,
@@ -78,10 +67,28 @@ function createTaskIntake(input) {
     nextQuestions: normalized.nextQuestions,
     proceedToPlanning: normalized.proceedToPlanning,
     reason: normalized.reason,
-    planningRequest: {
-      ...intake.planningRequest,
-      objective: normalized.normalizedObjective,
+    scopeRequest: {
+      requirementId,
+      intakeStatus: normalized.status,
+      originalRequest: normalized.originalRequest,
+      taskText: normalized.taskText,
+      normalizedObjective: normalized.normalizedObjective,
       taskType: normalized.taskType,
+      requestedActionClass,
+      missingInformation: normalized.missingInformation,
+      ambiguityReasons: normalized.ambiguityReasons,
+      nextQuestions: normalized.nextQuestions,
+      ambiguous: normalized.ambiguityReasons.length > 0,
+      rejected: normalized.status === "REJECTED",
+    },
+    planningRequest: {
+      requirementId,
+      originalRequest: normalized.originalRequest,
+      normalizedObjective: normalized.normalizedObjective,
+      taskType: normalized.taskType,
+      requestedActionClass,
+      repositoryPath: normalized.repositoryPath,
+      approvalRequired: true,
     },
     intentClassification: normalized,
   };

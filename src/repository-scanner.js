@@ -99,7 +99,7 @@ function scanRepository(repositoryPath) {
       return;
     }
 
-    for (const entry of entries) {
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
       const entryPath = path.join(directoryPath, entry.name);
       const relativePath = toRelativePath(rootPath, entryPath);
 
@@ -170,13 +170,17 @@ function scanRepository(repositoryPath) {
 
   const result = {
     root: rootPath,
-    files,
-    skipped,
+    files: files.sort(comparePathEntries),
+    skipped: skipped.sort(comparePathEntries),
   };
 
   result.detected = detectProjectSignals(result);
 
   return result;
+}
+
+function comparePathEntries(left, right) {
+  return left.path.localeCompare(right.path);
 }
 
 module.exports = {

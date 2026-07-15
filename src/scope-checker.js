@@ -1,7 +1,15 @@
 const ASSUMPTION_REQUIRES_APPROVAL = "ASSUMPTION REQUIRES APPROVAL";
+const UNKNOWN = "UNKNOWN";
+const INTAKE_BLOCKING_STATUSES = new Set(["MORE_INFORMATION_REQUIRED", "AMBIGUOUS", "REJECTED"]);
 
 function checkScope(request, approvedRequirements) {
   validateInputs(request, approvedRequirements);
+
+  const intakeBlock = intakeBlockFor(request);
+
+  if (intakeBlock) {
+    return intakeBlock;
+  }
 
   if (request.isNewIdea) {
     return {
@@ -18,6 +26,14 @@ function checkScope(request, approvedRequirements) {
     };
   }
 
+  if (typeof request.requirementId !== "string" || request.requirementId.trim() === "" || request.requirementId === UNKNOWN) {
+    return {
+      status: "REJECTED_OUT_OF_SCOPE",
+      proceedToPlanning: false,
+      reason: "Scope request does not name an approved requirement.",
+    };
+  }
+
   const requirement = approvedRequirements.find((candidate) => candidate.id === request.requirementId);
 
   if (!requirement) {
@@ -31,6 +47,44 @@ function checkScope(request, approvedRequirements) {
     status: "IN_SCOPE",
     proceedToPlanning: true,
     requirement,
+    handoff: {
+      originalRequest: request.originalRequest,
+      normalizedObjective: request.normalizedObjective,
+      taskType: request.taskType,
+      requestedActionClass: request.requestedActionClass,
+    },
+  };
+}
+
+function intakeBlockFor(request) {
+  if (!INTAKE_BLOCKING_STATUSES.has(request.intakeStatus)) {
+    return null;
+  }
+
+  if (request.intakeStatus === "AMBIGUOUS") {
+    return {
+      status: ASSUMPTION_REQUIRES_APPROVAL,
+      proceedToPlanning: false,
+      reason: "Ambiguous intake cannot proceed to planning.",
+      ambiguityReasons: arrayOrEmpty(request.ambiguityReasons),
+      nextQuestions: arrayOrEmpty(request.nextQuestions),
+    };
+  }
+
+  if (request.intakeStatus === "MORE_INFORMATION_REQUIRED") {
+    return {
+      status: "MORE_INFORMATION_REQUIRED",
+      proceedToPlanning: false,
+      reason: "Missing intake information blocks planning.",
+      missingInformation: arrayOrEmpty(request.missingInformation),
+      nextQuestions: arrayOrEmpty(request.nextQuestions),
+    };
+  }
+
+  return {
+    status: "REJECTED_OUT_OF_SCOPE",
+    proceedToPlanning: false,
+    reason: "Rejected intake cannot proceed to planning.",
   };
 }
 
@@ -48,6 +102,10 @@ function validateInputs(request, approvedRequirements) {
       throw new Error("Approved requirement ID is required.");
     }
   }
+}
+
+function arrayOrEmpty(value) {
+  return Array.isArray(value) ? [...value].sort() : [];
 }
 
 module.exports = {

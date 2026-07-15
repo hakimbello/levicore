@@ -14,7 +14,7 @@ const { applySafePatch } = require("./safe-patch");
 const { inspectRestorePoint, restoreFromRestorePoint } = require("./restore-points");
 const { checkScope } = require("./scope-checker");
 const { createTaskIntake } = require("./task-intake");
-const { approveTaskPlan, createTaskPlan } = require("./task-planner");
+const { approveTaskPlan, createTaskPlan, createTaskPlanFromIntake } = require("./task-planner");
 const { runValidation } = require("./validation-runner");
 
 const APPROVED_REQUIREMENTS = [
@@ -28,6 +28,11 @@ const APPROVED_REQUIREMENTS = [
   { id: "LC-MVP-008", title: "Validation" },
   { id: "LC-MVP-009", title: "Completion Reporting" },
   { id: "LC-MVP-010", title: "Primary User Interface" },
+];
+const POST_MVP_REQUIREMENT_ID = "POST_MVP until approved by owner";
+const REQUEST_SCOPE_REQUIREMENTS = [
+  ...APPROVED_REQUIREMENTS,
+  { id: POST_MVP_REQUIREMENT_ID, title: "Release 0.3 post-MVP request planning" },
 ];
 const SOURCE_EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".ts", ".tsx", ".py", ".go", ".rs", ".rb", ".java", ".cs"]);
 const JAVASCRIPT_EXTENSIONS = new Set([".js", ".jsx", ".mjs"]);
@@ -66,11 +71,70 @@ function intakeTask(repositoryPath, taskTextParts) {
   });
 }
 
-function requestTask(repositoryPath, requirementId, requestArgs) {
-  if (!requirementId) {
-    throw new Error("Usage: levi request <repository-path> <requirement-id>");
+function requestTask(repositoryPath, firstRequestArg, requestArgs) {
+  if (!firstRequestArg) {
+    throw new Error("Usage: levi request <repository-path> <requirement-id|task-description>");
   }
 
+  if (isKnownRequirementId(firstRequestArg)) {
+    return requestLegacyRequirementTask(repositoryPath, firstRequestArg, requestArgs);
+  }
+
+  return requestPlainLanguageTask(repositoryPath, [firstRequestArg, ...(requestArgs || [])]);
+}
+
+function requestPlainLanguageTask(repositoryPath, taskTextParts) {
+  const intake = createTaskIntake({
+    repositoryPath,
+    taskText: taskTextParts.join(" "),
+    requirementId: POST_MVP_REQUIREMENT_ID,
+  });
+  const scope = checkScope(intake.scopeRequest, REQUEST_SCOPE_REQUIREMENTS);
+
+  if (!intake.proceedToPlanning || !scope.proceedToPlanning) {
+    return {
+      exitCode: 1,
+      payload: {
+        status: scope.status,
+        intake,
+        scope,
+      },
+    };
+  }
+
+  const repositorySummary = summarizeProject(scanRepository(repositoryPath));
+  let plan;
+
+  try {
+    plan = createTaskPlanFromIntake({
+      intake,
+      scope,
+      repositorySummary,
+    });
+  } catch (error) {
+    return {
+      exitCode: 1,
+      payload: {
+        status: "MORE_INFORMATION_REQUIRED",
+        reason: error.message,
+        nextQuestions: ["Which existing file or new product surface should Levi plan for?"],
+        intake,
+        scope,
+      },
+    };
+  }
+
+  plan.approvalSummary = createApprovalSummary(plan);
+  plan.approvalDecision = createApprovalDecision(plan);
+  plan.contextPreview = createPreviewForPlan(repositoryPath, plan, repositorySummary);
+
+  return {
+    exitCode: 0,
+    payload: plan,
+  };
+}
+
+function requestLegacyRequirementTask(repositoryPath, requirementId, requestArgs) {
   const scope = checkScope({ requirementId }, APPROVED_REQUIREMENTS);
 
   if (!scope.proceedToPlanning) {
@@ -112,6 +176,10 @@ function requestTask(repositoryPath, requirementId, requestArgs) {
     exitCode: 0,
     payload: plan,
   };
+}
+
+function isKnownRequirementId(requirementId) {
+  return APPROVED_REQUIREMENTS.some((requirement) => requirement.id === requirementId);
 }
 
 function approvePlan(repositoryPath) {
