@@ -4,9 +4,11 @@ const {
   approvePlan,
   executeApprovedPlan,
   initializeProject,
+  inspectLatestRestorePoint,
   inspectLocalReadiness,
   inspectStatus,
   requestTask,
+  restoreProject,
   reviewProject,
   validateProject,
 } = require("../src/cli-workflow");
@@ -15,7 +17,7 @@ const { scanRepository } = require("../src/repository-scanner");
 const { summarizeProject } = require("../src/project-summary");
 
 function printUsage() {
-  console.error("Usage: levi <init|status|readiness|request|approve|execute|validate|review|scan> <repository-path> [args]");
+  console.error("Usage: levi <init|status|readiness|request|approve|execute|validate|review|restore|scan> <repository-path> [args]");
 }
 
 async function main(argv) {
@@ -90,6 +92,17 @@ async function dispatchCommand(command, repositoryPath, args) {
     const report = reviewProject(repositoryPath);
     printJson(report);
     return report.status === "COMPLETED" ? 0 : 1;
+  }
+
+  if (command === "restore") {
+    if (args.length === 0) {
+      printJson(inspectLatestRestorePoint(repositoryPath));
+      return 0;
+    }
+
+    const restore = restoreProject(repositoryPath, args[0], args[1]);
+    printJson(restore);
+    return restore.status === "COMPLETED" ? 0 : 1;
   }
 
   printUsage();

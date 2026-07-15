@@ -9,6 +9,7 @@ const { createModelGateway } = require("./model-gateway");
 const { summarizeProject } = require("./project-summary");
 const { scanRepository } = require("./repository-scanner");
 const { applySafePatch } = require("./safe-patch");
+const { inspectRestorePoint, restoreFromRestorePoint } = require("./restore-points");
 const { checkScope } = require("./scope-checker");
 const { approveTaskPlan, createTaskPlan } = require("./task-planner");
 const { runValidation } = require("./validation-runner");
@@ -235,6 +236,37 @@ function validateProject(repositoryPath, commandParts) {
   return validation;
 }
 
+function inspectLatestRestorePoint(repositoryPath) {
+  const state = loadState(repositoryPath);
+  const restorePoint = latestRestorePoint(state);
+
+  if (!restorePoint) {
+    throw new Error("No restore point exists.");
+  }
+
+  return inspectRestorePoint(restorePoint);
+}
+
+function restoreProject(repositoryPath, restorePointId, confirmation) {
+  const state = loadState(repositoryPath);
+  const restorePoint = latestRestorePoint(state);
+
+  if (!restorePoint) {
+    throw new Error("No restore point exists.");
+  }
+
+  const restore = restoreFromRestorePoint({
+    repositoryRoot: repositoryPath,
+    restorePoint,
+    restorePointId,
+    confirmation,
+  });
+
+  state.restore = restore;
+  saveState(repositoryPath, state);
+  return restore;
+}
+
 function reviewProject(repositoryPath) {
   const state = loadState(repositoryPath);
 
@@ -272,6 +304,14 @@ function reviewProject(repositoryPath) {
   state.report = report;
   saveState(repositoryPath, state);
   return report;
+}
+
+function latestRestorePoint(state) {
+  if (state && state.patch && state.patch.restorePoint) {
+    return state.patch.restorePoint;
+  }
+
+  return null;
 }
 
 function selectDefaultExpectedFile(repositorySummary) {
@@ -433,9 +473,11 @@ module.exports = {
   approvePlan,
   executeApprovedPlan,
   initializeProject,
+  inspectLatestRestorePoint,
   inspectLocalReadiness,
   inspectStatus,
   requestTask,
+  restoreProject,
   reviewProject,
   validateProject,
 };
