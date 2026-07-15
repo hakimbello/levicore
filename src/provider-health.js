@@ -7,6 +7,7 @@ const {
 const PRICING_EVIDENCE_PRESENT = "PRESENT";
 const PRICING_EVIDENCE_MISSING = "MISSING";
 const PRICING_EVIDENCE_UNKNOWN = "UNKNOWN";
+const SECRET_KEY_PATTERN = /(api[_-]?key|auth|credential|password|secret|token)/i;
 
 function checkProviderHealth(input = {}) {
   validateInput(input);
@@ -477,6 +478,10 @@ function sanitizePlainObject(value) {
   const sanitized = {};
 
   for (const key of Object.keys(value).sort()) {
+    if (SECRET_KEY_PATTERN.test(key)) {
+      continue;
+    }
+
     const child = value[key];
 
     if (isPlainObject(child)) {
