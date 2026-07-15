@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { createApprovalDecision, createApprovalSummary } = require("./approval-summary");
+const { BLOCKED } = require("./budget-guardrails");
 const { createCodeGenerationPipeline } = require("./code-generation-pipeline");
 const { createCompletionReport, recordVerifiedTaskOutcome } = require("./completion-reporter");
 const { buildContext } = require("./context-builder");
@@ -40,6 +41,14 @@ const DEFAULT_LIMITS = {
   maxSteps: 10,
   maxMilliseconds: 10000,
   maxCost: 1,
+};
+const MODEL_GATEWAY_LIMITS = {
+  maxSpend: 1,
+  maxIterations: 2,
+};
+const DEFAULT_BUDGET_CEILING = {
+  amount: 1,
+  currency: "USD",
 };
 
 function initializeProject(repositoryPath) {
@@ -124,8 +133,7 @@ function requestPlainLanguageTask(repositoryPath, taskTextParts) {
     };
   }
 
-  plan.approvalSummary = createApprovalSummary(plan);
-  plan.approvalDecision = createApprovalDecision(plan);
+  plan = preparePlanForReview(repositoryPath, plan, repositorySummary);
   plan.contextPreview = createPreviewForPlan(repositoryPath, plan, repositorySummary);
   const state = loadState(repositoryPath);
   state.request = {
@@ -173,8 +181,7 @@ function requestLegacyRequirementTask(repositoryPath, requirementId, requestArgs
     plannedOperations: [plannedOperationSummary(repositoryPath, expectedFile)],
   });
   plan.scopeBoundaries = [`Only ${expectedFile} may be changed by the assistant patch.`];
-  plan.approvalSummary = createApprovalSummary(plan);
-  plan.approvalDecision = createApprovalDecision(plan);
+  plan = preparePlanForReview(repositoryPath, plan, repositorySummary);
   plan.contextPreview = createPreviewForPlan(repositoryPath, plan, repositorySummary);
   const state = loadState(repositoryPath);
   state.request = { requirementId, scope };
@@ -199,8 +206,11 @@ function approvePlan(repositoryPath) {
   }
 
   state.plan = approveTaskPlan(state.plan);
-  state.plan.approvalSummary = createApprovalSummary(state.plan);
-  state.plan.approvalDecision = createApprovalDecision(state.plan);
+  state.plan = preparePlanForReview(
+    repositoryPath,
+    state.plan,
+    summarizeProject(scanRepository(repositoryPath)),
+  );
   state.plan.contextPreview = createPreviewForPlan(
     repositoryPath,
     state.plan,
@@ -228,17 +238,13 @@ function executeApprovedPlan(repositoryPath) {
       status: "FAILED",
       error: state.plan.approvalDecision.reason,
       approvalDecision: state.plan.approvalDecision,
+      costDecision: state.plan.budgetState || null,
     };
     saveState(repositoryPath, state);
     return state.execution;
   }
 
-  const gateway = createPublicModelGateway({
-    limits: {
-      maxSpend: 1,
-      maxIterations: 2,
-    },
-  });
+  const gateway = createExecutionGateway();
   const readiness = createLocalReadinessReport({ modelGateway: gateway });
   const providerGate = publicExecutionProviderGate(readiness);
   const readinessSummary = summarizeExecutionReadiness(readiness);
@@ -247,6 +253,7 @@ function executeApprovedPlan(repositoryPath) {
     state.execution = {
       status: "FAILED",
       error: providerGate.reason,
+      costDecision: state.plan.budgetState,
       providerState: readiness.providers,
       readiness: readinessSummary,
     };
@@ -289,6 +296,7 @@ function executeApprovedPlan(repositoryPath) {
         state.execution = {
           status: "FAILED",
           error: patch.error,
+          costDecision: state.plan.budgetState,
           providerState: readiness.providers,
           readiness: readinessSummary,
         };
@@ -317,6 +325,7 @@ function executeApprovedPlan(repositoryPath) {
       state.memoryRecord = memoryRecord;
       state.execution = {
         status: report.status,
+        costDecision: state.plan.budgetState,
         providerState: readiness.providers,
         readiness: readinessSummary,
       };
@@ -324,6 +333,7 @@ function executeApprovedPlan(repositoryPath) {
 
       return {
         status: report.status,
+        costDecision: state.plan.budgetState,
         providerState: readiness.providers,
         readiness: readinessSummary,
         generation,
@@ -337,6 +347,7 @@ function executeApprovedPlan(repositoryPath) {
       state.execution = {
         status: "FAILED",
         error: error.message,
+        costDecision: state.plan.budgetState,
         providerState: readiness.providers,
         readiness: readinessSummary,
       };
@@ -505,6 +516,106 @@ function quoteCommandArg(value) {
   return `"${value.replace(/"/g, '\\"')}"`;
 }
 
+function preparePlanForReview(repositoryPath, plan, repositorySummary) {
+  const reviewedPlan = attachPublicCostDecision({
+    ...plan,
+    budgetCeiling: normalizeBudgetCeiling(plan.budgetCeiling || DEFAULT_BUDGET_CEILING),
+  });
+  reviewedPlan.approvalSummary = createApprovalSummary(reviewedPlan);
+  reviewedPlan.approvalDecision = createApprovalDecision(reviewedPlan);
+  reviewedPlan.contextPreview = createPreviewForPlan(repositoryPath, reviewedPlan, repositorySummary);
+  return reviewedPlan;
+}
+
+function attachPublicCostDecision(plan) {
+  const gateway = createExecutionGateway();
+
+  try {
+    plan.budgetState = gateway.estimateCostDecision(costDecisionRequestForPlan(plan));
+  } catch (error) {
+    plan.budgetState = blockedCostDecision(plan, error.message);
+  }
+
+  return plan;
+}
+
+function costDecisionRequestForPlan(plan) {
+  const request = {
+    budgetCeiling: normalizeBudgetCeiling(plan.budgetCeiling),
+  };
+
+  if (plan.costUsage !== undefined) {
+    request.usage = plan.costUsage;
+  }
+
+  if (plan.costUsageRange !== undefined) {
+    request.usageRange = plan.costUsageRange;
+  }
+
+  return request;
+}
+
+function blockedCostDecision(plan, reason) {
+  const budgetCeiling = isPlainObject(plan.budgetCeiling)
+    ? normalizeBudgetCeiling(plan.budgetCeiling)
+    : {
+        amount: "UNKNOWN",
+        currency: "UNKNOWN",
+      };
+
+  return {
+    status: BLOCKED,
+    provider: "UNKNOWN",
+    model: "UNKNOWN",
+    costClass: "UNKNOWN",
+    currency: "UNKNOWN",
+    exactEstimate: "UNKNOWN",
+    estimatedCostRange: "UNKNOWN",
+    estimatedCost: "UNKNOWN",
+    budgetCeiling,
+    pricingEvidence: {
+      source: "UNKNOWN",
+      currency: "UNKNOWN",
+      costClass: "UNKNOWN",
+    },
+    reason: shortCostReason(reason),
+    recommendedNextStep: "Resolve cost before execution.",
+  };
+}
+
+function shortCostReason(reason) {
+  if (typeof reason !== "string" || reason.trim() === "") {
+    return "Cost decision blocks execution.";
+  }
+
+  return reason.trim();
+}
+
+function createExecutionGateway() {
+  return createPublicModelGateway({
+    limits: MODEL_GATEWAY_LIMITS,
+  });
+}
+
+function normalizeBudgetCeiling(budgetCeiling) {
+  if (!isPlainObject(budgetCeiling)) {
+    throw new Error("Budget ceiling is required.");
+  }
+
+  if (!Number.isFinite(budgetCeiling.amount) || budgetCeiling.amount < 0) {
+    throw new Error("Budget ceiling amount must be a nonnegative number.");
+  }
+
+  if (typeof budgetCeiling.currency !== "string" || budgetCeiling.currency.trim() === "") {
+    throw new Error("Budget ceiling currency is required.");
+  }
+
+  return {
+    amount: budgetCeiling.amount,
+    currency: budgetCeiling.currency,
+  };
+}
+
 function publicExecutionProviderGate(readiness) {
   const providerState = readiness.providers;
 
@@ -598,6 +709,10 @@ function saveState(repositoryPath, state) {
 
 function statePath(repositoryPath) {
   return path.join(repositoryPath, ".levi", "state.json");
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 module.exports = {

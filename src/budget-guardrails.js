@@ -98,6 +98,60 @@ function checkBudget(input) {
   };
 }
 
+function evaluateCostDecisionApproval(input = {}) {
+  if (!isPlainObject(input)) {
+    throw new Error("Cost decision approval input is required.");
+  }
+
+  const costDecision = input.costDecision;
+
+  if (!isPlainObject(costDecision)) {
+    return {
+      ok: false,
+      status: BLOCKED,
+      reason: "Cost decision is required before execution.",
+    };
+  }
+
+  if (costDecision.status === ALLOWED) {
+    return {
+      ok: true,
+      status: ALLOWED,
+      reason: costDecision.reason,
+    };
+  }
+
+  if (costDecision.status === BLOCKED) {
+    return {
+      ok: false,
+      status: BLOCKED,
+      reason: stringOrDefault(costDecision.reason, "Cost decision blocks execution."),
+    };
+  }
+
+  if (costDecision.status === APPROVAL_REQUIRED) {
+    if (input.costApprovalState === "APPROVED") {
+      return {
+        ok: true,
+        status: ALLOWED,
+        reason: "Cost decision approved.",
+      };
+    }
+
+    return {
+      ok: false,
+      status: APPROVAL_REQUIRED,
+      reason: stringOrDefault(costDecision.reason, "Cost approval is required before execution."),
+    };
+  }
+
+  return {
+    ok: false,
+    status: BLOCKED,
+    reason: "Cost decision status is invalid.",
+  };
+}
+
 function normalizeEstimatedCost(costEstimate) {
   if (isPlainObject(costEstimate.exactCost)) {
     return {
@@ -222,6 +276,10 @@ function requireString(value, fieldName) {
   }
 }
 
+function stringOrDefault(value, defaultValue) {
+  return typeof value === "string" && value.trim() !== "" ? value : defaultValue;
+}
+
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -232,4 +290,5 @@ module.exports = {
   BLOCKED,
   UNKNOWN,
   checkBudget,
+  evaluateCostDecisionApproval,
 };

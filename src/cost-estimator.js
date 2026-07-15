@@ -86,6 +86,37 @@ function estimateRemoteCost(provider, request) {
     evidenceSource: evidence.source,
   };
 
+  if (isPlainObject(evidence.exactCost)) {
+    return {
+      ...base,
+      status: ESTIMATED,
+      exactCost: {
+        amount: roundCurrency(evidence.exactCost.amount),
+        currency: evidence.exactCost.currency,
+      },
+      estimatedCostRange: {
+        min: roundCurrency(evidence.exactCost.amount),
+        max: roundCurrency(evidence.exactCost.amount),
+        currency: evidence.exactCost.currency,
+      },
+      usage: UNKNOWN,
+    };
+  }
+
+  if (isPlainObject(evidence.estimatedCostRange)) {
+    return {
+      ...base,
+      status: ESTIMATED,
+      exactCost: UNKNOWN,
+      estimatedCostRange: {
+        min: roundCurrency(evidence.estimatedCostRange.min),
+        max: roundCurrency(evidence.estimatedCostRange.max),
+        currency: evidence.estimatedCostRange.currency,
+      },
+      usage: UNKNOWN,
+    };
+  }
+
   if (usage.type === "exact") {
     const amount = calculateTokenCost(evidence, usage.inputTokens, usage.outputTokens);
     return {
@@ -167,6 +198,18 @@ function validatePricingEvidence(evidence, provider) {
     return { valid: false, reason: "Invalid pricing evidence." };
   }
 
+  if (evidence.exactCost !== undefined && !validExactCost(evidence.exactCost)) {
+    return { valid: false, reason: "Invalid pricing evidence." };
+  }
+
+  if (evidence.estimatedCostRange !== undefined && !validCostRange(evidence.estimatedCostRange)) {
+    return { valid: false, reason: "Invalid pricing evidence." };
+  }
+
+  if (evidence.exactCost !== undefined || evidence.estimatedCostRange !== undefined) {
+    return { valid: true };
+  }
+
   if (!validTokenPrice(evidence.inputTokenPrice) || !validTokenPrice(evidence.outputTokenPrice)) {
     return { valid: false, reason: "Invalid pricing evidence." };
   }
@@ -181,6 +224,28 @@ function validTokenPrice(price) {
     price.amount >= 0 &&
     Number.isInteger(price.perTokens) &&
     price.perTokens > 0
+  );
+}
+
+function validExactCost(exactCost) {
+  return (
+    isPlainObject(exactCost) &&
+    Number.isFinite(exactCost.amount) &&
+    exactCost.amount >= 0 &&
+    typeof exactCost.currency === "string" &&
+    exactCost.currency.trim() !== ""
+  );
+}
+
+function validCostRange(costRange) {
+  return (
+    isPlainObject(costRange) &&
+    Number.isFinite(costRange.min) &&
+    Number.isFinite(costRange.max) &&
+    costRange.min >= 0 &&
+    costRange.max >= costRange.min &&
+    typeof costRange.currency === "string" &&
+    costRange.currency.trim() !== ""
   );
 }
 

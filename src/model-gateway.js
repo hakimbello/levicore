@@ -317,6 +317,7 @@ function remoteProvidersFromEnvironment(environment, configurationIssues) {
   const credential = environmentValue(environment, "LEVI_REMOTE_CREDENTIAL");
   const name = environmentValue(environment, "LEVI_REMOTE_PROVIDER_NAME");
   const costClass = environmentValue(environment, "LEVI_REMOTE_COST_CLASS");
+  const currency = environmentValue(environment, "LEVI_REMOTE_CURRENCY");
   const estimatedCost = environmentValue(environment, "LEVI_REMOTE_ESTIMATED_COST");
   const configuredFieldNames = [
     ["LEVI_REMOTE_ENDPOINT", endpoint],
@@ -324,6 +325,7 @@ function remoteProvidersFromEnvironment(environment, configurationIssues) {
     ["LEVI_REMOTE_CREDENTIAL", credential],
     ["LEVI_REMOTE_PROVIDER_NAME", name],
     ["LEVI_REMOTE_COST_CLASS", costClass],
+    ["LEVI_REMOTE_CURRENCY", currency],
     ["LEVI_REMOTE_ESTIMATED_COST", estimatedCost],
   ].filter(([, value]) => value !== undefined);
 
@@ -346,17 +348,31 @@ function remoteProvidersFromEnvironment(environment, configurationIssues) {
     return [];
   }
 
+  const pricingEvidence = remotePricingEvidenceFromEnvironment({
+    costClass,
+    currency,
+    estimatedCost,
+  }, configurationIssues);
+
   try {
-    return [
-      createRemoteProvider({
-        endpoint,
-        model,
-        credential,
-        name,
-        costClass,
-        estimatedCost: estimatedCost === undefined ? undefined : Number(estimatedCost),
-      }),
-    ];
+    const provider = createRemoteProvider({
+      endpoint,
+      model,
+      credential,
+      name,
+      costClass,
+      estimatedCost: estimatedCost === undefined ? undefined : Number(estimatedCost),
+    });
+
+    if (pricingEvidence) {
+      provider.pricingEvidence = {
+        ...pricingEvidence,
+        provider: provider.name,
+        model: provider.model,
+      };
+    }
+
+    return [provider];
   } catch (error) {
     configurationIssues.push(configurationIssue({
       providerType: "remote",
@@ -365,6 +381,42 @@ function remoteProvidersFromEnvironment(environment, configurationIssues) {
     }));
     return [];
   }
+}
+
+function remotePricingEvidenceFromEnvironment(input, configurationIssues) {
+  if (input.estimatedCost === undefined) {
+    return null;
+  }
+
+  const amount = Number(input.estimatedCost);
+
+  if (!Number.isFinite(amount) || amount < 0) {
+    configurationIssues.push(configurationIssue({
+      providerType: "remote",
+      reason: "Remote provider estimated cost is invalid.",
+      missingFields: [],
+    }));
+    return null;
+  }
+
+  if (!input.currency) {
+    configurationIssues.push(configurationIssue({
+      providerType: "remote",
+      reason: "Remote provider currency is required with estimated cost.",
+      missingFields: ["LEVI_REMOTE_CURRENCY"],
+    }));
+    return null;
+  }
+
+  return {
+    source: "LEVI_REMOTE_ESTIMATED_COST",
+    currency: input.currency,
+    costClass: input.costClass || "paid-remote",
+    exactCost: {
+      amount,
+      currency: input.currency,
+    },
+  };
 }
 
 function normalizeInjectedProviders(providers, testMode) {

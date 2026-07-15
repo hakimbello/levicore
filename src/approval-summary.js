@@ -1,5 +1,8 @@
 const UNKNOWN = "UNKNOWN";
 const NONE = "NONE";
+const {
+  evaluateCostDecisionApproval,
+} = require("./budget-guardrails");
 const OPERATION_TYPES = new Set(["create", "update", "delete", "command"]);
 const DECISIONS = {
   APPROVED: "APPROVED",
@@ -171,10 +174,6 @@ function blockingIssueFor(taskPlan) {
     return "No task plan exists.";
   }
 
-  if (isPlainObject(taskPlan.budgetState) && taskPlan.budgetState.status === DECISIONS.BLOCKED) {
-    return stringOrUnknown(taskPlan.budgetState.reason);
-  }
-
   const plannedFiles = plannedFileSet(taskPlan.expectedFiles);
 
   if (plannedFiles === null) {
@@ -221,11 +220,19 @@ function decisionFor(taskPlan, details, blockingIssue) {
     };
   }
 
-  if (isPlainObject(taskPlan.budgetState) && taskPlan.budgetState.status === DECISIONS.APPROVAL_REQUIRED) {
+  const costApproval = evaluateCostDecisionApproval({
+    costDecision: taskPlan.budgetState,
+    costApprovalState: taskPlan.costApprovalState,
+  });
+
+  if (!costApproval.ok) {
     return {
-      status: DECISIONS.APPROVAL_REQUIRED,
-      reason: stringOrUnknown(taskPlan.budgetState.reason),
-      nextRequiredAction: "Approve the cost decision before execution.",
+      status: costApproval.status,
+      reason: costApproval.reason,
+      nextRequiredAction:
+        costApproval.status === DECISIONS.APPROVAL_REQUIRED
+          ? "Approve the cost decision before execution."
+          : "Resolve the cost decision before execution.",
     };
   }
 
