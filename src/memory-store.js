@@ -28,7 +28,10 @@ function createMemoryStore(filePath) {
   }
 
   function addRecord(projectId, record) {
-    const normalized = normalizeRecord(record);
+    const normalized = normalizeRecord({
+      ...record,
+      projectId: record.projectId || projectId,
+    });
     const store = loadStore();
 
     if (!store.projects[projectId]) {
@@ -66,6 +69,7 @@ function normalizeRecord(record) {
 
   return {
     id: record.id || crypto.randomUUID(),
+    projectId: record.projectId,
     type: record.type,
     source: record.source,
     timestamp: record.timestamp || new Date().toISOString(),
@@ -81,6 +85,10 @@ function validateRecord(record) {
 
   if (!RECORD_TYPES.has(record.type)) {
     throw new Error("Memory record type is required.");
+  }
+
+  if (record.projectId !== undefined && (typeof record.projectId !== "string" || record.projectId.trim() === "")) {
+    throw new Error("Memory record project ID must be a nonempty string.");
   }
 
   if (!record.source || typeof record.source !== "object" || Array.isArray(record.source)) {

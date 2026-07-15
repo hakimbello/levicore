@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const { buildContext } = require("./context-builder");
 const { summarizeProject } = require("./project-summary");
 const { scanRepository } = require("./repository-scanner");
@@ -8,6 +9,10 @@ const UNKNOWN = "UNKNOWN";
 const PENDING = "PENDING";
 const VERIFIED = "VERIFIED";
 const APPROVED = "APPROVED";
+const REJECTED = "REJECTED";
+const APPROVE_PROJECT_KNOWLEDGE = "APPROVE_PROJECT_KNOWLEDGE";
+const REJECT_PROJECT_KNOWLEDGE = "REJECT_PROJECT_KNOWLEDGE";
+const REMOVE_PROJECT_KNOWLEDGE = "REMOVE_PROJECT_KNOWLEDGE";
 const CONTROL_CONFIDENCE_STATES = new Set([APPROVED, VERIFIED]);
 const KNOWLEDGE_CATEGORIES = [
   "architecture",
@@ -104,6 +109,364 @@ function extractProjectKnowledge(options) {
     conflicts: detectUnresolvedConflicts(categories),
     evidenceSummary: evidenceSummary(categories, context),
   };
+}
+
+function approveProjectKnowledge(options) {
+  const result = approveProjectKnowledgeFacts({
+    ...options,
+    facts: [options.fact],
+  });
+
+  return {
+    ...result,
+    record: result.records[0] || null,
+    factResult: result.results[0] || null,
+  };
+}
+
+function approveProjectKnowledgeFacts(options) {
+  validateApprovalOptions(options);
+
+  const projectId = stringOrUnknown(options.projectId || "default");
+  const facts = normalizeApprovalFacts(options);
+  const existingRecords = options.memoryStore.listRecords(projectId);
+  const timestamp = normalizeApprovalTimestamp(options.timestamp);
+  const explicitApproval = options.approval === APPROVE_PROJECT_KNOWLEDGE;
+  const results = [];
+  const records = [];
+
+  for (const fact of facts) {
+    const validation = explicitApproval
+      ? validateApprovableFact(fact, options.extraction)
+      : { ok: false, reason: "Explicit project knowledge approval is required." };
+
+    if (!validation.ok) {
+      results.push(rejectedApprovalResult(fact, validation.reason));
+      continue;
+    }
+
+    const duplicate = findDuplicateKnowledgeRecord(existingRecords, projectId, fact);
+
+    if (duplicate) {
+      results.push({
+        status: "DUPLICATE",
+        reason: "Approved project knowledge fact already exists.",
+        record: duplicate,
+        fact,
+      });
+      continue;
+    }
+
+    const record = projectKnowledgeRecord({
+      fact,
+      projectId,
+      timestamp,
+    });
+    const stored = options.memoryStore.addRecord(projectId, record);
+
+    existingRecords.push(stored);
+    records.push(stored);
+    results.push({
+      status: "APPROVED",
+      record: stored,
+      fact,
+    });
+  }
+
+  return {
+    status: approvalBatchStatus(results),
+    projectId,
+    records,
+    results,
+  };
+}
+
+function rejectProjectKnowledgeFact(options) {
+  if (!isPlainObject(options)) {
+    throw new Error("Project knowledge rejection options are required.");
+  }
+
+  const explicitRejection = options.rejection === REJECT_PROJECT_KNOWLEDGE;
+
+  return {
+    status: explicitRejection ? REJECTED : "REJECTION_REQUIRED",
+    reason: explicitRejection ? stringOrUnknown(options.reason || "Project knowledge fact rejected.") : "Explicit project knowledge rejection is required.",
+    fact: options.fact ? cloneJson(options.fact) : null,
+  };
+}
+
+function removeApprovedProjectKnowledge(options) {
+  validateRemovalOptions(options);
+
+  const projectId = stringOrUnknown(options.projectId || "default");
+
+  if (options.confirmation !== REMOVE_PROJECT_KNOWLEDGE) {
+    return {
+      status: "CONFIRMATION_REQUIRED",
+      projectId,
+      recordId: stringOrUnknown(options.recordId),
+      removed: false,
+      reason: "Explicit project knowledge removal confirmation is required.",
+    };
+  }
+
+  const record = options.memoryStore
+    .listRecords(projectId)
+    .find((candidate) => candidate.id === options.recordId && isApprovedProjectKnowledgeRecord(candidate, projectId));
+
+  if (!record) {
+    return {
+      status: "NOT_FOUND",
+      projectId,
+      recordId: stringOrUnknown(options.recordId),
+      removed: false,
+      reason: "Approved project knowledge record was not found.",
+    };
+  }
+
+  const removed = options.memoryStore.removeRecord(projectId, options.recordId);
+
+  return {
+    status: removed ? "REMOVED" : "NOT_FOUND",
+    projectId,
+    recordId: options.recordId,
+    removed,
+    record,
+  };
+}
+
+function validateApprovalOptions(options) {
+  if (!isPlainObject(options)) {
+    throw new Error("Project knowledge approval options are required.");
+  }
+
+  if (!isMemoryStore(options.memoryStore)) {
+    throw new Error("Project knowledge approval requires a memoryStore.");
+  }
+}
+
+function validateRemovalOptions(options) {
+  if (!isPlainObject(options)) {
+    throw new Error("Project knowledge removal options are required.");
+  }
+
+  if (!isMemoryStore(options.memoryStore)) {
+    throw new Error("Project knowledge removal requires a memoryStore.");
+  }
+
+  if (typeof options.recordId !== "string" || options.recordId.trim() === "") {
+    throw new Error("Project knowledge removal requires a recordId.");
+  }
+}
+
+function normalizeApprovalFacts(options) {
+  const facts = options.facts || (options.fact ? [options.fact] : []);
+
+  if (!Array.isArray(facts) || facts.length === 0) {
+    throw new Error("Project knowledge approval requires at least one fact.");
+  }
+
+  return facts.map(cloneJson);
+}
+
+function normalizeApprovalTimestamp(timestamp) {
+  if (timestamp === undefined) {
+    return new Date().toISOString();
+  }
+
+  if (typeof timestamp !== "string" || Number.isNaN(Date.parse(timestamp))) {
+    throw new Error("Project knowledge approval timestamp must be valid.");
+  }
+
+  return timestamp;
+}
+
+function validateApprovableFact(fact, extraction) {
+  if (!isPlainObject(fact)) {
+    return { ok: false, reason: "Project knowledge fact must be an object." };
+  }
+
+  if (!KNOWLEDGE_CATEGORIES.includes(fact.category)) {
+    return { ok: false, reason: "Unsupported project knowledge category." };
+  }
+
+  if (fact.value === UNKNOWN || fact.value === undefined) {
+    return { ok: false, reason: "UNKNOWN project knowledge cannot be approved." };
+  }
+
+  if (fact.approvalState === REJECTED) {
+    return { ok: false, reason: "Rejected project knowledge cannot be approved." };
+  }
+
+  if (!CONTROL_CONFIDENCE_STATES.has(fact.confidenceState)) {
+    return { ok: false, reason: "Unverified project knowledge cannot be approved." };
+  }
+
+  if (!Array.isArray(fact.evidence) || normalizeEvidence(fact.evidence).length === 0) {
+    return { ok: false, reason: "Project knowledge approval requires source evidence." };
+  }
+
+  if (containsUnsafePath(fact) || containsSecretValue(fact) || containsModelOutputEvidence(fact)) {
+    return { ok: false, reason: "Unsafe or model-output project knowledge cannot be approved." };
+  }
+
+  if (isUnresolvedConflictFact(fact, extraction)) {
+    return { ok: false, reason: "Unresolved conflicting project knowledge requires review before approval." };
+  }
+
+  return { ok: true };
+}
+
+function isUnresolvedConflictFact(fact, extraction) {
+  if (!isPlainObject(extraction) || !Array.isArray(extraction.conflicts)) {
+    return false;
+  }
+
+  return extraction.conflicts.some((conflict) => {
+    if (!isPlainObject(conflict) || conflict.status !== "UNRESOLVED" || conflict.category !== fact.category) {
+      return false;
+    }
+
+    return Array.isArray(conflict.values) && conflict.values.includes(stableSerialize(fact.value));
+  });
+}
+
+function containsModelOutputEvidence(value) {
+  if (typeof value === "string") {
+    return value.toLowerCase().includes("model-output");
+  }
+
+  if (Array.isArray(value)) {
+    return value.some(containsModelOutputEvidence);
+  }
+
+  if (!isPlainObject(value)) {
+    return false;
+  }
+
+  return Object.values(value).some(containsModelOutputEvidence);
+}
+
+function containsSecretValue(value) {
+  if (typeof value === "string") {
+    return SECRET_VALUE_PATTERN.test(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.some(containsSecretValue);
+  }
+
+  if (!isPlainObject(value)) {
+    return false;
+  }
+
+  return Object.entries(value).some(([key, child]) => SECRET_KEY_PATTERN.test(key) || containsSecretValue(child));
+}
+
+function projectKnowledgeRecord(input) {
+  return {
+    id: projectKnowledgeId(input.projectId, input.fact),
+    projectId: input.projectId,
+    type: "project-fact",
+    source: {
+      kind: "project-knowledge",
+      category: input.fact.category,
+      evidence: normalizeEvidence(input.fact.evidence),
+    },
+    timestamp: input.timestamp,
+    confidenceState: APPROVED,
+    value: {
+      category: input.fact.category,
+      value: sanitizeValue(input.fact.value),
+      evidence: normalizeEvidence(input.fact.evidence),
+      approvalState: APPROVED,
+      extractedConfidenceState: input.fact.confidenceState,
+    },
+  };
+}
+
+function projectKnowledgeId(projectId, fact) {
+  return `project-knowledge-${crypto
+    .createHash("sha256")
+    .update(projectKnowledgeFingerprint(projectId, fact))
+    .digest("hex")
+    .slice(0, 16)}`;
+}
+
+function findDuplicateKnowledgeRecord(records, projectId, fact) {
+  const fingerprint = projectKnowledgeFingerprint(projectId, fact);
+
+  return records.find((record) => {
+    if (!isApprovedProjectKnowledgeRecord(record, projectId)) {
+      return false;
+    }
+
+    return projectKnowledgeRecordFingerprint(record) === fingerprint;
+  });
+}
+
+function isApprovedProjectKnowledgeRecord(record, projectId) {
+  if (!isPlainObject(record) || record.type !== "project-fact") {
+    return false;
+  }
+
+  if (record.projectId !== undefined && record.projectId !== projectId) {
+    return false;
+  }
+
+  if (!CONTROL_CONFIDENCE_STATES.has(record.confidenceState)) {
+    return false;
+  }
+
+  if (!isPlainObject(record.source) || record.source.kind !== "project-knowledge") {
+    return false;
+  }
+
+  if (!isPlainObject(record.value) || !KNOWLEDGE_CATEGORIES.includes(record.value.category)) {
+    return false;
+  }
+
+  return record.value.value !== UNKNOWN && !containsUnsafePath(record) && !containsModelOutputEvidence(record);
+}
+
+function projectKnowledgeFingerprint(projectId, fact) {
+  return stableSerialize({
+    projectId,
+    category: fact.category,
+    value: sanitizeValue(fact.value),
+  });
+}
+
+function projectKnowledgeRecordFingerprint(record) {
+  return stableSerialize({
+    projectId: record.projectId || UNKNOWN,
+    category: record.value.category,
+    value: sanitizeValue(record.value.value),
+  });
+}
+
+function rejectedApprovalResult(fact, reason) {
+  return {
+    status: REJECTED,
+    reason,
+    fact,
+  };
+}
+
+function approvalBatchStatus(results) {
+  if (results.every((result) => result.status === "APPROVED")) {
+    return "APPROVED";
+  }
+
+  if (results.every((result) => result.status === "DUPLICATE")) {
+    return "DUPLICATE";
+  }
+
+  if (results.every((result) => result.status === REJECTED)) {
+    return REJECTED;
+  }
+
+  return "PARTIAL";
 }
 
 function validateOptions(options) {
@@ -807,7 +1170,14 @@ function isPlainObject(value) {
 }
 
 module.exports = {
+  APPROVE_PROJECT_KNOWLEDGE,
   KNOWLEDGE_CATEGORIES,
+  REJECT_PROJECT_KNOWLEDGE,
+  REMOVE_PROJECT_KNOWLEDGE,
   UNKNOWN,
+  approveProjectKnowledge,
+  approveProjectKnowledgeFacts,
   extractProjectKnowledge,
+  rejectProjectKnowledgeFact,
+  removeApprovedProjectKnowledge,
 };
