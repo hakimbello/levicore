@@ -13,6 +13,7 @@ const { scanRepository } = require("./repository-scanner");
 const { applySafePatch } = require("./safe-patch");
 const { inspectRestorePoint, restoreFromRestorePoint } = require("./restore-points");
 const { checkScope } = require("./scope-checker");
+const { createTaskIntake } = require("./task-intake");
 const { approveTaskPlan, createTaskPlan } = require("./task-planner");
 const { runValidation } = require("./validation-runner");
 
@@ -52,6 +53,17 @@ function inspectStatus(repositoryPath) {
 
 function inspectLocalReadiness() {
   return createLocalReadinessReport();
+}
+
+function intakeTask(repositoryPath, taskTextParts) {
+  if (!Array.isArray(taskTextParts) || taskTextParts.length === 0) {
+    throw new Error("Usage: levi intake <repository-path> <task-description>");
+  }
+
+  return createTaskIntake({
+    repositoryPath,
+    taskText: taskTextParts.join(" "),
+  });
 }
 
 function requestTask(repositoryPath, requirementId, requestArgs) {
@@ -495,6 +507,7 @@ module.exports = {
   approvePlan,
   executeApprovedPlan,
   initializeProject,
+  intakeTask,
   inspectLatestRestorePoint,
   inspectLocalReadiness,
   inspectStatus,
