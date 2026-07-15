@@ -1,5 +1,6 @@
 const path = require("node:path");
 const CONTROL_CONFIDENCE_STATES = new Set(["APPROVED", "VERIFIED"]);
+const { getOrBuildCachedContext } = require("./context-cache");
 const { DEFAULT_TOKEN_CEILING, applyContextBudget } = require("./context-budget");
 
 const DEFAULT_LIMITS = {
@@ -40,6 +41,18 @@ const SUPPORTED_EVIDENCE_EXTENSIONS = new Set([
 function buildContext(input) {
   validateInput(input);
 
+  const resolvedInput = {
+    ...input,
+    memoryStore: undefined,
+    projectMemory: resolveMemoryRecords(input),
+  };
+
+  return getOrBuildCachedContext(resolvedInput, buildContextUncached, {
+    cacheTimestamp: input.cacheTimestamp,
+  });
+}
+
+function buildContextUncached(input) {
   const limits = normalizeLimits(input.limits);
   const repositoryFacts = limitItems(
     factsFromProjectSummary(input.projectSummary),
@@ -75,6 +88,7 @@ function buildContext(input) {
 
   return {
     ...budgeted.context,
+    projectId: baseContext.projectId,
     contextBudget: {
       ...baseContext.contextBudget,
       ...budgeted.report,
