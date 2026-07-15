@@ -1,4 +1,5 @@
 const UNKNOWN = "UNKNOWN";
+const { normalizeTaskIntake } = require("./intent-classifier");
 
 const ACTION_RULES = [
   {
@@ -30,9 +31,7 @@ function createTaskIntake(input) {
   const requestedActionClass = requestedActionClassFromText(normalizedText);
   const missingInformation = missingInformationFor(objective, requestedActionClass);
   const ambiguity = ambiguityFor(normalizedText);
-
-  return {
-    status: missingInformation.length === 0 && ambiguity.length === 0 ? "READY_FOR_SCOPE_CHECK" : "NEEDS_REVIEW",
+  const intake = {
     repositoryPath: stringOrUnknown(input.repositoryPath),
     taskText,
     originalRequest: taskText,
@@ -67,6 +66,25 @@ function createTaskIntake(input) {
     },
     reason: reasonFor(missingInformation, ambiguity),
   };
+  const normalized = normalizeTaskIntake(intake);
+
+  return {
+    ...intake,
+    status: normalized.status,
+    normalizedObjective: normalized.normalizedObjective,
+    taskType: normalized.taskType,
+    missingInformation: normalized.missingInformation,
+    ambiguityReasons: normalized.ambiguityReasons,
+    nextQuestions: normalized.nextQuestions,
+    proceedToPlanning: normalized.proceedToPlanning,
+    reason: normalized.reason,
+    planningRequest: {
+      ...intake.planningRequest,
+      objective: normalized.normalizedObjective,
+      taskType: normalized.taskType,
+    },
+    intentClassification: normalized,
+  };
 }
 
 function validateInput(input) {
@@ -74,7 +92,7 @@ function validateInput(input) {
     throw new Error("Task intake input is required.");
   }
 
-  if (typeof input.taskText !== "string" || input.taskText.trim() === "") {
+  if (typeof input.taskText !== "string") {
     throw new Error("Task intake task text is required.");
   }
 }
