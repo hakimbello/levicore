@@ -6,7 +6,7 @@ const { summarizeProject } = require("./project-summary");
 const { collectProjectHealthSignals, recommendProjectHealth, summarizeProjectHealth } = require("./project-health");
 const { createTaskIntake } = require("./task-intake");
 const { createApprovalDecision, createApprovalSummary } = require("./approval-summary");
-const { approvePlan, inspectLatestRestorePoint, restoreProject } = require("./cli-workflow");
+const { approvePlan, inspectLatestRestorePoint, inspectLocalReadiness, restoreProject } = require("./cli-workflow");
 
 const UNKNOWN = "UNKNOWN";
 const POST_MVP_REQUIREMENT_ID = "POST_MVP until approved by owner";
@@ -323,6 +323,75 @@ function submitRestoreConfirmation(repositoryPath, input = {}) {
       restoreResult: restoreSubmitResultFromError(error.message),
     });
   }
+}
+
+function createAdvancedSettingsView(repositoryPath, options = {}) {
+  if (!repositoryPath) {
+    return emptyAdvancedSettingsView(null, "Select a project before opening Advanced Settings.");
+  }
+
+  const intake = intakeRepository(repositoryPath);
+
+  if (!intake.ok) {
+    return advancedSettingsErrorView(repositoryPath, intake.error);
+  }
+
+  try {
+    const state = loadRuntimeState(intake.path);
+    const memoryRecords = loadMemoryRecords(intake.path);
+    const scanResult = scanRepository(intake.path);
+    const projectSummary = summarizeProject(scanResult);
+    const readinessReport = safeAdvancedReadinessReport();
+    const healthReport = collectProjectHealthSignals({
+      repositoryPath: intake.path,
+      projectId: projectIdFor(intake.path),
+      scanResult,
+      projectSummary,
+      state,
+      memoryRecords,
+      taskPlan: state.plan,
+      latestValidation: state.validation,
+      readinessReport,
+      providerHealth: state.providerHealth,
+      fallbackDiagnostics: state.fallbackDiagnostics,
+      costDecision: state.costDecision || state.plan && state.plan.budgetState,
+      restorePoint: state.restorePoint || state.patch && state.patch.restorePoint,
+      context: state.context || state.contextPreview,
+      knownFailures: state.knownFailures || state.report && state.report.knownFailures,
+    });
+    const healthSummary = summarizeProjectHealth({ report: healthReport });
+    const recommendationReport = recommendProjectHealth({ report: healthReport, summary: healthSummary });
+    const restoreInspection = inspectLatestRestoreForHistory(intake.path);
+    const view = advancedSettingsViewFor({
+      repositoryPath: intake.path,
+      state,
+      memoryRecords,
+      projectSummary,
+      readinessReport,
+      healthSummary,
+      recommendationReport,
+      restoreInspection,
+    });
+
+    if (options.saveResult) {
+      view.saveResult = options.saveResult;
+      view.status = options.saveResult.status;
+    }
+
+    return view;
+  } catch (error) {
+    return advancedSettingsErrorView(intake.path, error.message);
+  }
+}
+
+function submitAdvancedSettings(repositoryPath) {
+  return createAdvancedSettingsView(repositoryPath, {
+    saveResult: {
+      status: "SAVE_FAILURE",
+      label: "Save unavailable",
+      message: "No approved writable settings are available in M32-008. Settings remain read-only.",
+    },
+  });
 }
 
 function noProjectView() {
@@ -1631,6 +1700,749 @@ function projectHealthActionsFor(status, recommendations) {
     primary: {
       label: Array.isArray(recommendations) && recommendations.length > 0 ? "Review Next Step" : "Review Evidence",
       target: "recommendations",
+    },
+  };
+}
+
+function emptyAdvancedSettingsView(repositoryPath, message) {
+  return {
+    status: "EMPTY",
+    mode: "EMPTY",
+    project: repositoryPath ? selectedProject(path.resolve(repositoryPath)) : {
+      status: "NONE",
+      name: "No project selected",
+      root: UNKNOWN,
+    },
+    headline: "Advanced Settings",
+    summary: message || "Advanced Settings are optional and need a selected project.",
+    readiness: {
+      status: "EMPTY",
+      label: "Not started",
+      detail: message || "Select a project before reviewing expert settings.",
+    },
+    groups: [],
+    diagnostics: {
+      summaryText: "Advanced Settings summary\nProject: No project selected\nWritable settings: none approved in M32-008.",
+    },
+    writableSettings: [],
+    readOnlySettings: ["Settings are unavailable until a project is selected."],
+    actions: advancedSettingsActionsFor(false),
+    saveResult: null,
+  };
+}
+
+function advancedSettingsErrorView(repositoryPath, message) {
+  return {
+    ...emptyAdvancedSettingsView(repositoryPath, message || "Levi could not read Advanced Settings."),
+    status: "ERROR",
+    mode: "ERROR",
+    headline: "Advanced Settings need attention",
+    readiness: {
+      status: "ERROR",
+      label: "Blocked",
+      detail: message || "Levi could not read Advanced Settings.",
+    },
+    summary: message || "Levi could not read Advanced Settings.",
+    actions: advancedSettingsActionsFor(false),
+    error: {
+      title: "Advanced Settings could not be opened",
+      detail: message || "Levi could not read Advanced Settings.",
+    },
+  };
+}
+
+function advancedSettingsViewFor(input) {
+  const provider = providerSettingsSummaryFor(input.readinessReport, input.state);
+  const cost = costSettingsSummaryFor(input.state);
+  const context = contextSettingsSummaryFor(input.state, input.memoryRecords, input.projectSummary);
+  const workflow = workflowSettingsGroup();
+  const appearance = appearanceSettingsGroup();
+  const diagnostics = diagnosticsSettingsGroup({
+    repositoryPath: input.repositoryPath,
+    provider,
+    cost,
+    context,
+    healthSummary: input.healthSummary,
+    recommendationReport: input.recommendationReport,
+    restoreInspection: input.restoreInspection,
+    readinessReport: input.readinessReport,
+  });
+  const groups = [
+    workflow,
+    provider.group,
+    cost.group,
+    context.group,
+    appearance,
+    diagnostics.group,
+  ];
+  const mode = advancedSettingsModeFor(provider, cost);
+  const diagnosticSummary = diagnosticSummaryTextFor({
+    repositoryPath: input.repositoryPath,
+    provider,
+    cost,
+    context,
+    healthSummary: input.healthSummary,
+    restoreInspection: input.restoreInspection,
+  });
+
+  return {
+    status: "READY",
+    mode,
+    project: selectedProject(path.resolve(input.repositoryPath)),
+    headline: "Advanced Settings",
+    summary: "Optional expert diagnostics and preferences. The primary workflow stays unchanged.",
+    readiness: {
+      status: mode,
+      label: advancedSettingsModeLabel(mode),
+      detail: advancedSettingsModeDetail(mode, provider, cost),
+    },
+    groups,
+    diagnostics: {
+      summaryText: diagnosticSummary,
+    },
+    writableSettings: [],
+    readOnlySettings: groups.flatMap((group) => group.items.map((item) => item.label)),
+    actions: advancedSettingsActionsFor(false),
+    saveResult: null,
+  };
+}
+
+function workflowSettingsGroup() {
+  return settingsGroup({
+    id: "workflow",
+    title: "Workflow",
+    status: "READY",
+    label: "Guided",
+    summary: "Levi keeps planning, approval, restore, and safety decisions inside Levi Core.",
+    items: [
+      settingsItem("Default workflow preference", "Guided planning", "Create a plan, review it, then approve before execution.", "locked"),
+      settingsItem("Guided Plan mode", "On", "Plan review remains part of the primary task workflow.", "locked"),
+      settingsItem("Approval behavior", "Core-owned", "Task approval, cost approval, and destructive confirmation stay separate.", "locked"),
+      settingsItem("Destructive confirmation", "Mandatory", "Destructive or irreversible work cannot bypass explicit confirmation.", "locked"),
+      settingsItem("Restore protections", "Locked", "Restore inspection and restoration remain Levi Core workflows.", "locked"),
+      settingsItem("Safety rules", "Locked", "Safety protections are status only here and cannot be disabled.", "locked"),
+    ],
+    details: [
+      "Quick Build is not shown because PLAN.md does not approve it for M32-008.",
+      "No request-construction, low-level change, or routing controls are exposed.",
+    ],
+  });
+}
+
+function providerSettingsSummaryFor(readinessReport, state) {
+  const readiness = normalizeReadinessReport(readinessReport);
+  const providers = readiness.providers;
+  const registered = Array.isArray(providers.registered) ? providers.registered : [];
+  const localProviders = Array.isArray(providers.localProviders) ? providers.localProviders : [];
+  const defaultProvider = isPlainObject(providers.defaultProvider) ? providers.defaultProvider : registered[0];
+  const missingRequiredModels = readiness.models && Array.isArray(readiness.models.missingRequiredModels)
+    ? readiness.models.missingRequiredModels
+    : [];
+  const status = providerSettingsStatusFor(readiness, registered, localProviders, missingRequiredModels);
+  const fallback = fallbackSummaryFor(state, registered);
+  const group = settingsGroup({
+    id: "models-providers",
+    title: "Models and Providers",
+    status,
+    label: providerSettingsLabel(status),
+    summary: providerSettingsDetail(status, readiness, missingRequiredModels),
+    items: [
+      settingsItem("Current provider", providerNameText(defaultProvider, registered), "Provider choice is reported by Levi Core.", "readonly"),
+      settingsItem("Current model", providerModelText(defaultProvider), "Model evidence comes from Core readiness diagnostics.", "readonly"),
+      settingsItem("Local-first preference", "On", "Levi's public provider order prefers local model setup first.", "locked"),
+      settingsItem("Fallback summary", fallback.label, fallback.detail, "readonly"),
+      settingsItem("Provider health", providerHealthText(state, readiness), "Health is shown as status; setup is not part of the primary workflow.", "readonly"),
+      settingsItem("Readiness status", presentationText(readiness.overallReadiness), providerSettingsDetail(status, readiness, missingRequiredModels), "readonly"),
+    ],
+    details: providerSettingsDetails(readiness, registered),
+  });
+
+  return {
+    status,
+    label: providerSettingsLabel(status),
+    detail: providerSettingsDetail(status, readiness, missingRequiredModels),
+    currentProvider: providerNameText(defaultProvider, registered),
+    currentModel: providerModelText(defaultProvider),
+    fallback,
+    group,
+  };
+}
+
+function providerSettingsStatusFor(readiness, registered, localProviders, missingRequiredModels) {
+  if (registered.length === 0 || localProviders.length === 0) {
+    return "NO_PROVIDER";
+  }
+
+  if (readiness.runtime && (readiness.runtime.installed === false || readiness.runtime.running === false)) {
+    return "PROVIDER_UNAVAILABLE";
+  }
+
+  if (missingRequiredModels.length > 0) {
+    return "LOCAL_MODEL_UNAVAILABLE";
+  }
+
+  if (readiness.overallReadiness === "READY") {
+    return "READY";
+  }
+
+  if (readiness.overallReadiness === "NOT_READY") {
+    return "PROVIDER_UNAVAILABLE";
+  }
+
+  return "UNKNOWN";
+}
+
+function providerSettingsLabel(status) {
+  const labels = {
+    NO_PROVIDER: "No provider",
+    PROVIDER_UNAVAILABLE: "Unavailable",
+    LOCAL_MODEL_UNAVAILABLE: "Local model unavailable",
+    READY: "Ready",
+    UNKNOWN: "Unknown",
+  };
+
+  return labels[status] || "Unknown";
+}
+
+function providerSettingsDetail(status, readiness, missingRequiredModels) {
+  if (status === "NO_PROVIDER") {
+    return "No local model setup is registered through Levi Core.";
+  }
+
+  if (status === "PROVIDER_UNAVAILABLE") {
+    if (readiness.runtime && readiness.runtime.installed === false) {
+      return "The local runtime is not installed.";
+    }
+
+    if (readiness.runtime && readiness.runtime.running === false) {
+      return "The local runtime is not running.";
+    }
+
+    return "Provider readiness is not available.";
+  }
+
+  if (status === "LOCAL_MODEL_UNAVAILABLE") {
+    return `Missing required local model: ${missingRequiredModels.join(", ")}.`;
+  }
+
+  if (status === "READY") {
+    return "Levi Core reports a usable local model setup.";
+  }
+
+  return "Provider readiness evidence is UNKNOWN.";
+}
+
+function providerNameText(provider, registered) {
+  if (!isPlainObject(provider)) {
+    return Array.isArray(registered) && registered.length === 0 ? "No provider configured" : UNKNOWN;
+  }
+
+  const name = presentationText(provider.name);
+  const type = presentationText(provider.type);
+
+  if (name === UNKNOWN && type === UNKNOWN) {
+    return UNKNOWN;
+  }
+
+  return type === UNKNOWN ? name : `${name} (${type})`;
+}
+
+function providerModelText(provider) {
+  return isPlainObject(provider) ? presentationText(provider.model) : UNKNOWN;
+}
+
+function providerHealthText(state, readiness) {
+  const providerHealth = state && state.providerHealth;
+
+  if (isPlainObject(providerHealth) && isPlainObject(providerHealth.summary)) {
+    const summary = providerHealth.summary;
+    return `${numberOrZero(summary.healthy)} healthy, ${numberOrZero(summary.unavailable)} unavailable, ${numberOrZero(summary.unknown)} unknown`;
+  }
+
+  if (readiness.overallReadiness !== UNKNOWN) {
+    return presentationText(readiness.overallReadiness);
+  }
+
+  return UNKNOWN;
+}
+
+function fallbackSummaryFor(state, registered) {
+  const diagnostics = state && state.fallbackDiagnostics;
+
+  if (isPlainObject(diagnostics)) {
+    return {
+      label: presentationText(diagnostics.fallbackExecutionStatus || (diagnostics.fallbackExecutionAvailable ? "AVAILABLE" : "UNAVAILABLE")),
+      detail: presentationText(diagnostics.reason || diagnostics.fallbackSelectionReason),
+    };
+  }
+
+  if (Array.isArray(registered) && registered.length > 1) {
+    return {
+      label: "Available",
+      detail: "Levi Core has more than one registered model setup path.",
+    };
+  }
+
+  return {
+    label: "No fallback registered",
+    detail: "Fallback evidence is not available from Levi Core.",
+  };
+}
+
+function providerSettingsDetails(readiness, registered) {
+  const rows = [
+    `Registered model setup paths: ${registered.length}`,
+    `Available model setup paths: ${Array.isArray(readiness.providers.available) ? readiness.providers.available.length : UNKNOWN}`,
+  ];
+  const issues = readiness.providers && readiness.providers.evidence && Array.isArray(readiness.providers.evidence.configurationIssues)
+    ? readiness.providers.evidence.configurationIssues.map((issue) => presentationText(issue.reason || issue)).filter((entry) => entry !== UNKNOWN)
+    : [];
+
+  return rows.concat(issues.length > 0 ? issues : ["No additional provider configuration issues are recorded."]);
+}
+
+function costSettingsSummaryFor(state) {
+  const cost = executionCostSummaryFor(state || {});
+  const status = costSettingsStatusFor(state, cost);
+  const usage = costUsageSummaryFor(state);
+  const group = settingsGroup({
+    id: "cost",
+    title: "Cost",
+    status,
+    label: costSettingsLabel(status, cost),
+    summary: costSettingsDetail(status, cost),
+    items: [
+      settingsItem("Budget ceiling", firstKnownText([cost.budgetCeiling, state && state.plan && moneyText(state.plan.budgetCeiling)]), "Budget evidence comes from Levi Core plan or execution data.", "readonly"),
+      settingsItem("Cost approval behavior", "Separate approval", "UNKNOWN pricing and Core-reported approval requirements remain separate from task approval.", "locked"),
+      settingsItem("Current spend", usage.spend, "Spend evidence is reported only when Core records it.", "readonly"),
+      settingsItem("Iteration limits", usage.iterations, "Iteration limits remain enforced by Levi Core and Model Gateway.", "readonly"),
+      settingsItem("UNKNOWN pricing behavior", cost.approvalRequired ? "Approval required" : "Requires Core evidence", "The UI does not invent pricing or treat UNKNOWN pricing as free.", "locked"),
+    ],
+    details: [
+      cost.detail,
+      "Cost, budget, and iteration protections cannot be bypassed from Advanced Settings.",
+    ],
+  });
+
+  return {
+    status,
+    label: costSettingsLabel(status, cost),
+    detail: costSettingsDetail(status, cost),
+    group,
+  };
+}
+
+function costSettingsStatusFor(state, cost) {
+  const detailText = presentationText(cost.detail).toLowerCase();
+
+  if (detailText.includes("invalid budget") || detailText.includes("budget") && detailText.includes("invalid")) {
+    return "INVALID_BUDGET";
+  }
+
+  if (cost.blocked) {
+    return "COST_BLOCKED";
+  }
+
+  if (cost.status === "APPROVAL_REQUIRED" || cost.costClass === UNKNOWN || cost.estimatedCost === UNKNOWN) {
+    return "UNKNOWN_PRICING";
+  }
+
+  const budget = state && state.plan && state.plan.budgetState;
+  if (isPlainObject(budget) && budget.pricingEvidence && budget.pricingEvidence.status === "UNKNOWN") {
+    return "UNKNOWN_PRICING";
+  }
+
+  return cost.status === "UNKNOWN" ? "UNKNOWN_PRICING" : "READY";
+}
+
+function costSettingsLabel(status, cost) {
+  const labels = {
+    READY: cost.label === UNKNOWN ? "Ready" : cost.label,
+    UNKNOWN_PRICING: "UNKNOWN pricing",
+    COST_BLOCKED: "Blocked",
+    INVALID_BUDGET: "Invalid budget",
+  };
+
+  return labels[status] || "Unknown";
+}
+
+function costSettingsDetail(status, cost) {
+  if (status === "COST_BLOCKED" || status === "INVALID_BUDGET") {
+    return cost.detail;
+  }
+
+  if (status === "UNKNOWN_PRICING") {
+    return "Exact pricing evidence is UNKNOWN until Levi Core records a known estimate or approval requirement.";
+  }
+
+  return cost.detail === UNKNOWN ? "Cost evidence is available from Levi Core." : cost.detail;
+}
+
+function costUsageSummaryFor(state) {
+  const candidates = [
+    state && state.execution && state.execution.usage,
+    state && state.execution && state.execution.costDecision && state.execution.costDecision.usage,
+    state && state.costUsage,
+  ].filter(isPlainObject);
+  const usage = candidates[0] || {};
+  const spent = moneyText(usage.spent || usage.currentSpend);
+  const iterations = firstKnownText([
+    usage.iterations,
+    usage.currentIterations,
+    usage.maxIterations && usage.iterations !== undefined ? `${usage.iterations}/${usage.maxIterations}` : null,
+  ]);
+
+  return {
+    spend: spent,
+    iterations,
+  };
+}
+
+function contextSettingsSummaryFor(state, memoryRecords, projectSummary) {
+  const contextSource = contextSourceForState(state || {});
+  const details = contextDetailsFor(contextSource);
+  const cache = isPlainObject(contextSource && contextSource.contextCache) ? contextSource.contextCache : {};
+  const structuralIndex = isPlainObject(projectSummary && projectSummary.structuralIndex) ? projectSummary.structuralIndex : null;
+  const knowledgeCount = countProjectKnowledgeRecords(memoryRecords);
+  const decisionCount = countDurableDecisionRecords(memoryRecords);
+  const symbolCount = structuralIndex && Array.isArray(structuralIndex.symbols) ? structuralIndex.symbols.length : UNKNOWN;
+  const relationshipCount = structuralIndex && Array.isArray(structuralIndex.relationships) ? structuralIndex.relationships.length : UNKNOWN;
+  const status = contextSource ? "READY" : "UNKNOWN";
+  const group = settingsGroup({
+    id: "context",
+    title: "Context",
+    status,
+    label: status === "READY" ? "Available" : "Unknown",
+    summary: status === "READY" ? "Levi Core has context evidence for the current workflow." : "Context evidence is UNKNOWN until Levi Core records it.",
+    items: [
+      settingsItem("Context status", status === "READY" ? "Available" : UNKNOWN, "Context content stays hidden; only status and budget are shown.", "readonly"),
+      settingsItem("Context budget summary", contextBudgetText(details && details.contextBudget), "Budget counts are shown without raw context contents.", "readonly"),
+      settingsItem("Cache status", cacheStatusText(cache), "Cache internals remain hidden.", "readonly"),
+      settingsItem("Project Knowledge count", knowledgeCount, "Approved or verified project records visible to Core.", "readonly"),
+      settingsItem("Durable Decision count", decisionCount, "Approved project decisions recorded for this project.", "readonly"),
+      settingsItem("Structural index counts", structuralIndexCountsText(symbolCount, relationshipCount), "Symbol and relationship counts come from deterministic repository scanning.", "readonly"),
+    ],
+    details: [
+      "Raw request context and prompt contents are not exposed.",
+      "Manual context selection is not part of M32-008.",
+    ],
+  });
+
+  return {
+    status,
+    label: status === "READY" ? "Available" : "Unknown",
+    detail: status === "READY" ? "Context diagnostics are available." : "Context diagnostics are UNKNOWN.",
+    group,
+  };
+}
+
+function contextSourceForState(state) {
+  if (isPlainObject(state.context)) {
+    return state.context;
+  }
+
+  if (isPlainObject(state.contextPreview)) {
+    return state.contextPreview;
+  }
+
+  if (isPlainObject(state.plan) && isPlainObject(state.plan.contextPreview)) {
+    return state.plan.contextPreview;
+  }
+
+  return null;
+}
+
+function contextDetailsFor(contextSource) {
+  if (!isPlainObject(contextSource)) {
+    return null;
+  }
+
+  return isPlainObject(contextSource.details) ? contextSource.details : contextSource;
+}
+
+function cacheStatusText(cache) {
+  if (!isPlainObject(cache)) {
+    return UNKNOWN;
+  }
+
+  if (cache.cacheHit === true) {
+    return "Cache hit";
+  }
+
+  if (cache.cacheMiss === true) {
+    return "Cache miss";
+  }
+
+  return UNKNOWN;
+}
+
+function countProjectKnowledgeRecords(records) {
+  return Array.isArray(records)
+    ? records.filter((record) => isPlainObject(record) && record.type === "project-fact" && ["APPROVED", "VERIFIED"].includes(stringOrUnknown(record.confidenceState).toUpperCase())).length
+    : 0;
+}
+
+function countDurableDecisionRecords(records) {
+  return Array.isArray(records)
+    ? records.filter((record) => isPlainObject(record) && record.type === "approved-decision").length
+    : 0;
+}
+
+function structuralIndexCountsText(symbolCount, relationshipCount) {
+  if (symbolCount === UNKNOWN && relationshipCount === UNKNOWN) {
+    return UNKNOWN;
+  }
+
+  return `${symbolCount} symbols, ${relationshipCount} relationships`;
+}
+
+function appearanceSettingsGroup() {
+  return settingsGroup({
+    id: "appearance",
+    title: "Appearance",
+    status: "READY",
+    label: "System",
+    summary: "Appearance follows system preferences until Core approves writable preferences.",
+    items: [
+      settingsItem("Light appearance", "Available", "Read-only display option in M32-008.", "readonly"),
+      settingsItem("Dark appearance", "Available", "Read-only display option in M32-008.", "readonly"),
+      settingsItem("System appearance", "Selected", "The current UI follows the operating-system color scheme.", "readonly"),
+      settingsItem("Reduced motion preference", "Follows system", "No motion-heavy behavior is introduced in M32-008.", "readonly"),
+      settingsItem("Text-size preference", "Not approved", "PLAN.md does not approve a writable text-size preference in M32-008.", "locked"),
+    ],
+    details: [
+      "Appearance state is presentation-only and does not alter workflow state.",
+    ],
+  });
+}
+
+function diagnosticsSettingsGroup(input) {
+  const healthStatus = stringOrUnknown(input.healthSummary && input.healthSummary.overallStatus);
+  const recommendationCount = input.recommendationReport && Array.isArray(input.recommendationReport.recommendations)
+    ? input.recommendationReport.recommendations.length
+    : 0;
+  const restore = input.restoreInspection || unavailableRestoreInspection("Restore evidence is UNKNOWN.");
+  const group = settingsGroup({
+    id: "diagnostics",
+    title: "Diagnostics",
+    status: diagnosticsStatusFor(input.provider, input.cost, healthStatus),
+    label: "Sanitized",
+    summary: "Copyable diagnostics summarize readiness without secrets, raw JSON, or internal records.",
+    items: [
+      settingsItem("Readiness", presentationText(input.readinessReport && input.readinessReport.overallReadiness), "Readiness evidence comes from Levi Core.", "readonly"),
+      settingsItem("Provider health", input.provider.label, input.provider.detail, "readonly"),
+      settingsItem("Fallback availability", input.provider.fallback.label, input.provider.fallback.detail, "readonly"),
+      settingsItem("Project Health summary", plainStatus(healthStatus), presentationText(input.healthSummary && input.healthSummary.summary), "readonly"),
+      settingsItem("Recommendations", recommendationCount, "Recommendation counts come from Project Health.", "readonly"),
+      settingsItem("Restore diagnostics", restore.label, restore.detail, "readonly"),
+      settingsItem("Repository path", path.resolve(input.repositoryPath), "Shown only in Advanced Settings diagnostics.", "readonly"),
+    ],
+    details: [
+      "The diagnostic summary excludes secret values, raw state JSON, request text, change-set schemas, and internal records.",
+    ],
+  });
+
+  return {
+    group,
+  };
+}
+
+function diagnosticsStatusFor(provider, cost, healthStatus) {
+  if (provider.status === "NO_PROVIDER" || provider.status === "PROVIDER_UNAVAILABLE" || cost.status === "COST_BLOCKED") {
+    return "ATTENTION";
+  }
+
+  if (healthStatus === "BLOCKED") {
+    return "BLOCKED";
+  }
+
+  if (healthStatus === "ATTENTION" || cost.status === "UNKNOWN_PRICING") {
+    return "ATTENTION";
+  }
+
+  return "READY";
+}
+
+function settingsGroup({ id, title, status, label, summary, items, details }) {
+  return {
+    id,
+    title,
+    status: stringOrUnknown(status),
+    label: presentationText(label),
+    summary: presentationText(summary),
+    items: Array.isArray(items) ? items : [],
+    details: textListOrUnknown(details),
+  };
+}
+
+function settingsItem(label, value, detail, kind) {
+  return {
+    label: presentationText(label),
+    value: presentationText(value),
+    detail: presentationText(detail),
+    kind: kind || "readonly",
+  };
+}
+
+function advancedSettingsActionsFor(canSave) {
+  return {
+    canSave: canSave === true,
+    primary: canSave === true ? {
+      label: "Save Settings",
+      action: "save",
+    } : null,
+    secondary: [
+      {
+        label: "Return Home",
+        href: "#home",
+      },
+      {
+        label: "Project Health",
+        href: "#health",
+      },
+      {
+        label: "History",
+        href: "#history",
+      },
+    ],
+  };
+}
+
+function advancedSettingsModeFor(provider, cost) {
+  if (provider.status === "NO_PROVIDER") {
+    return "NO_PROVIDER";
+  }
+
+  if (provider.status === "PROVIDER_UNAVAILABLE") {
+    return "PROVIDER_UNAVAILABLE";
+  }
+
+  if (provider.status === "LOCAL_MODEL_UNAVAILABLE") {
+    return "LOCAL_MODEL_UNAVAILABLE";
+  }
+
+  if (cost.status === "INVALID_BUDGET") {
+    return "INVALID_BUDGET";
+  }
+
+  if (cost.status === "COST_BLOCKED") {
+    return "COST_BLOCKED";
+  }
+
+  if (cost.status === "UNKNOWN_PRICING") {
+    return "UNKNOWN_PRICING";
+  }
+
+  return "NORMAL";
+}
+
+function advancedSettingsModeLabel(mode) {
+  const labels = {
+    NORMAL: "Normal",
+    NO_PROVIDER: "No provider",
+    PROVIDER_UNAVAILABLE: "Provider unavailable",
+    LOCAL_MODEL_UNAVAILABLE: "Local model unavailable",
+    INVALID_BUDGET: "Invalid budget",
+    COST_BLOCKED: "Cost blocked",
+    UNKNOWN_PRICING: "UNKNOWN pricing",
+  };
+
+  return labels[mode] || "Unknown";
+}
+
+function advancedSettingsModeDetail(mode, provider, cost) {
+  if (mode === "NO_PROVIDER" || mode === "PROVIDER_UNAVAILABLE" || mode === "LOCAL_MODEL_UNAVAILABLE") {
+    return provider.detail;
+  }
+
+  if (mode === "INVALID_BUDGET" || mode === "COST_BLOCKED" || mode === "UNKNOWN_PRICING") {
+    return cost.detail;
+  }
+
+  return "Optional settings are available as read-only status.";
+}
+
+function diagnosticSummaryTextFor(input) {
+  const restore = input.restoreInspection || {};
+  const healthStatus = input.healthSummary && input.healthSummary.overallStatus;
+
+  return [
+    "Levi Advanced Settings Summary",
+    `Project: ${path.basename(input.repositoryPath) || UNKNOWN}`,
+    `Readiness: ${input.provider.label}`,
+    `Provider: ${input.provider.currentProvider}`,
+    `Model: ${input.provider.currentModel}`,
+    `Fallback: ${input.provider.fallback.label}`,
+    `Cost: ${input.cost.label} - ${input.cost.detail}`,
+    `Context: ${input.context.label} - ${input.context.detail}`,
+    `Project Health: ${plainStatus(healthStatus)} - ${presentationText(input.healthSummary && input.healthSummary.summary)}`,
+    `Restore: ${presentationText(restore.label)} - ${presentationText(restore.detail)}`,
+    "Safety: approval, destructive confirmation, restore, budget, and validation protections remain enforced by Levi Core.",
+    "Writable settings: none approved in M32-008.",
+  ].join("\n");
+}
+
+function normalizeReadinessReport(readinessReport) {
+  if (!isPlainObject(readinessReport)) {
+    return fallbackReadinessReport("Readiness evidence is UNKNOWN.");
+  }
+
+  return {
+    overallReadiness: presentationText(readinessReport.overallReadiness || readinessReport.status),
+    runtime: isPlainObject(readinessReport.runtime) ? readinessReport.runtime : {},
+    models: isPlainObject(readinessReport.models) ? readinessReport.models : {},
+    providers: isPlainObject(readinessReport.providers) ? readinessReport.providers : {
+      registered: [],
+      localProviders: [],
+      available: [],
+      defaultProvider: UNKNOWN,
+      evidence: {},
+    },
+  };
+}
+
+function safeAdvancedReadinessReport() {
+  try {
+    return inspectLocalReadiness();
+  } catch (error) {
+    return fallbackReadinessReport(error.message);
+  }
+}
+
+function fallbackReadinessReport(message) {
+  return {
+    overallReadiness: UNKNOWN,
+    runtime: {
+      name: "Ollama",
+      installed: UNKNOWN,
+      running: UNKNOWN,
+      version: UNKNOWN,
+      evidence: {},
+    },
+    models: {
+      installedModels: UNKNOWN,
+      recommendedModels: {
+        configured: [],
+        installed: UNKNOWN,
+        missing: UNKNOWN,
+      },
+      requiredModels: {
+        configured: [],
+        installed: UNKNOWN,
+        missing: UNKNOWN,
+      },
+      missingRequiredModels: UNKNOWN,
+    },
+    providers: {
+      registered: [],
+      localProviders: [],
+      available: [],
+      defaultProvider: UNKNOWN,
+      evidence: {
+        configurationIssues: [{
+          reason: presentationText(message),
+        }],
+      },
     },
   };
 }
@@ -3594,12 +4406,14 @@ function isPlainObject(value) {
 }
 
 module.exports = {
+  createAdvancedSettingsView,
   createHomeDashboardView,
   createHomeIntakePreview,
   createExecutionCompletionView,
   createProjectHealthView,
   createPlanApprovalView,
   createRestoreHistoryView,
+  submitAdvancedSettings,
   submitPlanApproval,
   submitRestoreConfirmation,
 };

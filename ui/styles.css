@@ -640,7 +640,8 @@ textarea:disabled {
 .plan-content,
 .execution-content,
 .health-content,
-.history-content {
+.history-content,
+.settings-content {
   display: grid;
   gap: var(--gap-xl);
   min-width: 0;
@@ -680,6 +681,10 @@ textarea:disabled {
 }
 
 .history-hero h2 {
+  max-width: 15ch;
+}
+
+.settings-hero h2 {
   max-width: 15ch;
 }
 
@@ -1188,6 +1193,110 @@ textarea:disabled {
   color: var(--text-muted);
 }
 
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--gap-md);
+}
+
+.settings-card {
+  display: grid;
+  gap: var(--gap-md);
+  min-width: 0;
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 22px;
+}
+
+.settings-card-header {
+  display: flex;
+  gap: var(--gap-md);
+  align-items: flex-start;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.settings-card-header h3 {
+  margin: 0;
+  font-size: 1.18rem;
+  overflow-wrap: anywhere;
+}
+
+.settings-card-summary {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.settings-list {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.45fr) minmax(0, 1fr);
+  gap: 12px 16px;
+  margin: 0;
+}
+
+.settings-list dt {
+  color: var(--text-muted);
+  font-weight: 740;
+}
+
+.settings-list dd {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  min-width: 0;
+}
+
+.settings-list dd strong,
+.settings-list dd span {
+  overflow-wrap: anywhere;
+}
+
+.settings-list dd > span:last-child {
+  color: var(--text-muted);
+}
+
+.settings-kind {
+  width: max-content;
+  max-width: 100%;
+  border-radius: var(--radius);
+  background: rgba(91, 100, 114, 0.12);
+  color: var(--unknown);
+  font-size: 0.78rem;
+  font-weight: 800;
+  padding: 4px 7px;
+}
+
+.settings-kind.locked {
+  background: rgba(138, 90, 0, 0.13);
+  color: var(--attention);
+}
+
+.settings-details {
+  margin-top: 0;
+}
+
+.settings-diagnostics {
+  display: grid;
+  gap: var(--gap-md);
+}
+
+.settings-diagnostics textarea {
+  min-height: 220px;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 0.92rem;
+}
+
+.settings-diagnostics textarea[readonly] {
+  color: var(--text);
+}
+
+.settings-copy-row {
+  display: flex;
+  gap: var(--gap-md);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .inline-heading {
   display: flex;
   gap: var(--gap-md);
@@ -1281,6 +1390,7 @@ textarea:disabled {
   .count-row,
   .health-count-row,
   .health-card-grid,
+  .settings-grid,
   .history-summary-row,
   .history-detail-grid {
     grid-template-columns: 1fr;
@@ -1411,14 +1521,21 @@ textarea:disabled {
   }
 
   .result-details,
-  .details-grid {
+  .details-grid,
+  .settings-list {
     grid-template-columns: 1fr;
   }
 
   .result-details dd,
-  .details-grid dd {
+  .details-grid dd,
+  .settings-list dd {
     padding-bottom: 8px;
     border-bottom: 1px solid var(--border);
+  }
+
+  .settings-copy-row {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .footer {

@@ -7,6 +7,7 @@
     history: null,
     health: null,
     plan: null,
+    settings: null,
     route: "home",
   };
 
@@ -33,6 +34,7 @@
     healthIssues: document.getElementById("health-issues"),
     repositoryRootValue: document.getElementById("repository-root-value"),
     repositoryDetails: document.querySelector("[data-repository-details]"),
+    knowledgeLinks: document.querySelector(".knowledge-links"),
     activityEmpty: document.getElementById("activity-empty"),
     activityList: document.getElementById("activity-list"),
     footerStatus: document.getElementById("footer-status"),
@@ -46,6 +48,8 @@
   elements.main.append(elements.projectHealth.section);
   elements.history = createRestoreHistoryScreen();
   elements.main.append(elements.history.section);
+  elements.settings = createAdvancedSettingsScreen();
+  elements.main.append(elements.settings.section);
   elements.planShortcut = document.createElement("a");
   elements.planShortcut.className = "secondary-action plan-shortcut";
   elements.planShortcut.href = "#plan-approval";
@@ -58,6 +62,13 @@
   elements.executionShortcut.hidden = true;
   elements.projectStrip.append(elements.planShortcut);
   elements.projectStrip.append(elements.executionShortcut);
+  elements.settingsShortcut = document.createElement("a");
+  elements.settingsShortcut.href = "#advanced-settings";
+  elements.settingsShortcut.textContent = "Advanced Settings";
+  elements.settingsShortcut.setAttribute("aria-label", "Open optional Advanced Settings");
+  if (elements.knowledgeLinks) {
+    elements.knowledgeLinks.append(elements.settingsShortcut);
+  }
 
   elements.taskForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -76,6 +87,8 @@
   elements.projectHealth.primaryAction.addEventListener("click", handleProjectHealthPrimaryAction);
   elements.history.primaryAction.addEventListener("click", handleRestoreHistoryPrimaryAction);
   elements.history.confirmCheckbox.addEventListener("change", updateRestoreHistoryConfirmation);
+  elements.settings.primaryAction.addEventListener("click", submitAdvancedSettings);
+  elements.settings.copyDiagnostics.addEventListener("click", copyAdvancedDiagnostics);
   window.addEventListener("hashchange", applyRoute);
 
   applyRoute();
@@ -195,6 +208,26 @@
     }
   }
 
+  async function loadAdvancedSettings() {
+    showAdvancedSettingsLoading();
+
+    try {
+      const response = await fetch("/api/settings", {
+        headers: {
+          Accept: "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Levi could not load Advanced Settings.");
+      }
+
+      renderAdvancedSettings(await response.json());
+    } catch (error) {
+      showAdvancedSettingsError(error.message);
+    }
+  }
+
   async function submitIntake() {
     if (elements.createPlanButton.disabled) {
       return;
@@ -308,6 +341,65 @@
     }
   }
 
+  async function submitAdvancedSettings(event) {
+    if (event) {
+      event.preventDefault();
+    }
+
+    const settings = state.settings;
+    const action = settings && settings.actions && settings.actions.primary;
+
+    if (!action || action.action !== "save" || elements.settings.primaryAction.disabled) {
+      return;
+    }
+
+    elements.settings.primaryAction.disabled = true;
+    elements.settings.primaryAction.textContent = "Saving";
+    elements.settings.saveResult.hidden = true;
+
+    try {
+      const response = await fetch("/api/settings/save", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({}),
+      });
+
+      if (!response.ok) {
+        throw new Error("Levi could not save Advanced Settings.");
+      }
+
+      renderAdvancedSettings(await response.json());
+    } catch (error) {
+      elements.settings.saveResult.hidden = false;
+      elements.settings.saveResult.className = "result-panel blocked";
+      elements.settings.saveResult.textContent = safeUiText(error.message);
+      renderAdvancedSettingsActions(settings && settings.actions || {});
+    }
+  }
+
+  async function copyAdvancedDiagnostics(event) {
+    event.preventDefault();
+
+    const text = elements.settings.diagnosticSummary.value || "";
+
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        await navigator.clipboard.writeText(text);
+      } else {
+        elements.settings.diagnosticSummary.focus();
+        elements.settings.diagnosticSummary.select();
+        document.execCommand("copy");
+      }
+
+      elements.settings.copyResult.textContent = "Diagnostic summary copied.";
+    } catch (error) {
+      elements.settings.copyResult.textContent = "Copy failed. The sanitized summary is still selectable.";
+    }
+  }
+
   function handleExecutionPrimaryAction(event) {
     event.preventDefault();
 
@@ -396,12 +488,18 @@
       state.route = "health";
     } else if (hash === "#history" || hash === "#restore-history" || hash === "#restore") {
       state.route = "history";
+    } else if (hash === "#advanced-settings" || hash === "#settings") {
+      state.route = "settings";
     } else if (["#execution-progress", "#completion-result", "#execution", "#completion"].includes(hash)) {
       state.route = "execution";
     } else {
       state.route = "home";
     }
     updateNavState(hash);
+
+    if (state.route !== "settings") {
+      elements.settings.section.hidden = true;
+    }
 
     if (state.route === "plan") {
       elements.pageTitle.textContent = "Plan";
@@ -424,6 +522,12 @@
     if (state.route === "health") {
       elements.pageTitle.textContent = "Health";
       loadProjectHealth();
+      return;
+    }
+
+    if (state.route === "settings") {
+      elements.pageTitle.textContent = "Settings";
+      loadAdvancedSettings();
       return;
     }
 
@@ -495,6 +599,7 @@
       elements.execution.section.hidden = true;
       elements.projectHealth.section.hidden = true;
       elements.history.section.hidden = true;
+      elements.settings.section.hidden = true;
     }
   }
 
@@ -1259,6 +1364,160 @@
     updateRestoreHistoryConfirmation();
   }
 
+  function renderAdvancedSettings(settings) {
+    state.settings = settings;
+    updateProjectLabels(settings.project);
+
+    if (settings.status === "ERROR") {
+      showAdvancedSettingsError(settings.error && settings.error.detail ? settings.error.detail : settings.summary);
+      return;
+    }
+
+    if (settings.status === "EMPTY") {
+      showAdvancedSettingsEmpty(settings);
+      return;
+    }
+
+    elements.loading.hidden = true;
+    elements.error.hidden = true;
+    elements.dashboard.hidden = true;
+    elements.plan.section.hidden = true;
+    elements.execution.section.hidden = true;
+    elements.projectHealth.section.hidden = true;
+    elements.history.section.hidden = true;
+    elements.settings.section.hidden = false;
+    elements.settings.loading.hidden = true;
+    elements.settings.error.hidden = true;
+    elements.settings.empty.hidden = true;
+    elements.settings.content.hidden = false;
+    elements.footerStatus.textContent = textValue(settings.readiness && settings.readiness.label);
+
+    elements.settings.projectName.textContent = textValue(settings.project && settings.project.name);
+    elements.settings.statusBadge.textContent = settingsUiText(settings.readiness && settings.readiness.label);
+    elements.settings.statusBadge.className = `status-pill ${statusClass(settings.mode || settings.status)}`;
+    elements.settings.headline.textContent = settingsUiText(settings.headline);
+    elements.settings.summary.textContent = settingsUiText(settings.summary);
+    elements.settings.readinessLabel.textContent = settingsUiText(settings.readiness && settings.readiness.label);
+    elements.settings.readinessDetail.textContent = settingsUiText(settings.readiness && settings.readiness.detail);
+
+    renderSettingsGroups(settings.groups || []);
+    renderAdvancedDiagnostics(settings.diagnostics || {});
+    renderAdvancedSettingsActions(settings.actions || {});
+    renderAdvancedSettingsSaveResult(settings.saveResult);
+  }
+
+  function renderSettingsGroups(groups) {
+    const items = Array.isArray(groups) ? groups : [];
+
+    if (items.length === 0) {
+      const empty = document.createElement("article");
+      empty.className = "settings-card";
+      empty.textContent = "Advanced Settings are not available for this project yet.";
+      elements.settings.groups.replaceChildren(empty);
+      return;
+    }
+
+    elements.settings.groups.replaceChildren(
+      ...items.map((group) => {
+        const article = document.createElement("article");
+        article.className = "settings-card";
+
+        const header = document.createElement("div");
+        header.className = "settings-card-header";
+        const heading = document.createElement("div");
+        const eyebrow = document.createElement("p");
+        eyebrow.className = "eyebrow";
+        eyebrow.textContent = settingsUiText(group.label);
+        const title = document.createElement("h3");
+        title.textContent = settingsUiText(group.title);
+        heading.append(eyebrow, title);
+        const status = document.createElement("span");
+        status.className = `status-pill ${statusClass(group.status)}`;
+        status.textContent = plainStatus(group.status);
+        header.append(heading, status);
+
+        const summary = document.createElement("p");
+        summary.className = "settings-card-summary";
+        summary.textContent = settingsUiText(group.summary);
+
+        const list = document.createElement("dl");
+        list.className = "settings-list";
+        const groupItems = Array.isArray(group.items) ? group.items : [];
+        list.replaceChildren(...groupItems.flatMap(settingsItemRow));
+
+        const details = document.createElement("details");
+        details.className = "health-details settings-details";
+        const detailSummary = document.createElement("summary");
+        detailSummary.textContent = "Details";
+        const detailList = document.createElement("ul");
+        detailList.className = "plain-list compact-list";
+        renderInlineList(detailList, group.details, "No additional details recorded.");
+        details.append(detailSummary, detailList);
+
+        article.append(header, summary, list, details);
+        return article;
+      }),
+    );
+  }
+
+  function settingsItemRow(item) {
+    const label = document.createElement("dt");
+    label.textContent = settingsUiText(item.label);
+
+    const detail = document.createElement("dd");
+    const value = document.createElement("strong");
+    value.textContent = settingsUiText(item.value);
+    const kind = document.createElement("span");
+    kind.className = `settings-kind ${item.kind === "locked" ? "locked" : "readonly"}`;
+    kind.textContent = item.kind === "locked" ? "Locked" : "Read-only";
+    const copy = document.createElement("span");
+    copy.textContent = settingsUiText(item.detail);
+    detail.append(value, kind, copy);
+
+    return [label, detail];
+  }
+
+  function renderAdvancedDiagnostics(diagnostics) {
+    elements.settings.diagnosticSummary.value = settingsUiText(diagnostics.summaryText);
+    elements.settings.copyResult.textContent = "";
+  }
+
+  function renderAdvancedSettingsActions(actions) {
+    const primary = actions.primary;
+    const canSave = actions.canSave === true && primary;
+    elements.settings.primaryAction.hidden = !canSave;
+    elements.settings.primaryAction.disabled = !canSave;
+    elements.settings.primaryAction.textContent = canSave ? settingsUiText(primary.label) : "Save Settings";
+
+    const secondary = Array.isArray(actions.secondary) ? actions.secondary : [];
+    elements.settings.secondaryActions.replaceChildren(
+      ...secondary.map((action) => {
+        const link = document.createElement("a");
+        link.className = "secondary-action";
+        link.href = safeHref(action.href);
+        link.textContent = settingsUiText(action.label);
+        return link;
+      }),
+    );
+  }
+
+  function renderAdvancedSettingsSaveResult(result) {
+    if (!result) {
+      elements.settings.saveResult.hidden = true;
+      elements.settings.saveResult.replaceChildren();
+      return;
+    }
+
+    elements.settings.saveResult.hidden = false;
+    elements.settings.saveResult.className = `result-panel ${statusClass(result.status)}`;
+
+    const title = document.createElement("strong");
+    title.textContent = settingsUiText(result.label);
+    const message = document.createElement("p");
+    message.textContent = settingsUiText(result.message);
+    elements.settings.saveResult.replaceChildren(title, message);
+  }
+
   function renderHistoryTopSummary(items) {
     const rows = Array.isArray(items) && items.length > 0
       ? items
@@ -1757,6 +2016,57 @@
     elements.footerStatus.textContent = "No history";
   }
 
+  function showAdvancedSettingsLoading() {
+    elements.loading.hidden = true;
+    elements.error.hidden = true;
+    elements.dashboard.hidden = true;
+    elements.plan.section.hidden = true;
+    elements.execution.section.hidden = true;
+    elements.projectHealth.section.hidden = true;
+    elements.history.section.hidden = true;
+    elements.settings.section.hidden = false;
+    elements.settings.loading.hidden = false;
+    elements.settings.error.hidden = true;
+    elements.settings.empty.hidden = true;
+    elements.settings.content.hidden = true;
+    elements.footerStatus.textContent = "Loading settings";
+  }
+
+  function showAdvancedSettingsError(message) {
+    elements.loading.hidden = true;
+    elements.error.hidden = true;
+    elements.dashboard.hidden = true;
+    elements.plan.section.hidden = true;
+    elements.execution.section.hidden = true;
+    elements.projectHealth.section.hidden = true;
+    elements.history.section.hidden = true;
+    elements.settings.section.hidden = false;
+    elements.settings.loading.hidden = true;
+    elements.settings.error.hidden = false;
+    elements.settings.empty.hidden = true;
+    elements.settings.content.hidden = true;
+    elements.settings.errorMessage.textContent = safeUiText(message);
+    elements.footerStatus.textContent = "Blocked";
+  }
+
+  function showAdvancedSettingsEmpty(settings) {
+    elements.loading.hidden = true;
+    elements.error.hidden = true;
+    elements.dashboard.hidden = true;
+    elements.plan.section.hidden = true;
+    elements.execution.section.hidden = true;
+    elements.projectHealth.section.hidden = true;
+    elements.history.section.hidden = true;
+    elements.settings.section.hidden = false;
+    elements.settings.loading.hidden = true;
+    elements.settings.error.hidden = true;
+    elements.settings.empty.hidden = false;
+    elements.settings.content.hidden = true;
+    elements.settings.emptyProject.textContent = textValue(settings.project && settings.project.name);
+    elements.settings.emptyMessage.textContent = safeUiText(settings.summary);
+    elements.footerStatus.textContent = "No settings";
+  }
+
   function appendResultLine(list, labelText, value) {
     const label = document.createElement("dt");
     label.textContent = labelText;
@@ -1947,6 +2257,91 @@
 
     elements.plan.approveButton.disabled = blocked;
     elements.plan.approveButton.textContent = textValue(plan.actions.primaryLabel);
+  }
+
+  function createAdvancedSettingsScreen() {
+    const section = document.createElement("section");
+    section.id = "advanced-settings-screen";
+    section.className = "settings-screen dashboard";
+    section.hidden = true;
+    section.setAttribute("aria-labelledby", "settings-heading");
+    section.innerHTML = [
+      '<section class="state-panel" data-settings-loading aria-live="polite">',
+      '<p class="state-kicker">Advanced Settings</p>',
+      "<h2>Loading settings</h2>",
+      "<p>Levi is reading optional diagnostics and approved preferences.</p>",
+      "</section>",
+      '<section class="state-panel danger" data-settings-error hidden>',
+      '<p class="state-kicker">Blocked</p>',
+      "<h2>Settings need attention</h2>",
+      '<p data-settings-error-message>Levi could not read Advanced Settings.</p>',
+      "</section>",
+      '<section class="state-panel" data-settings-empty hidden>',
+      '<p class="state-kicker">Advanced Settings</p>',
+      "<h2>No settings available</h2>",
+      '<p><strong data-settings-empty-project>Current project</strong></p>',
+      '<p data-settings-empty-message>Select a project before opening Advanced Settings.</p>',
+      '<a class="secondary-action" href="#home">Return Home</a>',
+      "</section>",
+      '<div class="settings-content" data-settings-content hidden>',
+      '<section class="project-strip plan-project-strip">',
+      "<div>",
+      '<p class="eyebrow">Selected project</p>',
+      '<h2 data-settings-project-name>Current project</h2>',
+      "</div>",
+      '<span class="status-pill unknown" data-settings-status>Unknown</span>',
+      "</section>",
+      '<section class="approval-panel settings-hero" aria-labelledby="settings-heading">',
+      "<div>",
+      '<p class="eyebrow">Optional expert area</p>',
+      '<h2 id="settings-heading" data-settings-headline>Advanced Settings</h2>',
+      '<p class="health-readiness" data-settings-readiness-label>Normal</p>',
+      '<p class="project-context" data-settings-summary>Optional diagnostics and preferences.</p>',
+      '<p class="project-context" data-settings-readiness-detail>Primary workflow stays unchanged.</p>',
+      "</div>",
+      '<div class="approval-actions">',
+      '<button class="primary-action" type="button" data-settings-primary hidden>Save Settings</button>',
+      "</div>",
+      '<div class="secondary-actions" data-settings-secondary></div>',
+      '<div class="result-panel" data-settings-save-result hidden></div>',
+      "</section>",
+      '<section class="settings-grid" data-settings-groups aria-label="Advanced settings groups"></section>',
+      '<section class="section-panel plan-section settings-diagnostics" aria-labelledby="settings-diagnostics-heading">',
+      '<div class="section-heading"><p class="eyebrow">Diagnostics</p><h2 id="settings-diagnostics-heading">Sanitized diagnostic summary</h2></div>',
+      '<p class="muted">Copy this summary when you need to share settings state without secrets or raw project internals.</p>',
+      '<label for="settings-diagnostic-summary">Diagnostic summary</label>',
+      '<textarea id="settings-diagnostic-summary" data-settings-diagnostic-summary rows="10" readonly></textarea>',
+      '<div class="settings-copy-row">',
+      '<button class="secondary-action" type="button" data-settings-copy>Copy Summary</button>',
+      '<span class="muted" data-settings-copy-result aria-live="polite"></span>',
+      "</div>",
+      "</section>",
+      "</div>",
+    ].join("");
+
+    return {
+      section,
+      loading: section.querySelector("[data-settings-loading]"),
+      error: section.querySelector("[data-settings-error]"),
+      errorMessage: section.querySelector("[data-settings-error-message]"),
+      empty: section.querySelector("[data-settings-empty]"),
+      emptyProject: section.querySelector("[data-settings-empty-project]"),
+      emptyMessage: section.querySelector("[data-settings-empty-message]"),
+      content: section.querySelector("[data-settings-content]"),
+      projectName: section.querySelector("[data-settings-project-name]"),
+      statusBadge: section.querySelector("[data-settings-status]"),
+      headline: section.querySelector("[data-settings-headline]"),
+      readinessLabel: section.querySelector("[data-settings-readiness-label]"),
+      summary: section.querySelector("[data-settings-summary]"),
+      readinessDetail: section.querySelector("[data-settings-readiness-detail]"),
+      primaryAction: section.querySelector("[data-settings-primary]"),
+      secondaryActions: section.querySelector("[data-settings-secondary]"),
+      saveResult: section.querySelector("[data-settings-save-result]"),
+      groups: section.querySelector("[data-settings-groups]"),
+      diagnosticSummary: section.querySelector("[data-settings-diagnostic-summary]"),
+      copyDiagnostics: section.querySelector("[data-settings-copy]"),
+      copyResult: section.querySelector("[data-settings-copy-result]"),
+    };
   }
 
   function createRestoreHistoryScreen() {
@@ -2445,7 +2840,7 @@
   function plainStatus(value) {
     const text = textValue(value).toUpperCase();
 
-    if (["HEALTHY", "READY", "READY_FOR_PLANNING", "APPROVED", "COMPLETED", "ALLOWED", "FREE", "CONFIRMED", "CLEAR", "PLANNED", "AVAILABLE"].includes(text)) {
+    if (["HEALTHY", "READY", "READY_FOR_PLANNING", "APPROVED", "COMPLETED", "ALLOWED", "FREE", "CONFIRMED", "CLEAR", "PLANNED", "AVAILABLE", "NORMAL", "SAVE_SUCCESS"].includes(text)) {
       return text === "FREE" ? "Free" : "Ready";
     }
 
@@ -2453,7 +2848,7 @@
       return "Running";
     }
 
-    if (["LOW", "MEDIUM", "HIGH", "ACTION_REQUIRED", "CONFIRMATION_REQUIRED", "DESTRUCTIVE_CONFIRMATION_REQUIRED", "APPROVAL_REQUIRED", "REQUIRED", "PARTIAL", "WAITING_TO_START", "WAITING_FOR_APPROVAL"].includes(text)) {
+    if (["LOW", "MEDIUM", "HIGH", "ACTION_REQUIRED", "CONFIRMATION_REQUIRED", "DESTRUCTIVE_CONFIRMATION_REQUIRED", "APPROVAL_REQUIRED", "REQUIRED", "PARTIAL", "WAITING_TO_START", "WAITING_FOR_APPROVAL", "NO_PROVIDER", "UNKNOWN_PRICING"].includes(text)) {
       return text === "LOW" || text === "MEDIUM" || text === "HIGH" ? titleCase(text) : "Needs attention";
     }
 
@@ -2461,7 +2856,7 @@
       return "Needs attention";
     }
 
-    if (["BLOCKED", "FAILED", "ERROR", "REJECTED", "NOT_READY", "PROVIDER_UNAVAILABLE", "COST_BLOCKED", "UNAVAILABLE", "INVALID", "CORRUPTED", "PARTIAL_ROLLBACK"].includes(text)) {
+    if (["BLOCKED", "FAILED", "ERROR", "REJECTED", "NOT_READY", "PROVIDER_UNAVAILABLE", "LOCAL_MODEL_UNAVAILABLE", "COST_BLOCKED", "INVALID_BUDGET", "SAVE_FAILURE", "UNAVAILABLE", "INVALID", "CORRUPTED", "PARTIAL_ROLLBACK"].includes(text)) {
       return "Blocked";
     }
 
@@ -2475,7 +2870,7 @@
   function statusClass(value) {
     const text = textValue(value).toLowerCase();
 
-    if (text.includes("healthy") || text.includes("ready") || text.includes("allowed") || text.includes("free") || text.includes("approved") || text.includes("confirmed") || text.includes("clear") || text.includes("planned") || text === "completed" || text === "available" || text === "low") {
+    if (text.includes("healthy") || text.includes("ready") || text.includes("allowed") || text.includes("free") || text.includes("approved") || text.includes("confirmed") || text.includes("clear") || text.includes("planned") || text === "completed" || text === "available" || text === "low" || text === "normal" || text === "save_success") {
       return "ready";
     }
 
@@ -2483,11 +2878,11 @@
       return "running";
     }
 
-    if (text.includes("attention") || text.includes("partial") || text.includes("ambiguous") || text.includes("information") || text.includes("required") || text.includes("waiting") || text === "medium" || text === "high") {
+    if (text.includes("attention") || text.includes("partial") || text.includes("ambiguous") || text.includes("information") || text.includes("required") || text.includes("waiting") || text === "medium" || text === "high" || text.includes("no_provider") || text.includes("unknown_pricing")) {
       return "attention";
     }
 
-    if (text.includes("blocked") || text.includes("failed") || text.includes("error") || text.includes("rejected") || text.includes("not_ready") || text.includes("unavailable") || text.includes("invalid") || text.includes("corrupt") || text.includes("rollback")) {
+    if (text.includes("blocked") || text.includes("failed") || text.includes("error") || text.includes("rejected") || text.includes("not_ready") || text.includes("unavailable") || text.includes("invalid") || text.includes("corrupt") || text.includes("rollback") || text.includes("save_failure")) {
       return "blocked";
     }
 
@@ -2505,6 +2900,13 @@
   function safeUiText(value) {
     return textValue(value)
       .replace(/\bproviders?\b/gi, "model setup")
+      .replace(/\bprompt(?:s|ing)?\b/gi, "request")
+      .replace(/\bpatch(?:es)?\b/gi, "change set")
+      .replace(/\bmemory\b/gi, "Project Knowledge");
+  }
+
+  function settingsUiText(value) {
+    return textValue(value)
       .replace(/\bprompt(?:s|ing)?\b/gi, "request")
       .replace(/\bpatch(?:es)?\b/gi, "change set")
       .replace(/\bmemory\b/gi, "Project Knowledge");

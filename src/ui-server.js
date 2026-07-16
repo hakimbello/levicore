@@ -3,12 +3,14 @@ const http = require("node:http");
 const path = require("node:path");
 const { URL } = require("node:url");
 const {
+  createAdvancedSettingsView,
   createHomeDashboardView,
   createHomeIntakePreview,
   createExecutionCompletionView,
   createProjectHealthView,
   createPlanApprovalView,
   createRestoreHistoryView,
+  submitAdvancedSettings,
   submitPlanApproval,
   submitRestoreConfirmation,
 } = require("./ui-bridge");
@@ -64,6 +66,15 @@ function createUiServer(options = {}) {
       if (request.method === "POST" && requestUrl.pathname === "/api/history/restore") {
         const body = await readJsonBody(request);
         return sendJson(response, 200, submitRestoreConfirmation(repositoryPath, body));
+      }
+
+      if (request.method === "GET" && requestUrl.pathname === "/api/settings") {
+        return sendJson(response, 200, createAdvancedSettingsView(repositoryPath));
+      }
+
+      if (request.method === "POST" && requestUrl.pathname === "/api/settings/save") {
+        await readJsonBody(request);
+        return sendJson(response, 200, submitAdvancedSettings(repositoryPath));
       }
 
       if (requestUrl.pathname.startsWith("/api/")) {
