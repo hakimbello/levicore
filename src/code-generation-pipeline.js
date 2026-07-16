@@ -1,17 +1,52 @@
 const path = require("node:path");
 const { buildContext } = require("./context-builder");
-const { buildPrompt } = require("./prompt-engine");
+const { buildCorrectiveStructuredOutputPrompt, buildPrompt } = require("./prompt-engine");
 
 const OPERATION_TYPES = new Set(["create", "update", "delete"]);
 const OPERATION_KEYS = new Set(["type", "path", "content"]);
 const SECRET_KEY_PATTERN = /(api[_-]?key|auth|credential|password|secret|token)/i;
+const MARKDOWN_FENCE_PATTERN = /```/;
 const OUTPUT_INSTRUCTIONS = [
-  "Return strict JSON only.",
+  "Return exactly one strict JSON object and nothing else.",
   "Use this exact shape: {\"operations\":[{\"type\":\"create|update|delete\",\"path\":\"relative/path\",\"content\":\"text for create or update\"}]}",
   "Use only create, update, or delete operations.",
   "Use only paths listed in Expected Files.",
-  "Do not include explanations, markdown, comments, or patch text outside JSON.",
+  "Do not include explanations, markdown, code fences, comments, patch text, or extra JSON objects.",
 ];
+const LEVI_OPERATION_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["operations"],
+  properties: {
+    operations: {
+      type: "array",
+      minItems: 1,
+      items: {
+        oneOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["type", "path", "content"],
+            properties: {
+              type: { enum: ["create", "update"] },
+              path: { type: "string" },
+              content: { type: "string" },
+            },
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["type", "path"],
+            properties: {
+              type: { enum: ["delete"] },
+              path: { type: "string" },
+            },
+          },
+        ],
+      },
+    },
+  },
+};
 
 function createCodeGenerationPipeline(options) {
   validateOptions(options);
@@ -33,24 +68,40 @@ function createCodeGenerationPipeline(options) {
       outputInstructions: OUTPUT_INSTRUCTIONS,
     });
     const routeResult = await routePrompt(options.modelGateway, prompt.prompt);
+    const compatibility = evaluateProviderCompatibility(routeResult.provider);
+
+    if (compatibility.status !== "SUPPORTED") {
+      throw structuredOutputError(compatibility.reason);
+    }
+
+    const structuredOutput = structuredOutputRequestFor(compatibility);
     const providerAttempt = await requestProviderWithFallback(
       options.modelGateway,
       routeResult,
       prompt.prompt,
+      structuredOutput,
     );
     const providerResponse = providerAttempt.response;
-    const operations = parseProposedOperations(providerResponse, input.taskPlan);
+    const adapted = await adaptProviderOperations({
+      modelGateway: options.modelGateway,
+      routeResult: providerAttempt.routeResult,
+      providerResponse,
+      taskPlan: input.taskPlan,
+      structuredOutput,
+    });
 
     return {
       status: "PROPOSED",
-      operations,
-      routing: sanitizeRouting(providerAttempt.routing),
+      operations: adapted.operations,
+      compatibility,
+      routing: sanitizeRouting(adapted.routing || providerAttempt.routing),
       usage: {
-        gateway: sanitizeValue(providerAttempt.usage || {}),
-        provider: sanitizeValue(providerResponse.usage || {}),
+        gateway: sanitizeValue(adapted.usage || providerAttempt.usage || {}),
+        provider: sanitizeValue(adapted.providerUsage || providerResponse.usage || {}),
       },
       providerResponse: {
-        finishReason: providerResponse.finishReason || "UNKNOWN",
+        finishReason: adapted.finishReason || providerResponse.finishReason || "UNKNOWN",
+        correctiveRetry: adapted.correctiveRetry === true,
       },
     };
   }
@@ -88,12 +139,62 @@ function validateGenerationInput(input) {
   }
 }
 
-async function requestProviderWithFallback(modelGateway, routeResult, prompt) {
+async function adaptProviderOperations(input) {
   try {
-    const response = await requestProvider(routeResult, prompt);
+    return {
+      operations: parseProposedOperations(input.providerResponse, input.taskPlan),
+      routing: input.routeResult.routing,
+      usage: input.routeResult.usage,
+      providerUsage: input.providerResponse.usage,
+      finishReason: input.providerResponse.finishReason,
+      correctiveRetry: false,
+    };
+  } catch (error) {
+    return retryStructuredOutput(input, error);
+  }
+}
+
+async function retryStructuredOutput(input, validationError) {
+  const correctivePrompt = buildCorrectiveStructuredOutputPrompt({
+    validationError: validationError.message,
+    schema: LEVI_OPERATION_SCHEMA,
+  });
+  let retryRoute;
+
+  try {
+    retryRoute = await routePrompt(input.modelGateway, correctivePrompt.prompt, {
+      preferredProvider: input.routeResult.provider.name,
+    });
+  } catch (error) {
+    throw structuredOutputError(`Model output did not satisfy Levi's operation contract: ${validationError.message}`);
+  }
+
+  try {
+    const retryResponse = await requestProvider(retryRoute, correctivePrompt.prompt, input.structuredOutput);
+
+    return {
+      operations: parseProposedOperations(retryResponse, input.taskPlan),
+      routing: retryRouting(input.routeResult.routing, retryRoute.routing, validationError),
+      usage: retryRoute.usage,
+      providerUsage: retryResponse.usage,
+      finishReason: retryResponse.finishReason,
+      correctiveRetry: true,
+    };
+  } catch (error) {
+    const reason = error.code === "CODE_GENERATION_STRUCTURED_OUTPUT_INVALID"
+      ? error.message
+      : `Model output did not satisfy Levi's operation contract: ${error.message}`;
+    throw structuredOutputError(reason);
+  }
+}
+
+async function requestProviderWithFallback(modelGateway, routeResult, prompt, structuredOutput) {
+  try {
+    const response = await requestProvider(routeResult, prompt, structuredOutput);
 
     return {
       response,
+      routeResult,
       routing: routeResult.routing,
       usage: routeResult.usage,
     };
@@ -118,10 +219,21 @@ async function requestProviderWithFallback(modelGateway, routeResult, prompt) {
     }
 
     try {
-      const response = await requestProvider(fallbackRoute, prompt);
+      const fallbackCompatibility = evaluateProviderCompatibility(fallbackRoute.provider);
+
+      if (fallbackCompatibility.status !== "SUPPORTED") {
+        throw structuredOutputError(fallbackCompatibility.reason);
+      }
+
+      const response = await requestProvider(
+        fallbackRoute,
+        prompt,
+        structuredOutputRequestFor(fallbackCompatibility),
+      );
 
       return {
         response,
+        routeResult: fallbackRoute,
         routing: fallbackRouting(routeResult.routing, fallbackRoute.routing, primaryError),
         usage: fallbackRoute.usage,
       };
@@ -137,9 +249,12 @@ async function requestProviderWithFallback(modelGateway, routeResult, prompt) {
   }
 }
 
-async function requestProvider(routeResult, prompt) {
+async function requestProvider(routeResult, prompt, structuredOutput) {
   try {
-    const response = await routeResult.provider.sendRequest({ prompt });
+    const response = await routeResult.provider.sendRequest({
+      prompt,
+      structuredOutput,
+    });
     validateProviderResponse(response);
     return response;
   } catch (error) {
@@ -198,6 +313,26 @@ function fallbackRouting(primaryRouting, fallbackRouteRouting, primaryError) {
   };
 }
 
+function retryRouting(primaryRouting, retryRouteRouting, validationError) {
+  return {
+    selectedModel: retryRouteRouting.selectedModel,
+    selectedProvider: retryRouteRouting.selectedProvider,
+    reason: retryRouteRouting.reason,
+    estimatedCostClass: retryRouteRouting.estimatedCostClass,
+    correctiveRetry: {
+      selected: true,
+      reason: validationError.message,
+    },
+    primary: {
+      selectedModel: primaryRouting.selectedModel,
+      selectedProvider: primaryRouting.selectedProvider,
+      reason: primaryRouting.reason,
+      estimatedCostClass: primaryRouting.estimatedCostClass,
+      failure: validationError.message,
+    },
+  };
+}
+
 function validateProviderResponse(response) {
   if (!isPlainObject(response)) {
     throw new Error("Provider response must be an object.");
@@ -209,13 +344,7 @@ function validateProviderResponse(response) {
 }
 
 function parseProposedOperations(providerResponse, taskPlan) {
-  let parsed;
-
-  try {
-    parsed = JSON.parse(providerResponse.content);
-  } catch {
-    throw new Error("Model response must be strict JSON.");
-  }
+  const parsed = parseSingleOperationsObject(providerResponse.content);
 
   if (!isPlainObject(parsed) || !Array.isArray(parsed.operations)) {
     throw new Error("Model response operations array is required.");
@@ -233,8 +362,102 @@ function parseProposedOperations(providerResponse, taskPlan) {
 
   const plannedFiles = plannedFileSet(taskPlan.expectedFiles);
   const approvedOperations = approvedOperationMap(taskPlan.plannedOperations);
+  const seenPaths = new Map();
 
-  return parsed.operations.map((operation) => normalizeOperation(operation, plannedFiles, approvedOperations));
+  return parsed.operations.map((operation) => {
+    const normalized = normalizeOperation(operation, plannedFiles, approvedOperations);
+    const previous = seenPaths.get(normalized.path);
+
+    if (previous) {
+      throw new Error(`Model response contains contradictory operations for ${normalized.path}.`);
+    }
+
+    seenPaths.set(normalized.path, normalized.type);
+    return normalized;
+  });
+}
+
+function parseSingleOperationsObject(content) {
+  const text = typeof content === "string" ? content.trim() : "";
+
+  if (text === "") {
+    throw new Error("Model response content is required.");
+  }
+
+  if (MARKDOWN_FENCE_PATTERN.test(text)) {
+    throw new Error("Model response must not use markdown-wrapped JSON.");
+  }
+
+  if (text[0] !== "{" || text[text.length - 1] !== "}") {
+    throw new Error("Model response must be exactly one JSON object.");
+  }
+
+  const objectEnd = topLevelObjectEndIndex(text);
+
+  if (objectEnd === -1) {
+    throw new Error("Model response JSON is malformed or incomplete.");
+  }
+
+  if (objectEnd !== text.length - 1) {
+    throw new Error("Model response must not contain multiple JSON objects.");
+  }
+
+  let parsed;
+
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("Model response JSON is malformed or incomplete.");
+  }
+
+  if (!isPlainObject(parsed)) {
+    throw new Error("Model response must be exactly one JSON object.");
+  }
+
+  return parsed;
+}
+
+function topLevelObjectEndIndex(text) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === "\"") {
+        inString = false;
+      }
+
+      continue;
+    }
+
+    if (character === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (character === "{") {
+      depth += 1;
+    } else if (character === "}") {
+      depth -= 1;
+
+      if (depth === 0) {
+        return index;
+      }
+
+      if (depth < 0) {
+        return index;
+      }
+    }
+  }
+
+  return -1;
 }
 
 function plannedFileSet(expectedFiles) {
@@ -265,7 +488,13 @@ function approvedOperationMap(plannedOperations) {
 
     const relativePath = normalizeRelativePath(operation.path);
     const key = `${operation.type}:${relativePath}`;
+    const pathKey = `path:${relativePath}`;
     approvedOperations.set(key, {
+      type: operation.type,
+      path: relativePath,
+      destructiveConfirmation: operation.destructiveConfirmation === true,
+    });
+    approvedOperations.set(pathKey, {
       type: operation.type,
       path: relativePath,
       destructiveConfirmation: operation.destructiveConfirmation === true,
@@ -295,9 +524,14 @@ function normalizeOperation(operation, plannedFiles, approvedOperations) {
   }
 
   const relativePath = normalizeRelativePath(operation.path);
+  const approvedPath = approvedOperations.get(`path:${relativePath}`);
 
   if (!plannedFiles.has(relativePath)) {
     throw new Error(`Proposed operation is outside planned boundaries: ${relativePath}`);
+  }
+
+  if (approvedPath && approvedPath.type !== operation.type) {
+    throw new Error(`Proposed operation contradicts approved plan for ${relativePath}.`);
   }
 
   if ((operation.type === "create" || operation.type === "update") && typeof operation.content !== "string") {
@@ -330,6 +564,69 @@ function normalizeOperation(operation, plannedFiles, approvedOperations) {
   };
 }
 
+function evaluateProviderCompatibility(provider) {
+  if (!isPlainObject(provider)) {
+    return unsupportedCompatibility("Selected model provider is unavailable.");
+  }
+
+  const capability = provider.structuredOutput;
+
+  if (isPlainObject(capability) && capability.mode === "native-json-schema") {
+    return {
+      status: "SUPPORTED",
+      mode: "native-json-schema",
+      provider: provider.name,
+      model: provider.model,
+      reason: capability.reason || "Provider supports native structured output.",
+    };
+  }
+
+  if (isPlainObject(capability) && capability.mode === "deterministic-json-prompt") {
+    return {
+      status: "SUPPORTED",
+      mode: "deterministic-json-prompt",
+      provider: provider.name,
+      model: provider.model,
+      reason: capability.reason || "Provider supports Levi's deterministic JSON prompt contract.",
+    };
+  }
+
+  if (isPlainObject(capability) && capability.mode === "unsupported") {
+    return unsupportedCompatibility(
+      capability.reason || "This model supports conversational coding but cannot satisfy Levi's structured execution contract.",
+      provider,
+    );
+  }
+
+  return unsupportedCompatibility(
+    "This model supports conversational coding but cannot satisfy Levi's structured execution contract.",
+    provider,
+  );
+}
+
+function unsupportedCompatibility(reason, provider) {
+  return {
+    status: "UNSUPPORTED",
+    mode: "unsupported",
+    provider: provider && provider.name ? provider.name : "UNKNOWN",
+    model: provider && provider.model ? provider.model : "UNKNOWN",
+    reason,
+  };
+}
+
+function structuredOutputRequestFor(compatibility) {
+  return {
+    mode: compatibility.mode,
+    schema: LEVI_OPERATION_SCHEMA,
+  };
+}
+
+function structuredOutputError(message) {
+  const error = new Error(message);
+  error.code = "CODE_GENERATION_STRUCTURED_OUTPUT_INVALID";
+  return error;
+}
+
 function normalizeRelativePath(filePath) {
   if (path.isAbsolute(filePath) || filePath.includes("\0")) {
     throw new Error("Proposed operation path must be relative.");
@@ -350,6 +647,7 @@ function sanitizeRouting(routing) {
     selectedProvider: routing.selectedProvider,
     reason: routing.reason,
     estimatedCostClass: routing.estimatedCostClass,
+    correctiveRetry: sanitizeValue(routing.correctiveRetry || null),
     primary: sanitizeValue(routing.primary || null),
     fallback: sanitizeValue(routing.fallback || null),
   };
@@ -387,4 +685,6 @@ function isPlainObject(value) {
 
 module.exports = {
   createCodeGenerationPipeline,
+  evaluateProviderCompatibility,
+  parseProposedOperations,
 };

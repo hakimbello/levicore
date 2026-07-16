@@ -23,6 +23,10 @@ function createOllamaProvider(options) {
     type: "local",
     model: options.model,
     reason: "Free local model configured through Ollama.",
+    structuredOutput: {
+      mode: "native-json-schema",
+      reason: "Ollama generate requests support a native JSON format field.",
+    },
     estimateCost() {
       return {
         amount: 0,
@@ -38,10 +42,15 @@ function createOllamaProvider(options) {
         prompt,
         stream: false,
       };
+      const nativeFormat = nativeStructuredFormat(request);
+
+      if (nativeFormat) {
+        payload.format = nativeFormat;
+      }
 
       try {
         const ollamaResponse = await postJson(endpoint, "/api/generate", payload, timeoutMs, providerName);
-        const response = normalizeResponse(ollamaResponse);
+        const response = normalizeResponse(ollamaResponse, providerName);
         validateProviderResponse(response);
         return response;
       } catch (error) {
@@ -58,6 +67,18 @@ function createOllamaProvider(options) {
       }
     },
   };
+}
+
+function nativeStructuredFormat(request) {
+  if (
+    request.structuredOutput &&
+    request.structuredOutput.mode === "native-json-schema" &&
+    isPlainObject(request.structuredOutput.schema)
+  ) {
+    return request.structuredOutput.schema;
+  }
+
+  return null;
 }
 
 function validateOptions(options) {
@@ -190,12 +211,12 @@ function postJson(endpoint, pathname, payload, timeoutMs, providerName) {
   });
 }
 
-function normalizeResponse(response) {
+function normalizeResponse(response, providerName) {
   if (!isPlainObject(response)) {
     throw createProviderError({
       code: "PROVIDER_INVALID_RESPONSE",
       message: "Ollama response must be an object.",
-      providerName: "ollama",
+      providerName,
       retryable: false,
     });
   }
@@ -204,7 +225,7 @@ function normalizeResponse(response) {
     throw createProviderError({
       code: "PROVIDER_INVALID_RESPONSE",
       message: "Ollama response content is missing.",
-      providerName: "ollama",
+      providerName,
       retryable: false,
     });
   }

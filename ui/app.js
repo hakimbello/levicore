@@ -19,6 +19,7 @@
     errorMessage: document.querySelector("[data-error-message]"),
     dashboard: document.getElementById("home"),
     navItems: Array.from(document.querySelectorAll(".nav-item")),
+    knowledgeNavSummary: document.querySelector(".nav-group summary"),
     topProjectName: document.getElementById("top-project-name"),
     projectOption: document.getElementById("project-option"),
     projectTitle: document.getElementById("project-title"),
@@ -241,7 +242,7 @@
     elements.createPlanButton.textContent = "Checking";
 
     try {
-      const response = await fetch("/api/intake", {
+      const response = await fetch("/api/request", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -254,7 +255,14 @@
         throw new Error("Levi could not check this request.");
       }
 
-      renderIntakeResult(await response.json());
+      const result = await response.json();
+      renderIntakeResult(result.intake || result);
+
+      if (result.plan) {
+        renderPlanApproval(result.plan);
+        await loadDashboard();
+        window.location.hash = "#plan-approval";
+      }
     } catch (error) {
       elements.intakeResult.className = "result-panel blocked";
       elements.intakeResult.textContent = safeUiText(error.message);
@@ -293,8 +301,13 @@
         throw new Error("Levi could not record approval.");
       }
 
-      renderPlanApproval(await response.json());
+      const plan = await response.json();
+      renderPlanApproval(plan);
       await loadDashboard();
+
+      if (plan.approval && plan.approval.status === "APPROVED") {
+        window.location.hash = "#execution-progress";
+      }
     } catch (error) {
       elements.plan.submitResult.hidden = false;
       elements.plan.submitResult.className = "result-panel blocked";
@@ -405,7 +418,12 @@
 
     const action = state.execution && state.execution.actions && state.execution.actions.primary;
 
-    if (!action || !action.href) {
+    if (!action) {
+      return;
+    }
+
+    if (action.action === "execute") {
+      startApprovedExecution();
       return;
     }
 
@@ -415,6 +433,29 @@
     }
 
     window.location.hash = action.href;
+  }
+
+  async function startApprovedExecution() {
+    elements.execution.primaryAction.disabled = true;
+    elements.execution.primaryAction.textContent = "Starting";
+
+    try {
+      const response = await fetch("/api/execution/start", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Levi could not start execution.");
+      }
+
+      renderExecutionCompletion(await response.json());
+      await loadDashboard();
+    } catch (error) {
+      showExecutionError(error.message);
+    }
   }
 
   function handleProjectHealthPrimaryAction(event) {
@@ -537,13 +578,16 @@
   }
 
   function updateNavState(hash) {
+    const knowledgeRoute = isKnowledgeHash(hash);
     const activeHref = state.route === "plan" || state.route === "execution"
       ? "#new-task"
       : state.route === "health"
         ? "#health"
         : state.route === "history"
           ? "#history"
-          : hash;
+          : knowledgeRoute
+            ? "#knowledge"
+            : hash;
 
     elements.navItems.forEach((item) => {
       const active = item.getAttribute("href") === activeHref || (!activeHref || activeHref === "#home") && item.getAttribute("href") === "#home";
@@ -555,6 +599,16 @@
         item.removeAttribute("aria-current");
       }
     });
+
+    if (elements.knowledgeNavSummary) {
+      elements.knowledgeNavSummary.classList.toggle("active", knowledgeRoute);
+
+      if (knowledgeRoute) {
+        elements.knowledgeNavSummary.setAttribute("aria-current", "page");
+      } else {
+        elements.knowledgeNavSummary.removeAttribute("aria-current");
+      }
+    }
   }
 
   function scrollHomeTarget(hash) {
@@ -562,11 +616,23 @@
       return;
     }
 
+    if (isKnowledgeHash(hash)) {
+      const knowledgeDetails = document.getElementById("knowledge-project");
+
+      if (knowledgeDetails) {
+        knowledgeDetails.open = true;
+      }
+    }
+
     const target = document.querySelector(hash);
 
     if (target) {
       window.setTimeout(() => target.scrollIntoView({ block: "start" }), 0);
     }
+  }
+
+  function isKnowledgeHash(hash) {
+    return ["#knowledge-project", "#knowledge-decisions", "#knowledge-search"].includes(hash);
   }
 
   function renderDashboard(dashboard) {

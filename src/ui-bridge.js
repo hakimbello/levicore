@@ -6,7 +6,14 @@ const { summarizeProject } = require("./project-summary");
 const { collectProjectHealthSignals, recommendProjectHealth, summarizeProjectHealth } = require("./project-health");
 const { createTaskIntake } = require("./task-intake");
 const { createApprovalDecision, createApprovalSummary } = require("./approval-summary");
-const { approvePlan, inspectLatestRestorePoint, inspectLocalReadiness, restoreProject } = require("./cli-workflow");
+const {
+  approvePlan,
+  executeApprovedPlan,
+  inspectLatestRestorePoint,
+  inspectLocalReadiness,
+  requestTask,
+  restoreProject,
+} = require("./cli-workflow");
 
 const UNKNOWN = "UNKNOWN";
 const POST_MVP_REQUIREMENT_ID = "POST_MVP until approved by owner";
@@ -94,6 +101,74 @@ function createHomeIntakePreview(repositoryPath, taskText) {
     ambiguityReasons: result.ambiguityReasons,
     boundaries: result.boundaries,
   };
+}
+
+function submitHomeRequest(repositoryPath, taskText) {
+  if (!repositoryPath) {
+    return {
+      status: "ERROR",
+      reason: "Select a project before creating a plan.",
+      intake: {
+        status: "ERROR",
+        reason: "Select a project before creating a plan.",
+      },
+      plan: null,
+    };
+  }
+
+  const intake = intakeRepository(repositoryPath);
+
+  if (!intake.ok) {
+    return {
+      status: "ERROR",
+      reason: intake.error,
+      intake: {
+        status: "ERROR",
+        reason: intake.error,
+      },
+      plan: null,
+    };
+  }
+
+  const preview = createHomeIntakePreview(intake.path, taskText);
+
+  if (preview.status !== "READY_FOR_PLANNING") {
+    return {
+      status: preview.status,
+      reason: preview.reason,
+      intake: preview,
+      plan: null,
+    };
+  }
+
+  try {
+    const result = requestTask(intake.path, preview.originalRequest, []);
+
+    if (result.exitCode !== 0) {
+      const payload = result.payload || {};
+
+      return {
+        status: presentationText(payload.status || "ACTION_REQUIRED"),
+        reason: presentationText(payload.reason || payload.scope && payload.scope.reason || preview.reason),
+        intake: payload.intake || preview,
+        plan: null,
+      };
+    }
+
+    return {
+      status: "PLAN_READY",
+      reason: "Plan is ready for review.",
+      intake: preview,
+      plan: createPlanApprovalView(intake.path),
+    };
+  } catch (error) {
+    return {
+      status: "ERROR",
+      reason: error.message,
+      intake: preview,
+      plan: null,
+    };
+  }
 }
 
 function createPlanApprovalView(repositoryPath, options = {}) {
@@ -204,6 +279,25 @@ function createExecutionCompletionView(repositoryPath) {
   try {
     const state = loadRuntimeState(intake.path);
     return executionCompletionViewFor(intake.path, state);
+  } catch (error) {
+    return executionCompletionErrorView(intake.path, error.message);
+  }
+}
+
+async function startApprovedExecution(repositoryPath) {
+  if (!repositoryPath) {
+    return emptyExecutionCompletionView(null, "Select a project before starting execution.");
+  }
+
+  const intake = intakeRepository(repositoryPath);
+
+  if (!intake.ok) {
+    return executionCompletionErrorView(repositoryPath, intake.error);
+  }
+
+  try {
+    await executeApprovedPlan(intake.path);
+    return createExecutionCompletionView(intake.path);
   } catch (error) {
     return executionCompletionErrorView(intake.path, error.message);
   }
@@ -2227,7 +2321,7 @@ function diagnosticsSettingsGroup(input) {
     title: "Diagnostics",
     status: diagnosticsStatusFor(input.provider, input.cost, healthStatus),
     label: "Sanitized",
-    summary: "Copyable diagnostics summarize readiness without secrets, raw JSON, or internal records.",
+    summary: "Copyable diagnostics summarize readiness without secrets or internal records.",
     items: [
       settingsItem("Readiness", presentationText(input.readinessReport && input.readinessReport.overallReadiness), "Readiness evidence comes from Levi Core.", "readonly"),
       settingsItem("Provider health", input.provider.label, input.provider.detail, "readonly"),
@@ -2238,7 +2332,7 @@ function diagnosticsSettingsGroup(input) {
       settingsItem("Repository path", path.resolve(input.repositoryPath), "Shown only in Advanced Settings diagnostics.", "readonly"),
     ],
     details: [
-      "The diagnostic summary excludes secret values, raw state JSON, request text, change-set schemas, and internal records.",
+      "The diagnostic summary excludes secret values, unfiltered state, request text, change-set schemas, and internal records.",
     ],
   });
 
@@ -4231,6 +4325,9 @@ function executionActionsFor(status, hasChanges, restoreAvailable) {
   } else if (status === "RUNNING") {
     primary.label = "Refresh";
     primary.href = "#execution-progress";
+  } else if (status === "WAITING_TO_START") {
+    primary.label = "Start Execution";
+    primary.action = "execute";
   }
 
   return {
@@ -4413,7 +4510,9 @@ module.exports = {
   createProjectHealthView,
   createPlanApprovalView,
   createRestoreHistoryView,
+  startApprovedExecution,
   submitAdvancedSettings,
+  submitHomeRequest,
   submitPlanApproval,
   submitRestoreConfirmation,
 };

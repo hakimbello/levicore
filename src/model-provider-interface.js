@@ -14,6 +14,11 @@ const HEALTH_EVIDENCE_TYPES = new Set([
   "CONFIGURATION",
   "UNKNOWN",
 ]);
+const STRUCTURED_OUTPUT_CAPABILITIES = new Set([
+  "native-json-schema",
+  "deterministic-json-prompt",
+  "unsupported",
+]);
 
 function validateProvider(provider) {
   if (!isPlainObject(provider)) {
@@ -33,6 +38,10 @@ function validateProvider(provider) {
 
   if (provider.checkHealth !== undefined) {
     requireFunction(provider.checkHealth, "provider checkHealth");
+  }
+
+  if (provider.structuredOutput !== undefined) {
+    validateStructuredOutputCapability(provider.structuredOutput);
   }
 }
 
@@ -54,6 +63,10 @@ function validateProviderRequest(request) {
 
   if (request.preferredProvider !== undefined) {
     requireString(request.preferredProvider, "preferred provider");
+  }
+
+  if (request.structuredOutput !== undefined) {
+    validateStructuredOutputRequest(request.structuredOutput);
   }
 }
 
@@ -120,6 +133,34 @@ function createProviderError(options) {
   return error;
 }
 
+function validateStructuredOutputCapability(capability) {
+  if (!isPlainObject(capability)) {
+    throw new Error("Model provider structuredOutput capability must be an object.");
+  }
+
+  if (!STRUCTURED_OUTPUT_CAPABILITIES.has(capability.mode)) {
+    throw new Error("Model provider structuredOutput capability mode is invalid.");
+  }
+
+  if (capability.reason !== undefined) {
+    requireString(capability.reason, "structuredOutput reason");
+  }
+}
+
+function validateStructuredOutputRequest(structuredOutput) {
+  if (!isPlainObject(structuredOutput)) {
+    throw new Error("Model provider structuredOutput request must be an object.");
+  }
+
+  if (structuredOutput.schema !== undefined && !isPlainObject(structuredOutput.schema)) {
+    throw new Error("Model provider structuredOutput schema must be an object.");
+  }
+
+  if (structuredOutput.mode !== undefined && !STRUCTURED_OUTPUT_CAPABILITIES.has(structuredOutput.mode)) {
+    throw new Error("Model provider structuredOutput request mode is invalid.");
+  }
+}
+
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -141,6 +182,7 @@ module.exports = {
   HEALTH_STATUSES,
   PROVIDER_AVAILABILITY_STATES,
   PROVIDER_TYPES,
+  STRUCTURED_OUTPUT_CAPABILITIES,
   createProviderError,
   isControlledProvider,
   validateProvider,
@@ -148,4 +190,6 @@ module.exports = {
   validateProviderHealthEvidence,
   validateProviderRequest,
   validateProviderResponse,
+  validateStructuredOutputCapability,
+  validateStructuredOutputRequest,
 };

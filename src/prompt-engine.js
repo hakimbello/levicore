@@ -25,6 +25,25 @@ function buildPrompt(input) {
   };
 }
 
+function buildCorrectiveStructuredOutputPrompt(input) {
+  validateCorrectiveInput(input);
+
+  const sections = [
+    section("Validation Error", [input.validationError]),
+    section("Required Schema", [stableSerialize(sanitizeValue(input.schema))]),
+    section("Required Output", [
+      "Return exactly one JSON object.",
+      "Do not include prose, markdown, code fences, comments, or extra objects.",
+      "Do not guess missing fields.",
+    ]),
+  ];
+
+  return {
+    prompt: renderPrompt(sections),
+    sections,
+  };
+}
+
 function validateInput(input) {
   if (!isPlainObject(input)) {
     throw new Error("Prompt engine input is required.");
@@ -41,6 +60,20 @@ function validateInput(input) {
   validateOptionalArray(input.approvedRequirements, "approvedRequirements");
   validateOptionalArray(input.repositoryFacts, "repositoryFacts");
   validateOptionalArray(input.projectMemory, "projectMemory");
+}
+
+function validateCorrectiveInput(input) {
+  if (!isPlainObject(input)) {
+    throw new Error("Prompt engine corrective input is required.");
+  }
+
+  if (typeof input.validationError !== "string" || input.validationError.trim() === "") {
+    throw new Error("Prompt engine corrective validationError is required.");
+  }
+
+  if (!isPlainObject(input.schema)) {
+    throw new Error("Prompt engine corrective schema is required.");
+  }
 }
 
 function validateOptionalArray(value, fieldName) {
@@ -212,5 +245,6 @@ function isPlainObject(value) {
 }
 
 module.exports = {
+  buildCorrectiveStructuredOutputPrompt,
   buildPrompt,
 };

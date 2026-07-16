@@ -10,7 +10,9 @@ const {
   createProjectHealthView,
   createPlanApprovalView,
   createRestoreHistoryView,
+  startApprovedExecution,
   submitAdvancedSettings,
+  submitHomeRequest,
   submitPlanApproval,
   submitRestoreConfirmation,
 } = require("./ui-bridge");
@@ -42,6 +44,11 @@ function createUiServer(options = {}) {
         return sendJson(response, 200, createHomeIntakePreview(repositoryPath, body.requestText));
       }
 
+      if (request.method === "POST" && requestUrl.pathname === "/api/request") {
+        const body = await readJsonBody(request);
+        return sendJson(response, 200, submitHomeRequest(repositoryPath, body.requestText));
+      }
+
       if (request.method === "GET" && requestUrl.pathname === "/api/plan") {
         return sendJson(response, 200, createPlanApprovalView(repositoryPath));
       }
@@ -53,6 +60,10 @@ function createUiServer(options = {}) {
 
       if (request.method === "GET" && requestUrl.pathname === "/api/execution") {
         return sendJson(response, 200, createExecutionCompletionView(repositoryPath));
+      }
+
+      if (request.method === "POST" && requestUrl.pathname === "/api/execution/start") {
+        return sendJson(response, 200, await startApprovedExecution(repositoryPath));
       }
 
       if (request.method === "GET" && requestUrl.pathname === "/api/health") {

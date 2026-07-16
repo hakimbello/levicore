@@ -23,6 +23,10 @@ function createRemoteProvider(options) {
     type: "remote",
     model: options.model,
     reason: options.reason || "Remote model provider configured through Levi provider interface.",
+    structuredOutput: {
+      mode: "deterministic-json-prompt",
+      reason: "Remote provider structured output is requested through Levi's deterministic prompt contract.",
+    },
     estimateCost() {
       return {
         amount: estimatedCost,

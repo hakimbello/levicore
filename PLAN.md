@@ -1659,6 +1659,83 @@ Acceptance criteria:
 - UI does not expose prompt-engineering controls, patch schemas, or primary-workflow provider configuration.
 - Existing Release 0.3 CLI functionality does not regress.
 
+Certification result:
+
+- BLOCKED
+
+Blocker:
+
+- Public UI workflow reached approved execution, but the selected local provider did not return Levi-compatible structured operations, so no real file-changing task, completion report, verified memory, history, or exact restore could be certified.
+
+Status: BLOCKED
+
+### M32-FIX-001 Local Provider Structured Output Reliability
+
+Task ID: M32-FIX-001
+
+Requirement ID: POST_MVP until approved by owner
+
+Purpose: Make approved local providers return Levi-compatible structured operations without weakening Core validation or allowing malformed model output to reach Safe Patch.
+
+Expected files:
+
+- src/providers/ollama-provider.js
+- src/providers/remote-provider.js
+- src/model-provider-interface.js
+- src/model-gateway.js
+- src/prompt-engine.js
+- src/code-generation-pipeline.js
+- src/safe-patch.js
+
+Acceptance criteria:
+
+- Preserve strict Core operation validation.
+- Preserve untrusted-provider boundaries.
+- Do not accept prose as executable operations.
+- Do not silently guess missing operations.
+- Support Ollama local provider execution.
+- Use provider-native structured-output controls when supported.
+- Use deterministic extraction only when one unambiguous JSON object exists.
+- Reject multiple, incomplete, contradictory, or malformed payloads.
+- Return a short actionable error when the selected model cannot produce the required structure.
+- Permit one bounded corrective retry only if approved by existing iteration and cost limits.
+- Corrective retry must include the validation failure and required schema without exposing hidden prompts to the UI.
+- No direct file writes.
+- No Safe Patch bypass.
+- No approval bypass.
+- No cost bypass.
+- No hidden provider.
+- No fabricated operations.
+- Test explicit test providers only under test mode.
+- Validate qwen2.5-coder:7b or mark model compatibility honestly if it remains unable to satisfy the contract.
+- Existing remote providers and gateway behavior must not regress.
+
+Status: NOT STARTED
+
+### M32-REAUDIT-001 UI End-to-End Certification Reaudit
+
+Task ID: M32-REAUDIT-001
+
+Requirement ID: POST_MVP until approved by owner
+
+Purpose: Repeat the blocked M32-010 workflow after M32-FIX-001.
+
+Expected files:
+
+- No implementation files expected unless a reaudit finding is approved as a separate task.
+
+Acceptance criteria:
+
+- Complete the public UI workflow through a real file-changing task.
+- Build a responsive three-page business website.
+- Confirm completion reporting.
+- Confirm verified memory.
+- Confirm history.
+- Confirm exact restore.
+- Confirm provider consistency.
+- Confirm malformed output still blocks safely.
+- Final verdict must be M32_UI_CERTIFIED or BLOCKED.
+
 Status: NOT STARTED
 
 ### M32-011 Release 0.4A Certification
