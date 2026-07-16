@@ -632,6 +632,9 @@
       ...visibleItems.map((item) => {
         const article = document.createElement("article");
         article.className = "status-chip";
+        if (textValue(item.label).toLowerCase() === "readiness") {
+          article.classList.add("readiness-chip");
+        }
 
         const label = document.createElement("span");
         label.className = "status-label";
@@ -2286,7 +2289,7 @@
       '<div class="settings-content" data-settings-content hidden>',
       '<section class="project-strip plan-project-strip">',
       "<div>",
-      '<p class="eyebrow">Selected project</p>',
+      '<p class="eyebrow">Project</p>',
       '<h2 data-settings-project-name>Current project</h2>',
       "</div>",
       '<span class="status-pill unknown" data-settings-status>Unknown</span>',
@@ -2371,7 +2374,7 @@
       '<div class="history-content" data-history-content hidden>',
       '<section class="project-strip plan-project-strip">',
       "<div>",
-      '<p class="eyebrow">Selected project</p>',
+      '<p class="eyebrow">Project</p>',
       '<h2 data-history-project-name>Current project</h2>',
       '<p class="project-context" data-history-last-success>No successful task is recorded yet.</p>',
       "</div>",
@@ -2473,7 +2476,7 @@
       '<div class="health-content" data-health-content hidden>',
       '<section class="project-strip plan-project-strip">',
       "<div>",
-      '<p class="eyebrow">Selected project</p>',
+      '<p class="eyebrow">Project</p>',
       '<h2 data-health-project-name>Current project</h2>',
       "</div>",
       '<span class="status-pill unknown" data-health-status>Unknown</span>',
@@ -2562,7 +2565,7 @@
       '<div class="execution-content" data-execution-content hidden>',
       '<section class="project-strip plan-project-strip">',
       "<div>",
-      '<p class="eyebrow">Selected project</p>',
+      '<p class="eyebrow">Project</p>',
       '<h2 data-execution-project-name>Current project</h2>',
       "</div>",
       '<span class="status-pill unknown" data-execution-status>Unknown</span>',
@@ -2699,7 +2702,7 @@
       '<div class="plan-content" data-plan-content hidden>',
       '<section class="project-strip plan-project-strip">',
       "<div>",
-      '<p class="eyebrow">Selected project</p>',
+      '<p class="eyebrow">Project</p>',
       '<h2 data-plan-project-name>Current project</h2>',
       "</div>",
       '<span class="status-pill unknown" data-plan-approval-status>Unknown</span>',

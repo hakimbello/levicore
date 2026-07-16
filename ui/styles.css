@@ -57,6 +57,21 @@ html {
   scroll-behavior: smooth;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 body {
   overflow-x: hidden;
   min-height: 100vh;
@@ -258,6 +273,9 @@ summary:focus-visible,
 }
 
 .nav-group a {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
   margin: 3px 0 0 14px;
   padding: 8px 10px;
   font-size: 0.92rem;
@@ -328,7 +346,7 @@ summary:focus-visible,
 }
 
 .intake-heading h2 {
-  max-width: 12ch;
+  max-width: 20ch;
   font-size: 3rem;
   font-weight: 800;
   overflow-wrap: anywhere;
@@ -430,9 +448,9 @@ textarea:disabled {
 }
 
 .inline-action {
-  min-height: 32px;
+  min-height: 40px;
   margin-left: var(--gap-sm);
-  padding: 5px 9px;
+  padding: 6px 10px;
   font-size: 0.86rem;
 }
 
@@ -450,6 +468,15 @@ textarea:disabled {
   border-radius: var(--radius);
   background: var(--surface);
   padding: 16px;
+}
+
+.readiness-chip {
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  padding: 18px;
+}
+
+.readiness-chip .status-value {
+  font-size: 1.16rem;
 }
 
 .status-value {
@@ -663,7 +690,7 @@ textarea:disabled {
 }
 
 .approval-panel h2 {
-  max-width: 18ch;
+  max-width: min(100%, 24ch);
   margin: 0;
   font-size: 2.65rem;
   font-weight: 800;
@@ -673,19 +700,19 @@ textarea:disabled {
 }
 
 .execution-hero h2 {
-  max-width: 16ch;
+  max-width: min(100%, 24ch);
 }
 
 .health-hero h2 {
-  max-width: 15ch;
+  max-width: min(100%, 24ch);
 }
 
 .history-hero h2 {
-  max-width: 15ch;
+  max-width: min(100%, 24ch);
 }
 
 .settings-hero h2 {
-  max-width: 15ch;
+  max-width: min(100%, 24ch);
 }
 
 .health-readiness {
@@ -992,8 +1019,12 @@ textarea:disabled {
 }
 
 .health-details summary {
+  display: inline-flex;
+  align-items: center;
   width: max-content;
   max-width: 100%;
+  min-height: 40px;
+  padding: 6px 0;
   cursor: pointer;
   color: var(--text);
   font-weight: 780;
