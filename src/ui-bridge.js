@@ -104,8 +104,9 @@ function noProjectView() {
     recentActivity: [],
     emptyStates: ["No project selected.", "No task started."],
     statusSummary: [
-      statusItem("Project", "Unknown", "No project selected."),
       statusItem("Readiness", "Unknown", "Project readiness is unavailable until a project is selected."),
+      statusItem("Cost", "Unknown", "Cost evidence is unavailable until Levi can create a plan."),
+      statusItem("Restore", "Unknown", "Restore evidence is unavailable until work is planned and executed."),
     ],
     controls: {
       canCreateTask: false,
@@ -332,13 +333,10 @@ function emptyStatesFor(state, recommendationReport) {
 }
 
 function statusSummaryFor(healthSummary, state) {
-  const task = currentTaskFor(state);
-
   return [
-    statusItem("Project", "Ready", "Project is selected."),
     statusItem("Readiness", plainStatus(healthSummary.overallStatus), healthSummary.summary),
-    statusItem("Ready to work", healthSummary.readyToWork ? "Ready" : "Needs attention", readyDetail(healthSummary)),
-    statusItem("Current task", plainStatus(task.status), task.detail),
+    costStatusFor(state),
+    restoreStatusFor(state),
   ];
 }
 
@@ -356,6 +354,48 @@ function readyDetail(healthSummary) {
   }
 
   return "Review Project Health before starting work.";
+}
+
+function costStatusFor(state) {
+  const costDecision = state.costDecision || state.execution && state.execution.costDecision || state.plan && state.plan.budgetState;
+
+  if (!isPlainObject(costDecision)) {
+    return statusItem("Cost", "Unknown", "Cost evidence appears after Levi creates a plan.");
+  }
+
+  const status = stringOrUnknown(costDecision.status).toUpperCase();
+  const costClass = stringOrUnknown(costDecision.costClass);
+  const detail = stringOrUnknown(costDecision.reason || costDecision.recommendedNextStep);
+
+  if (status === "ALLOWED") {
+    return statusItem("Cost", costClass === UNKNOWN ? "Ready" : titleCase(costClass), detail);
+  }
+
+  if (status === "BLOCKED") {
+    return statusItem("Cost", "Blocked", detail);
+  }
+
+  return statusItem("Cost", "Needs attention", detail);
+}
+
+function restoreStatusFor(state) {
+  const restorePoint = state.restorePoint || state.patch && state.patch.restorePoint;
+
+  if (!isPlainObject(restorePoint)) {
+    return statusItem("Restore", "Unknown", "No restore point exists for the current task yet.");
+  }
+
+  const status = stringOrUnknown(restorePoint.status).toUpperCase();
+
+  if (status === "CREATED" || status === "AVAILABLE") {
+    return statusItem("Restore", "Ready", "A Levi restore point is available.");
+  }
+
+  if (status === "FAILED" || status === "ERROR" || status === "BLOCKED") {
+    return statusItem("Restore", "Blocked", "Restore point state needs attention.");
+  }
+
+  return statusItem("Restore", "Needs attention", "Restore point state needs review.");
 }
 
 function plainStatus(status) {
@@ -413,11 +453,48 @@ function projectIdFor(repositoryPath) {
 }
 
 function listOrUnknown(value) {
-  if (!Array.isArray(value) || value.length === 0) {
+  const values = collectionTextValues(value);
+
+  if (values.length === 0) {
     return [UNKNOWN];
   }
 
-  return value.map(stringOrUnknown).sort();
+  return values.sort();
+}
+
+function collectionTextValues(value) {
+  if (value === undefined || value === null || value === UNKNOWN) {
+    return [];
+  }
+
+  const values = Array.isArray(value) ? value : [value];
+
+  return Array.from(new Set(values.flatMap(textValuesFor))).filter((entry) => entry !== UNKNOWN);
+}
+
+function textValuesFor(value) {
+  if (value === undefined || value === null) {
+    return [];
+  }
+
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    const text = stringOrUnknown(value);
+    return text === UNKNOWN ? [] : [text];
+  }
+
+  if (!isPlainObject(value)) {
+    return [];
+  }
+
+  for (const key of ["name", "label", "path", "command", "source", "signal", "value"]) {
+    const text = stringOrUnknown(value[key]);
+
+    if (text !== UNKNOWN) {
+      return [text];
+    }
+  }
+
+  return [];
 }
 
 function stringOrUnknown(value) {
@@ -425,8 +502,26 @@ function stringOrUnknown(value) {
     return UNKNOWN;
   }
 
+  if (typeof value === "object") {
+    return UNKNOWN;
+  }
+
   const text = String(value).trim();
   return text === "" ? UNKNOWN : text;
+}
+
+function titleCase(value) {
+  const text = stringOrUnknown(value);
+
+  if (text === UNKNOWN) {
+    return UNKNOWN;
+  }
+
+  return text.toLowerCase().replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 module.exports = {

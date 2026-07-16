@@ -12,26 +12,33 @@
       <header class="topbar" role="banner">
         <div class="brand-block">
           <p class="eyebrow">Levi</p>
-          <h1>Daily project work</h1>
+          <h1>Home</h1>
         </div>
-        <label class="project-picker">
-          <span>Project</span>
-          <select id="project-selector" aria-describedby="project-help">
-            <option value="current">Current project</option>
-          </select>
-        </label>
+        <div class="top-project">
+          <span>Selected project</span>
+          <strong id="top-project-name">Checking project</strong>
+          <label class="project-picker">
+            <span class="sr-only">Project</span>
+            <select id="project-selector" aria-describedby="project-help">
+              <option id="project-option" value="current">Current project</option>
+            </select>
+          </label>
+        </div>
         <p id="project-help" class="sr-only">The current release uses the repository passed to the Levi UI server.</p>
       </header>
 
       <div class="workspace">
         <nav class="sidebar" aria-label="Primary navigation">
-          <a class="nav-item active" href="#dashboard" aria-current="page">Dashboard</a>
+          <a class="nav-item active" href="#home" aria-current="page">Home</a>
           <a class="nav-item" href="#new-task">Tasks</a>
-          <a class="nav-item muted" href="#knowledge" aria-disabled="true">Project Knowledge</a>
-          <a class="nav-item muted" href="#decisions" aria-disabled="true">Decisions</a>
-          <a class="nav-item muted" href="#search" aria-disabled="true">Structural Search</a>
-          <a class="nav-item" href="#health">Project Health</a>
-          <a class="nav-item muted" href="#restore" aria-disabled="true">Restore Points</a>
+          <details class="nav-group">
+            <summary>Knowledge</summary>
+            <a href="#knowledge-project">Project Knowledge</a>
+            <a href="#knowledge-decisions">Decisions</a>
+            <a href="#knowledge-search">Structural Search</a>
+          </details>
+          <a class="nav-item" href="#health">Health</a>
+          <a class="nav-item" href="#history">History</a>
         </nav>
 
         <main id="main" class="main-content" tabindex="-1">
@@ -47,66 +54,80 @@
             <p data-error-message>Levi could not read the selected project.</p>
           </section>
 
-          <section id="dashboard" class="dashboard" hidden>
-            <div class="hero-panel">
+          <section id="home" class="dashboard" hidden>
+            <section class="project-strip" aria-labelledby="project-title">
               <div>
-                <p class="eyebrow">Dashboard</p>
+                <p class="eyebrow">Selected project</p>
                 <h2 id="project-title">Current project</h2>
-                <p id="project-root" class="path-text">UNKNOWN</p>
+                <p id="project-context" class="project-context">Checking readiness.</p>
               </div>
-              <button id="new-task-button" class="primary-action" type="button">New Task</button>
-            </div>
+            </section>
 
-            <section class="status-grid" aria-label="Status summary" data-status-summary></section>
+            <section id="new-task" class="intake-panel" aria-labelledby="task-heading">
+              <div class="intake-heading">
+                <p class="eyebrow">Task intake</p>
+                <h2 id="task-heading">What would you like to build?</h2>
+              </div>
+              <form id="task-form">
+                <label for="task-input">Request</label>
+                <textarea
+                  id="task-input"
+                  name="requestText"
+                  rows="8"
+                  placeholder="Describe the feature, fix, or update you want Levi to plan."
+                  aria-describedby="task-help"
+                  required
+                ></textarea>
+                <div class="composer-actions">
+                  <p id="task-help" class="form-note">Levi preserves your original request for intake review.</p>
+                  <button id="create-plan-button" class="primary-action" type="submit">Create Plan</button>
+                </div>
+              </form>
+              <div id="intake-result" class="result-panel" aria-live="polite" hidden></div>
+            </section>
 
-            <div class="content-grid">
-              <section id="new-task" class="card intake-card" aria-labelledby="task-heading">
-                <div class="section-heading">
-                  <p class="eyebrow">Tasks</p>
-                  <h2 id="task-heading">What should Levi help with?</h2>
-                </div>
-                <form id="task-form">
-                  <label for="task-input">Plain-language request</label>
-                  <textarea id="task-input" name="requestText" rows="5" placeholder="Build a responsive small-business website." required></textarea>
-                  <div class="form-row">
-                    <button class="secondary-action" type="submit">Check request</button>
-                    <p class="form-note">Levi preserves the exact request and checks it before planning.</p>
-                  </div>
-                </form>
-                <div id="intake-result" class="result-panel" aria-live="polite" hidden></div>
-              </section>
+            <section class="status-row" aria-label="Project readiness summary" data-status-summary></section>
 
-              <aside id="health" class="card health-card" aria-labelledby="health-heading">
-                <div class="section-heading">
-                  <p class="eyebrow">Project Health</p>
-                  <h2 id="health-heading">Readiness</h2>
-                </div>
-                <div class="health-summary">
-                  <span id="health-status" class="status-pill unknown">Unknown</span>
-                  <p id="health-text">Project Health evidence is UNKNOWN.</p>
-                </div>
-                <ul id="health-issues" class="plain-list"></ul>
-              </aside>
+            <section id="history" class="section-panel" aria-labelledby="activity-heading">
+              <div class="section-heading">
+                <p class="eyebrow">Recent work</p>
+                <h2 id="activity-heading">Recent work</h2>
+              </div>
+              <div id="activity-empty" class="empty-box" hidden>
+                <p>No task started.</p>
+              </div>
+              <ul id="activity-list" class="activity-list"></ul>
+            </section>
 
-              <section class="card" aria-labelledby="repository-heading">
-                <div class="section-heading">
-                  <p class="eyebrow">Project</p>
-                  <h2 id="repository-heading">Repository evidence</h2>
-                </div>
-                <dl class="details-grid" data-repository-details></dl>
-              </section>
+            <details id="health" class="disclosure-panel">
+              <summary>
+                <span>
+                  <span class="eyebrow">Health</span>
+                  <strong>Project Health</strong>
+                </span>
+                <span id="health-status" class="status-pill unknown">Unknown</span>
+              </summary>
+              <p id="health-text">Project Health evidence is UNKNOWN.</p>
+              <ul id="health-issues" class="plain-list"></ul>
+            </details>
 
-              <section class="card" aria-labelledby="activity-heading">
-                <div class="section-heading">
-                  <p class="eyebrow">Recent</p>
-                  <h2 id="activity-heading">Activity</h2>
-                </div>
-                <div id="activity-empty" class="empty-box" hidden>
-                  <p>No task started.</p>
-                </div>
-                <ul id="activity-list" class="activity-list"></ul>
-              </section>
-            </div>
+            <details id="knowledge-project" class="disclosure-panel">
+              <summary>
+                <span>
+                  <span class="eyebrow">Knowledge</span>
+                  <strong>Project details</strong>
+                </span>
+              </summary>
+              <div class="knowledge-links" aria-label="Knowledge sections">
+                <a id="knowledge-decisions" href="#knowledge-project">Decisions</a>
+                <a id="knowledge-search" href="#knowledge-project">Structural Search</a>
+              </div>
+              <dl class="details-grid">
+                <dt>Repository path</dt>
+                <dd id="repository-root-value">UNKNOWN</dd>
+              </dl>
+              <dl id="repository-details" class="details-grid" data-repository-details></dl>
+            </details>
           </section>
         </main>
       </div>
