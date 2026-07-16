@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Levi</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+    <div class="app-shell" data-app>
+      <header class="topbar" role="banner">
+        <div class="brand-block">
+          <p class="eyebrow">Levi</p>
+          <h1>Daily project work</h1>
+        </div>
+        <label class="project-picker">
+          <span>Project</span>
+          <select id="project-selector" aria-describedby="project-help">
+            <option value="current">Current project</option>
+          </select>
+        </label>
+        <p id="project-help" class="sr-only">The current release uses the repository passed to the Levi UI server.</p>
+      </header>
+
+      <div class="workspace">
+        <nav class="sidebar" aria-label="Primary navigation">
+          <a class="nav-item active" href="#dashboard" aria-current="page">Dashboard</a>
+          <a class="nav-item" href="#new-task">Tasks</a>
+          <a class="nav-item muted" href="#knowledge" aria-disabled="true">Project Knowledge</a>
+          <a class="nav-item muted" href="#decisions" aria-disabled="true">Decisions</a>
+          <a class="nav-item muted" href="#search" aria-disabled="true">Structural Search</a>
+          <a class="nav-item" href="#health">Project Health</a>
+          <a class="nav-item muted" href="#restore" aria-disabled="true">Restore Points</a>
+        </nav>
+
+        <main id="main" class="main-content" tabindex="-1">
+          <section id="loading-state" class="state-panel" aria-live="polite">
+            <p class="state-kicker">Checking project</p>
+            <h2>Preparing your workspace</h2>
+            <p>Levi is reading existing project information.</p>
+          </section>
+
+          <section id="error-state" class="state-panel danger" hidden>
+            <p class="state-kicker">Blocked</p>
+            <h2>Project needs attention</h2>
+            <p data-error-message>Levi could not read the selected project.</p>
+          </section>
+
+          <section id="dashboard" class="dashboard" hidden>
+            <div class="hero-panel">
+              <div>
+                <p class="eyebrow">Dashboard</p>
+                <h2 id="project-title">Current project</h2>
+                <p id="project-root" class="path-text">UNKNOWN</p>
+              </div>
+              <button id="new-task-button" class="primary-action" type="button">New Task</button>
+            </div>
+
+            <section class="status-grid" aria-label="Status summary" data-status-summary></section>
+
+            <div class="content-grid">
+              <section id="new-task" class="card intake-card" aria-labelledby="task-heading">
+                <div class="section-heading">
+                  <p class="eyebrow">Tasks</p>
+                  <h2 id="task-heading">What should Levi help with?</h2>
+                </div>
+                <form id="task-form">
+                  <label for="task-input">Plain-language request</label>
+                  <textarea id="task-input" name="requestText" rows="5" placeholder="Build a responsive small-business website." required></textarea>
+                  <div class="form-row">
+                    <button class="secondary-action" type="submit">Check request</button>
+                    <p class="form-note">Levi preserves the exact request and checks it before planning.</p>
+                  </div>
+                </form>
+                <div id="intake-result" class="result-panel" aria-live="polite" hidden></div>
+              </section>
+
+              <aside id="health" class="card health-card" aria-labelledby="health-heading">
+                <div class="section-heading">
+                  <p class="eyebrow">Project Health</p>
+                  <h2 id="health-heading">Readiness</h2>
+                </div>
+                <div class="health-summary">
+                  <span id="health-status" class="status-pill unknown">Unknown</span>
+                  <p id="health-text">Project Health evidence is UNKNOWN.</p>
+                </div>
+                <ul id="health-issues" class="plain-list"></ul>
+              </aside>
+
+              <section class="card" aria-labelledby="repository-heading">
+                <div class="section-heading">
+                  <p class="eyebrow">Project</p>
+                  <h2 id="repository-heading">Repository evidence</h2>
+                </div>
+                <dl class="details-grid" data-repository-details></dl>
+              </section>
+
+              <section class="card" aria-labelledby="activity-heading">
+                <div class="section-heading">
+                  <p class="eyebrow">Recent</p>
+                  <h2 id="activity-heading">Activity</h2>
+                </div>
+                <div id="activity-empty" class="empty-box" hidden>
+                  <p>No task started.</p>
+                </div>
+                <ul id="activity-list" class="activity-list"></ul>
+              </section>
+            </div>
+          </section>
+        </main>
+      </div>
+
+      <footer class="footer" role="contentinfo">
+        <span>Presentation layer over Levi Core</span>
+        <span id="footer-status">Checking project</span>
+      </footer>
+    </div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
