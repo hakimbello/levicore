@@ -8,7 +8,9 @@ const {
   createExecutionCompletionView,
   createProjectHealthView,
   createPlanApprovalView,
+  createRestoreHistoryView,
   submitPlanApproval,
+  submitRestoreConfirmation,
 } = require("./ui-bridge");
 
 const DEFAULT_PORT = 4317;
@@ -53,6 +55,15 @@ function createUiServer(options = {}) {
 
       if (request.method === "GET" && requestUrl.pathname === "/api/health") {
         return sendJson(response, 200, createProjectHealthView(repositoryPath));
+      }
+
+      if (request.method === "GET" && requestUrl.pathname === "/api/history") {
+        return sendJson(response, 200, createRestoreHistoryView(repositoryPath));
+      }
+
+      if (request.method === "POST" && requestUrl.pathname === "/api/history/restore") {
+        const body = await readJsonBody(request);
+        return sendJson(response, 200, submitRestoreConfirmation(repositoryPath, body));
       }
 
       if (requestUrl.pathname.startsWith("/api/")) {

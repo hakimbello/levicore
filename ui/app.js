@@ -4,6 +4,7 @@
   const state = {
     dashboard: null,
     execution: null,
+    history: null,
     health: null,
     plan: null,
     route: "home",
@@ -43,6 +44,8 @@
   elements.main.append(elements.execution.section);
   elements.projectHealth = createProjectHealthScreen();
   elements.main.append(elements.projectHealth.section);
+  elements.history = createRestoreHistoryScreen();
+  elements.main.append(elements.history.section);
   elements.planShortcut = document.createElement("a");
   elements.planShortcut.className = "secondary-action plan-shortcut";
   elements.planShortcut.href = "#plan-approval";
@@ -71,6 +74,8 @@
   elements.plan.destructiveCheckbox.addEventListener("change", updatePlanApproveState);
   elements.execution.primaryAction.addEventListener("click", handleExecutionPrimaryAction);
   elements.projectHealth.primaryAction.addEventListener("click", handleProjectHealthPrimaryAction);
+  elements.history.primaryAction.addEventListener("click", handleRestoreHistoryPrimaryAction);
+  elements.history.confirmCheckbox.addEventListener("change", updateRestoreHistoryConfirmation);
   window.addEventListener("hashchange", applyRoute);
 
   applyRoute();
@@ -170,6 +175,26 @@
     }
   }
 
+  async function loadRestoreHistory() {
+    showRestoreHistoryLoading();
+
+    try {
+      const response = await fetch("/api/history", {
+        headers: {
+          Accept: "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Levi could not load restore history.");
+      }
+
+      renderRestoreHistory(await response.json());
+    } catch (error) {
+      showRestoreHistoryError(error.message);
+    }
+  }
+
   async function submitIntake() {
     if (elements.createPlanButton.disabled) {
       return;
@@ -245,6 +270,44 @@
     }
   }
 
+  async function submitRestoreHistory() {
+    const history = state.history;
+
+    if (!history || !history.restore || !history.restore.available) {
+      window.location.hash = "#new-task";
+      return;
+    }
+
+    elements.history.primaryAction.disabled = true;
+    elements.history.primaryAction.textContent = "Restoring";
+
+    try {
+      const response = await fetch("/api/history/restore", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          restorePointId: history.restore.id,
+          confirmRestore: elements.history.confirmCheckbox.checked,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Levi could not restore this version.");
+      }
+
+      renderRestoreHistory(await response.json());
+      await loadDashboard();
+    } catch (error) {
+      elements.history.restoreResult.hidden = false;
+      elements.history.restoreResult.className = "result-panel blocked";
+      elements.history.restoreResult.textContent = safeUiText(error.message);
+      updateRestoreHistoryConfirmation();
+    }
+  }
+
   function handleExecutionPrimaryAction(event) {
     event.preventDefault();
 
@@ -286,12 +349,53 @@
     }
   }
 
+  function handleRestoreHistoryPrimaryAction(event) {
+    event.preventDefault();
+
+    const action = state.history && state.history.actions && state.history.actions.primary;
+
+    if (!action) {
+      return;
+    }
+
+    if (action.action === "restore") {
+      submitRestoreHistory();
+      return;
+    }
+
+    if (action.href) {
+      window.location.hash = action.href;
+    }
+  }
+
+  function handleRestoreHistorySecondaryAction(action) {
+    if (!action) {
+      return;
+    }
+
+    if (action.href) {
+      window.location.hash = action.href;
+      return;
+    }
+
+    if (action.target === "details") {
+      elements.history.restorePanel.scrollIntoView({ block: "start" });
+      const details = elements.history.restorePanel.querySelector("details");
+      if (details) {
+        details.open = true;
+        details.querySelector("summary").focus();
+      }
+    }
+  }
+
   function applyRoute() {
     const hash = window.location.hash || "#home";
     if (hash === "#plan-approval" || hash === "#approval") {
       state.route = "plan";
     } else if (hash === "#health" || hash === "#project-health" || hash === "#health-recommendations") {
       state.route = "health";
+    } else if (hash === "#history" || hash === "#restore-history" || hash === "#restore") {
+      state.route = "history";
     } else if (["#execution-progress", "#completion-result", "#execution", "#completion"].includes(hash)) {
       state.route = "execution";
     } else {
@@ -311,6 +415,12 @@
       return;
     }
 
+    if (state.route === "history") {
+      elements.pageTitle.textContent = "History";
+      loadRestoreHistory();
+      return;
+    }
+
     if (state.route === "health") {
       elements.pageTitle.textContent = "Health";
       loadProjectHealth();
@@ -327,7 +437,9 @@
       ? "#new-task"
       : state.route === "health"
         ? "#health"
-        : hash;
+        : state.route === "history"
+          ? "#history"
+          : hash;
 
     elements.navItems.forEach((item) => {
       const active = item.getAttribute("href") === activeHref || (!activeHref || activeHref === "#home") && item.getAttribute("href") === "#home";
@@ -382,6 +494,7 @@
       elements.plan.section.hidden = true;
       elements.execution.section.hidden = true;
       elements.projectHealth.section.hidden = true;
+      elements.history.section.hidden = true;
     }
   }
 
@@ -531,6 +644,14 @@
           item.append(link);
         }
 
+        if (activityLabel.includes("restore")) {
+          const link = document.createElement("a");
+          link.className = "inline-action";
+          link.href = "#history";
+          link.textContent = "Open";
+          item.append(link);
+        }
+
         return item;
       }),
     );
@@ -581,7 +702,9 @@
     elements.error.hidden = true;
     elements.dashboard.hidden = true;
     elements.plan.section.hidden = false;
+    elements.execution.section.hidden = true;
     elements.projectHealth.section.hidden = true;
+    elements.history.section.hidden = true;
     elements.plan.loading.hidden = true;
     elements.plan.error.hidden = true;
     elements.plan.empty.hidden = true;
@@ -635,6 +758,7 @@
     elements.plan.section.hidden = true;
     elements.execution.section.hidden = false;
     elements.projectHealth.section.hidden = true;
+    elements.history.section.hidden = true;
     elements.execution.loading.hidden = true;
     elements.execution.error.hidden = true;
     elements.execution.empty.hidden = true;
@@ -851,6 +975,7 @@
     elements.plan.section.hidden = true;
     elements.execution.section.hidden = true;
     elements.projectHealth.section.hidden = false;
+    elements.history.section.hidden = true;
     elements.projectHealth.loading.hidden = true;
     elements.projectHealth.error.hidden = true;
     elements.projectHealth.empty.hidden = true;
@@ -1091,6 +1216,303 @@
     renderInlineList(elements.projectHealth.evidenceReferences, items, "Evidence references are UNKNOWN.");
   }
 
+  function renderRestoreHistory(history) {
+    state.history = history;
+    updateProjectLabels(history.project);
+
+    if (history.status === "ERROR") {
+      showRestoreHistoryError(history.error && history.error.detail ? history.error.detail : history.summary);
+      return;
+    }
+
+    if (history.status === "EMPTY") {
+      showRestoreHistoryEmpty(history);
+      return;
+    }
+
+    elements.loading.hidden = true;
+    elements.error.hidden = true;
+    elements.dashboard.hidden = true;
+    elements.plan.section.hidden = true;
+    elements.execution.section.hidden = true;
+    elements.projectHealth.section.hidden = true;
+    elements.history.section.hidden = false;
+    elements.history.loading.hidden = true;
+    elements.history.error.hidden = true;
+    elements.history.empty.hidden = true;
+    elements.history.content.hidden = false;
+    elements.footerStatus.textContent = history.restore && history.restore.label ? textValue(history.restore.label) : "History";
+
+    elements.history.projectName.textContent = textValue(history.project && history.project.name);
+    elements.history.statusBadge.textContent = plainStatus(history.status);
+    elements.history.statusBadge.className = `status-pill ${statusClass(history.status)}`;
+    elements.history.headline.textContent = safeUiText(history.headline);
+    elements.history.summary.textContent = safeUiText(history.summary);
+    elements.history.lastSuccess.textContent = safeUiText(history.lastSuccessfulTask);
+    elements.history.primaryAction.textContent = safeUiText(history.actions && history.actions.primary && history.actions.primary.label);
+
+    renderHistoryTopSummary(history.topSummary || []);
+    renderRestoreInspection(history.restore || {});
+    renderRestoreTimeline(history.timeline || []);
+    renderRestoreResult(history.restoreResult);
+    renderRestoreHistoryActions(history.actions || {});
+    updateRestoreHistoryConfirmation();
+  }
+
+  function renderHistoryTopSummary(items) {
+    const rows = Array.isArray(items) && items.length > 0
+      ? items
+      : [{ label: "Recent activity", value: "Unknown", detail: "History evidence is UNKNOWN." }];
+
+    elements.history.topSummary.replaceChildren(
+      ...rows.map((item) => {
+        const article = document.createElement("article");
+        article.className = "status-chip history-summary-chip";
+        const label = document.createElement("span");
+        label.className = "status-label";
+        label.textContent = safeUiText(item.label);
+        const value = document.createElement("strong");
+        value.className = `status-value ${statusClass(item.value)}`;
+        value.textContent = safeUiText(item.value);
+        const detail = document.createElement("span");
+        detail.className = "status-detail";
+        detail.textContent = safeUiText(item.detail);
+        article.append(label, value, detail);
+        return article;
+      }),
+    );
+  }
+
+  function renderRestoreInspection(restore) {
+    elements.history.restoreStatus.textContent = textValue(restore.label);
+    elements.history.restoreStatus.className = `status-pill ${statusClass(restore.status)}`;
+    elements.history.restoreDetail.textContent = safeUiText(restore.detail);
+    elements.history.restoreExactState.textContent = safeUiText(restore.exactState);
+    elements.history.restoreInternalState.textContent = safeUiText(restore.internalState);
+    renderDefinitionRows(elements.history.restoreMeta, [
+      ["Restore point", restore.id],
+      ["Recorded", restore.displayTime],
+      ["Requirement", restore.requirementId],
+      ["Operation types", restore.operationTypes],
+    ]);
+    renderCountRow(elements.history.restoreCounts, restore.counts);
+    renderHistoryFileRows(elements.history.restoreFiles, restore.files, "Restore files are UNKNOWN.");
+    elements.history.confirmation.hidden = !restore.available;
+    elements.history.confirmCheckbox.checked = false;
+  }
+
+  function renderHistoryFileRows(list, files, emptyText) {
+    const items = Array.isArray(files) ? files : [];
+
+    if (items.length === 0) {
+      const item = document.createElement("li");
+      item.textContent = emptyText;
+      list.replaceChildren(item);
+      return;
+    }
+
+    list.replaceChildren(
+      ...items.map((file) => {
+        const item = document.createElement("li");
+        item.className = "file-row";
+        const path = document.createElement("strong");
+        path.textContent = safeUiText(file.path);
+        const action = document.createElement("span");
+        action.textContent = `${safeUiText(file.action)} - ${safeUiText(file.state)}`;
+        item.append(path, action);
+        return item;
+      }),
+    );
+  }
+
+  function renderRestoreTimeline(entries) {
+    const items = Array.isArray(entries) ? entries : [];
+
+    if (items.length === 0) {
+      const item = document.createElement("li");
+      item.className = "history-empty-row";
+      item.textContent = "No task history is recorded yet.";
+      elements.history.timeline.replaceChildren(item);
+      return;
+    }
+
+    elements.history.timeline.replaceChildren(
+      ...items.map((entry, index) => historyTimelineEntry(entry, index)),
+    );
+  }
+
+  function historyTimelineEntry(entry, index) {
+    const item = document.createElement("li");
+    item.className = `history-entry ${statusClass(entry.status)}`;
+
+    const details = document.createElement("details");
+    details.className = "history-details";
+    details.open = index === 0;
+
+    const summary = document.createElement("summary");
+    const body = document.createElement("span");
+    const title = document.createElement("strong");
+    title.textContent = safeUiText(entry.objective);
+    const meta = document.createElement("span");
+    meta.textContent = `${safeUiText(entry.displayTime)} - ${plainStatus(entry.status)}`;
+    body.append(title, meta);
+    const status = document.createElement("span");
+    status.className = `status-pill ${statusClass(entry.status)}`;
+    status.textContent = plainStatus(entry.status);
+    summary.append(body, status);
+
+    const copy = document.createElement("p");
+    copy.className = "history-summary";
+    copy.textContent = safeUiText(entry.summary);
+
+    const counts = document.createElement("section");
+    counts.className = "count-row history-counts";
+    renderCountRow(counts, entry.changedFiles && entry.changedFiles.counts);
+
+    const grid = document.createElement("div");
+    grid.className = "history-detail-grid";
+    grid.append(
+      historyDetailPanel("Files created", entry.changedFiles && entry.changedFiles.created, "No created files recorded."),
+      historyDetailPanel("Files updated", entry.changedFiles && entry.changedFiles.updated, "No updated files recorded."),
+      historyDetailPanel("Files deleted", entry.changedFiles && entry.changedFiles.deleted, "No deleted files recorded."),
+      historyDetailPanel("Changed files", entry.changedFiles && entry.changedFiles.changed, "No untyped changed files recorded."),
+      historyValidationPanel(entry.validation || {}),
+      historyStatusPanel("Cost result", entry.cost && entry.cost.label, entry.cost && entry.cost.detail),
+      historyStatusPanel("Restore point", entry.restore && entry.restore.label, entry.restore && entry.restore.detail),
+      historyStatusPanel("Project Knowledge", entry.memoryOutcome && entry.memoryOutcome.label, entry.memoryOutcome && entry.memoryOutcome.detail),
+    );
+
+    const metaList = document.createElement("dl");
+    metaList.className = "details-grid compact";
+    renderDefinitionRows(metaList, [
+      ["Requirement", entry.requirementId],
+      ["Commands run", entry.commandsRun],
+      ["Known failures", entry.knownFailures],
+      ["Remaining work", entry.remainingWork],
+    ]);
+
+    details.append(summary, copy, counts, grid, metaList);
+    item.append(details);
+    return item;
+  }
+
+  function historyDetailPanel(titleText, values, emptyText) {
+    const panel = document.createElement("article");
+    panel.className = "history-mini-panel";
+    const title = document.createElement("h3");
+    title.textContent = titleText;
+    const list = document.createElement("ul");
+    list.className = "plain-list compact-list";
+    renderInlineList(list, values, emptyText);
+    panel.append(title, list);
+    return panel;
+  }
+
+  function historyValidationPanel(validation) {
+    const panel = document.createElement("article");
+    panel.className = "history-mini-panel";
+    const title = document.createElement("h3");
+    title.textContent = "Validation";
+    const badge = document.createElement("span");
+    badge.className = `status-pill ${statusClass(validation.status)}`;
+    badge.textContent = textValue(validation.label);
+    const list = document.createElement("ul");
+    list.className = "plain-list compact-list";
+    renderInlineList(list, validation.commands, "Validation commands are UNKNOWN.");
+    panel.append(title, badge, list);
+    return panel;
+  }
+
+  function historyStatusPanel(titleText, labelText, detailText) {
+    const panel = document.createElement("article");
+    panel.className = "history-mini-panel";
+    const title = document.createElement("h3");
+    title.textContent = titleText;
+    const label = document.createElement("strong");
+    label.textContent = safeUiText(labelText);
+    const detail = document.createElement("p");
+    detail.textContent = safeUiText(detailText);
+    panel.append(title, label, detail);
+    return panel;
+  }
+
+  function renderRestoreResult(result) {
+    if (!result) {
+      elements.history.restoreResult.hidden = true;
+      elements.history.restoreResult.replaceChildren();
+      return;
+    }
+
+    elements.history.restoreResult.hidden = false;
+    elements.history.restoreResult.className = `result-panel ${statusClass(result.status)}`;
+
+    const title = document.createElement("strong");
+    title.textContent = safeUiText(result.headline);
+    const message = document.createElement("p");
+    message.textContent = safeUiText(result.message);
+    const meta = document.createElement("dl");
+    meta.className = "details-grid compact";
+    renderDefinitionRows(meta, [
+      ["Result", result.label],
+      ["Files restored", result.fileCount],
+      ["Internal state", result.internalState],
+      ["Error", result.error],
+    ]);
+    const files = document.createElement("ul");
+    files.className = "plain-list compact-list";
+    renderInlineList(files, result.restoredFiles, "No project files were restored.");
+
+    elements.history.restoreResult.replaceChildren(title, message, meta, files);
+  }
+
+  function renderRestoreHistoryActions(actions) {
+    const secondary = Array.isArray(actions.secondary) ? actions.secondary : [];
+
+    elements.history.secondaryActions.replaceChildren(
+      ...secondary.map((action) => {
+        if (action.target) {
+          const button = document.createElement("button");
+          button.className = "secondary-action";
+          button.type = "button";
+          button.textContent = safeUiText(action.label);
+          button.disabled = action.enabled === false;
+          button.classList.toggle("disabled", action.enabled === false);
+          button.addEventListener("click", () => handleRestoreHistorySecondaryAction(action));
+          return button;
+        }
+
+        const link = document.createElement("a");
+        link.className = "secondary-action";
+        link.href = action.enabled === false ? "#history" : safeHref(action.href);
+        link.textContent = safeUiText(action.label);
+
+        if (action.enabled === false) {
+          link.setAttribute("aria-disabled", "true");
+          link.classList.add("disabled");
+        }
+
+        return link;
+      }),
+    );
+  }
+
+  function updateRestoreHistoryConfirmation() {
+    const history = state.history;
+    const action = history && history.actions && history.actions.primary;
+
+    if (!action) {
+      elements.history.primaryAction.disabled = true;
+      elements.history.primaryAction.textContent = "Start New Task";
+      return;
+    }
+
+    elements.history.primaryAction.disabled = action.enabled === false;
+    elements.history.primaryAction.textContent = safeUiText(action.label);
+    elements.history.confirmHelp.textContent = elements.history.confirmCheckbox.checked
+      ? "Restore confirmation is ready."
+      : "Confirm before restoring. Levi will not restore files without this confirmation.";
+  }
+
   function updateProjectLabels(project) {
     const projectName = textValue(project && project.name);
     elements.topProjectName.textContent = projectName;
@@ -1103,6 +1525,7 @@
     elements.dashboard.hidden = true;
     elements.execution.section.hidden = true;
     elements.projectHealth.section.hidden = true;
+    elements.history.section.hidden = true;
     elements.plan.section.hidden = false;
     elements.plan.loading.hidden = false;
     elements.plan.error.hidden = true;
@@ -1117,6 +1540,7 @@
     elements.dashboard.hidden = true;
     elements.execution.section.hidden = true;
     elements.projectHealth.section.hidden = true;
+    elements.history.section.hidden = true;
     elements.plan.section.hidden = false;
     elements.plan.loading.hidden = true;
     elements.plan.error.hidden = false;
@@ -1132,6 +1556,7 @@
     elements.dashboard.hidden = true;
     elements.execution.section.hidden = true;
     elements.projectHealth.section.hidden = true;
+    elements.history.section.hidden = true;
     elements.plan.section.hidden = false;
     elements.plan.loading.hidden = true;
     elements.plan.error.hidden = true;
@@ -1146,6 +1571,7 @@
     elements.plan.section.hidden = true;
     elements.execution.section.hidden = true;
     elements.projectHealth.section.hidden = true;
+    elements.history.section.hidden = true;
 
     if (!state.dashboard) {
       showLoading();
@@ -1170,6 +1596,7 @@
     elements.plan.section.hidden = true;
     elements.execution.section.hidden = true;
     elements.projectHealth.section.hidden = true;
+    elements.history.section.hidden = true;
     elements.footerStatus.textContent = "Checking project";
   }
 
@@ -1180,6 +1607,7 @@
     elements.plan.section.hidden = true;
     elements.execution.section.hidden = true;
     elements.projectHealth.section.hidden = true;
+    elements.history.section.hidden = true;
     elements.topProjectName.textContent = "Project blocked";
     elements.errorMessage.textContent = safeUiText(message);
     elements.footerStatus.textContent = "Blocked";
@@ -1192,6 +1620,7 @@
     elements.plan.section.hidden = true;
     elements.execution.section.hidden = false;
     elements.projectHealth.section.hidden = true;
+    elements.history.section.hidden = true;
     elements.execution.loading.hidden = false;
     elements.execution.error.hidden = true;
     elements.execution.empty.hidden = true;
@@ -1206,6 +1635,7 @@
     elements.plan.section.hidden = true;
     elements.execution.section.hidden = false;
     elements.projectHealth.section.hidden = true;
+    elements.history.section.hidden = true;
     elements.execution.loading.hidden = true;
     elements.execution.error.hidden = false;
     elements.execution.empty.hidden = true;
@@ -1221,6 +1651,7 @@
     elements.plan.section.hidden = true;
     elements.execution.section.hidden = false;
     elements.projectHealth.section.hidden = true;
+    elements.history.section.hidden = true;
     elements.execution.loading.hidden = true;
     elements.execution.error.hidden = true;
     elements.execution.empty.hidden = false;
@@ -1237,6 +1668,7 @@
     elements.plan.section.hidden = true;
     elements.execution.section.hidden = true;
     elements.projectHealth.section.hidden = false;
+    elements.history.section.hidden = true;
     elements.projectHealth.loading.hidden = false;
     elements.projectHealth.error.hidden = true;
     elements.projectHealth.empty.hidden = true;
@@ -1251,6 +1683,7 @@
     elements.plan.section.hidden = true;
     elements.execution.section.hidden = true;
     elements.projectHealth.section.hidden = false;
+    elements.history.section.hidden = true;
     elements.projectHealth.loading.hidden = true;
     elements.projectHealth.error.hidden = false;
     elements.projectHealth.empty.hidden = true;
@@ -1266,6 +1699,7 @@
     elements.plan.section.hidden = true;
     elements.execution.section.hidden = true;
     elements.projectHealth.section.hidden = false;
+    elements.history.section.hidden = true;
     elements.projectHealth.loading.hidden = true;
     elements.projectHealth.error.hidden = true;
     elements.projectHealth.empty.hidden = false;
@@ -1273,6 +1707,54 @@
     elements.projectHealth.emptyProject.textContent = textValue(health.project && health.project.name);
     elements.projectHealth.emptyMessage.textContent = safeUiText(health.summary);
     elements.footerStatus.textContent = "No health evidence";
+  }
+
+  function showRestoreHistoryLoading() {
+    elements.loading.hidden = true;
+    elements.error.hidden = true;
+    elements.dashboard.hidden = true;
+    elements.plan.section.hidden = true;
+    elements.execution.section.hidden = true;
+    elements.projectHealth.section.hidden = true;
+    elements.history.section.hidden = false;
+    elements.history.loading.hidden = false;
+    elements.history.error.hidden = true;
+    elements.history.empty.hidden = true;
+    elements.history.content.hidden = true;
+    elements.footerStatus.textContent = "Loading history";
+  }
+
+  function showRestoreHistoryError(message) {
+    elements.loading.hidden = true;
+    elements.error.hidden = true;
+    elements.dashboard.hidden = true;
+    elements.plan.section.hidden = true;
+    elements.execution.section.hidden = true;
+    elements.projectHealth.section.hidden = true;
+    elements.history.section.hidden = false;
+    elements.history.loading.hidden = true;
+    elements.history.error.hidden = false;
+    elements.history.empty.hidden = true;
+    elements.history.content.hidden = true;
+    elements.history.errorMessage.textContent = safeUiText(message);
+    elements.footerStatus.textContent = "Blocked";
+  }
+
+  function showRestoreHistoryEmpty(history) {
+    elements.loading.hidden = true;
+    elements.error.hidden = true;
+    elements.dashboard.hidden = true;
+    elements.plan.section.hidden = true;
+    elements.execution.section.hidden = true;
+    elements.projectHealth.section.hidden = true;
+    elements.history.section.hidden = false;
+    elements.history.loading.hidden = true;
+    elements.history.error.hidden = true;
+    elements.history.empty.hidden = false;
+    elements.history.content.hidden = true;
+    elements.history.emptyProject.textContent = textValue(history.project && history.project.name);
+    elements.history.emptyMessage.textContent = safeUiText(history.summary);
+    elements.footerStatus.textContent = "No history";
   }
 
   function appendResultLine(list, labelText, value) {
@@ -1465,6 +1947,108 @@
 
     elements.plan.approveButton.disabled = blocked;
     elements.plan.approveButton.textContent = textValue(plan.actions.primaryLabel);
+  }
+
+  function createRestoreHistoryScreen() {
+    const section = document.createElement("section");
+    section.id = "restore-history-screen";
+    section.className = "history-screen dashboard";
+    section.hidden = true;
+    section.setAttribute("aria-labelledby", "history-heading");
+    section.innerHTML = [
+      '<section class="state-panel" data-history-loading aria-live="polite">',
+      '<p class="state-kicker">History</p>',
+      "<h2>Loading restore history</h2>",
+      "<p>Levi is reading recorded task outcomes and restore-point readiness.</p>",
+      "</section>",
+      '<section class="state-panel danger" data-history-error hidden>',
+      '<p class="state-kicker">Blocked</p>',
+      "<h2>History needs attention</h2>",
+      '<p data-history-error-message>Levi could not read restore history.</p>',
+      "</section>",
+      '<section class="state-panel" data-history-empty hidden>',
+      '<p class="state-kicker">History</p>',
+      "<h2>No history yet</h2>",
+      '<p><strong data-history-empty-project>Current project</strong></p>',
+      '<p data-history-empty-message>No task history or restore point is recorded yet.</p>',
+      '<a class="secondary-action" href="#new-task">Start New Task</a>',
+      "</section>",
+      '<div class="history-content" data-history-content hidden>',
+      '<section class="project-strip plan-project-strip">',
+      "<div>",
+      '<p class="eyebrow">Selected project</p>',
+      '<h2 data-history-project-name>Current project</h2>',
+      '<p class="project-context" data-history-last-success>No successful task is recorded yet.</p>',
+      "</div>",
+      '<span class="status-pill unknown" data-history-status>Unknown</span>',
+      "</section>",
+      '<section class="approval-panel history-hero" aria-labelledby="history-heading">',
+      "<div>",
+      '<p class="eyebrow">Restore and History</p>',
+      '<h2 id="history-heading" data-history-headline>Recent activity</h2>',
+      '<p class="project-context" data-history-summary>History evidence is UNKNOWN.</p>',
+      "</div>",
+      '<div class="approval-actions">',
+      '<button class="primary-action" type="button" data-history-primary>Restore this version</button>',
+      "</div>",
+      '<div class="secondary-actions" data-history-secondary></div>',
+      '<div class="result-panel" data-history-restore-result hidden></div>',
+      '<div class="confirmation-panel history-confirmation" data-history-confirmation hidden>',
+      '<label><input type="checkbox" data-history-confirm-restore> I understand Levi Core will restore the tracked files for this restore point.</label>',
+      '<p class="muted" data-history-confirm-help>Confirm before restoring.</p>',
+      "</div>",
+      "</section>",
+      '<section class="status-row history-summary-row" data-history-top-summary aria-label="History summary"></section>',
+      '<section class="section-panel plan-section restore-inspection" data-history-restore-panel>',
+      '<div class="section-heading inline-heading"><div><p class="eyebrow">Restore point</p><h2>Latest restore point</h2></div><span class="status-pill unknown" data-history-restore-status>Unknown</span></div>',
+      '<p class="muted" data-history-restore-detail>Restore evidence is UNKNOWN.</p>',
+      '<p data-history-restore-exact>Exact restore state is UNKNOWN.</p>',
+      '<p class="muted" data-history-restore-internal>Levi internal state is UNKNOWN.</p>',
+      '<dl class="details-grid compact" data-history-restore-meta></dl>',
+      '<section class="count-row history-counts" data-history-restore-counts aria-label="Restore file counts"></section>',
+      '<details class="disclosure-panel nested-disclosure">',
+      '<summary><span><span class="eyebrow">Files</span><strong>Files affected by restore</strong></span></summary>',
+      '<ul class="file-list" data-history-restore-files></ul>',
+      "</details>",
+      "</section>",
+      '<section class="section-panel plan-section">',
+      '<div class="section-heading"><p class="eyebrow">Timeline</p><h2>Task history</h2></div>',
+      '<ol class="history-timeline" data-history-timeline></ol>',
+      "</section>",
+      "</div>",
+    ].join("");
+
+    return {
+      section,
+      loading: section.querySelector("[data-history-loading]"),
+      error: section.querySelector("[data-history-error]"),
+      errorMessage: section.querySelector("[data-history-error-message]"),
+      empty: section.querySelector("[data-history-empty]"),
+      emptyProject: section.querySelector("[data-history-empty-project]"),
+      emptyMessage: section.querySelector("[data-history-empty-message]"),
+      content: section.querySelector("[data-history-content]"),
+      projectName: section.querySelector("[data-history-project-name]"),
+      statusBadge: section.querySelector("[data-history-status]"),
+      headline: section.querySelector("[data-history-headline]"),
+      summary: section.querySelector("[data-history-summary]"),
+      lastSuccess: section.querySelector("[data-history-last-success]"),
+      primaryAction: section.querySelector("[data-history-primary]"),
+      secondaryActions: section.querySelector("[data-history-secondary]"),
+      restoreResult: section.querySelector("[data-history-restore-result]"),
+      confirmation: section.querySelector("[data-history-confirmation]"),
+      confirmCheckbox: section.querySelector("[data-history-confirm-restore]"),
+      confirmHelp: section.querySelector("[data-history-confirm-help]"),
+      topSummary: section.querySelector("[data-history-top-summary]"),
+      restorePanel: section.querySelector("[data-history-restore-panel]"),
+      restoreStatus: section.querySelector("[data-history-restore-status]"),
+      restoreDetail: section.querySelector("[data-history-restore-detail]"),
+      restoreExactState: section.querySelector("[data-history-restore-exact]"),
+      restoreInternalState: section.querySelector("[data-history-restore-internal]"),
+      restoreMeta: section.querySelector("[data-history-restore-meta]"),
+      restoreCounts: section.querySelector("[data-history-restore-counts]"),
+      restoreFiles: section.querySelector("[data-history-restore-files]"),
+      timeline: section.querySelector("[data-history-timeline]"),
+    };
   }
 
   function createProjectHealthScreen() {
@@ -1877,7 +2461,7 @@
       return "Needs attention";
     }
 
-    if (["BLOCKED", "FAILED", "ERROR", "REJECTED", "NOT_READY", "PROVIDER_UNAVAILABLE", "COST_BLOCKED", "UNAVAILABLE"].includes(text)) {
+    if (["BLOCKED", "FAILED", "ERROR", "REJECTED", "NOT_READY", "PROVIDER_UNAVAILABLE", "COST_BLOCKED", "UNAVAILABLE", "INVALID", "CORRUPTED", "PARTIAL_ROLLBACK"].includes(text)) {
       return "Blocked";
     }
 
@@ -1903,7 +2487,7 @@
       return "attention";
     }
 
-    if (text.includes("blocked") || text.includes("failed") || text.includes("error") || text.includes("rejected") || text.includes("not_ready") || text.includes("unavailable")) {
+    if (text.includes("blocked") || text.includes("failed") || text.includes("error") || text.includes("rejected") || text.includes("not_ready") || text.includes("unavailable") || text.includes("invalid") || text.includes("corrupt") || text.includes("rollback")) {
       return "blocked";
     }
 

@@ -639,7 +639,8 @@ textarea:disabled {
 
 .plan-content,
 .execution-content,
-.health-content {
+.health-content,
+.history-content {
   display: grid;
   gap: var(--gap-xl);
   min-width: 0;
@@ -675,6 +676,10 @@ textarea:disabled {
 }
 
 .health-hero h2 {
+  max-width: 15ch;
+}
+
+.history-hero h2 {
   max-width: 15ch;
 }
 
@@ -902,14 +907,16 @@ textarea:disabled {
   gap: var(--gap-md);
 }
 
-.health-count-row {
+.health-count-row,
+.history-summary-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--gap-md);
 }
 
 .health-count,
-.health-card {
+.health-card,
+.history-summary-chip {
   min-width: 0;
   border-radius: var(--radius);
   background: var(--surface);
@@ -919,6 +926,10 @@ textarea:disabled {
   display: grid;
   gap: 4px;
   padding: 18px;
+}
+
+.history-summary-chip {
+  padding: 16px;
 }
 
 .health-count strong {
@@ -1041,6 +1052,142 @@ textarea:disabled {
   margin: var(--gap-md) 0 0;
 }
 
+.restore-inspection {
+  display: grid;
+  gap: var(--gap-md);
+}
+
+.history-confirmation {
+  border-left: 4px solid var(--attention);
+}
+
+.history-timeline {
+  display: grid;
+  gap: var(--gap-md);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.history-empty-row,
+.history-details {
+  min-width: 0;
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+}
+
+.history-empty-row {
+  padding: 14px;
+}
+
+.history-details {
+  position: relative;
+  padding: 0;
+}
+
+.history-details::before {
+  content: "";
+  position: absolute;
+  left: 18px;
+  top: 18px;
+  bottom: 18px;
+  width: 2px;
+  border-radius: 999px;
+  background: var(--border-strong);
+}
+
+.history-details summary {
+  position: relative;
+  display: flex;
+  gap: var(--gap-md);
+  align-items: flex-start;
+  justify-content: space-between;
+  cursor: pointer;
+  list-style: none;
+  padding: 18px 18px 18px 40px;
+}
+
+.history-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.history-details summary::before {
+  content: "";
+  position: absolute;
+  left: 13px;
+  top: 25px;
+  width: 12px;
+  height: 12px;
+  border: 3px solid var(--surface-soft);
+  border-radius: 50%;
+  background: var(--unknown);
+  box-shadow: 0 0 0 2px var(--border-strong);
+}
+
+.history-entry.ready .history-details summary::before {
+  background: var(--ready);
+}
+
+.history-entry.attention .history-details summary::before {
+  background: var(--attention);
+}
+
+.history-entry.blocked .history-details summary::before {
+  background: var(--blocked);
+}
+
+.history-details summary > span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.history-details summary strong,
+.history-details summary span {
+  overflow-wrap: anywhere;
+}
+
+.history-details summary span span,
+.history-summary {
+  color: var(--text-muted);
+}
+
+.history-summary,
+.history-details > .details-grid {
+  margin: 0;
+  padding: 0 18px 18px 40px;
+}
+
+.history-counts {
+  padding: 0 18px 18px 40px;
+}
+
+.history-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--gap-md);
+  padding: 0 18px 18px 40px;
+}
+
+.history-mini-panel {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 14px;
+}
+
+.history-mini-panel h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.history-mini-panel p {
+  margin: 0;
+  color: var(--text-muted);
+}
+
 .inline-heading {
   display: flex;
   gap: var(--gap-md);
@@ -1133,7 +1280,9 @@ textarea:disabled {
   .status-grid,
   .count-row,
   .health-count-row,
-  .health-card-grid {
+  .health-card-grid,
+  .history-summary-row,
+  .history-detail-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1228,6 +1377,27 @@ textarea:disabled {
 
   .timeline-step {
     grid-template-columns: 1fr;
+  }
+
+  .history-details::before {
+    left: 14px;
+  }
+
+  .history-details summary {
+    display: grid;
+    padding: 16px 14px 16px 34px;
+  }
+
+  .history-details summary::before {
+    left: 9px;
+  }
+
+  .history-summary,
+  .history-counts,
+  .history-detail-grid,
+  .history-details > .details-grid {
+    padding-left: 34px;
+    padding-right: 14px;
   }
 
   .timeline-marker {

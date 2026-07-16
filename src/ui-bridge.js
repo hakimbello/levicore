@@ -6,7 +6,7 @@ const { summarizeProject } = require("./project-summary");
 const { collectProjectHealthSignals, recommendProjectHealth, summarizeProjectHealth } = require("./project-health");
 const { createTaskIntake } = require("./task-intake");
 const { createApprovalDecision, createApprovalSummary } = require("./approval-summary");
-const { approvePlan } = require("./cli-workflow");
+const { approvePlan, inspectLatestRestorePoint, restoreProject } = require("./cli-workflow");
 
 const UNKNOWN = "UNKNOWN";
 const POST_MVP_REQUIREMENT_ID = "POST_MVP until approved by owner";
@@ -248,6 +248,80 @@ function createProjectHealthView(repositoryPath) {
     return projectHealthViewFor(intake.path, healthReport, healthSummary, recommendationReport);
   } catch (error) {
     return projectHealthErrorView(intake.path, error.message);
+  }
+}
+
+function createRestoreHistoryView(repositoryPath, options = {}) {
+  if (!repositoryPath) {
+    return emptyRestoreHistoryView(null, "Select a project before reviewing History.");
+  }
+
+  const intake = intakeRepository(repositoryPath);
+
+  if (!intake.ok) {
+    return restoreHistoryErrorView(repositoryPath, intake.error);
+  }
+
+  try {
+    const state = loadRuntimeState(intake.path);
+    const memoryRecords = loadHistoryMemoryRecords(intake.path);
+    const restoreInspection = inspectLatestRestoreForHistory(intake.path);
+    const view = restoreHistoryViewFor(intake.path, state, memoryRecords, restoreInspection);
+
+    if (options.restoreResult) {
+      view.restoreResult = options.restoreResult;
+    }
+
+    return view;
+  } catch (error) {
+    return restoreHistoryErrorView(intake.path, error.message);
+  }
+}
+
+function submitRestoreConfirmation(repositoryPath, input = {}) {
+  if (!repositoryPath) {
+    return emptyRestoreHistoryView(null, "Select a project before restoring.");
+  }
+
+  const intake = intakeRepository(repositoryPath);
+
+  if (!intake.ok) {
+    return restoreHistoryErrorView(repositoryPath, intake.error);
+  }
+
+  const currentView = createRestoreHistoryView(intake.path);
+  const restorePointId = presentationText(input.restorePointId || currentView.restore && currentView.restore.id);
+
+  if (!currentView.restore || !currentView.restore.available) {
+    return createRestoreHistoryView(intake.path, {
+      restoreResult: restoreSubmitResultFromError("Restore is unavailable for this project.", "UNAVAILABLE"),
+    });
+  }
+
+  if (input.confirmRestore !== true) {
+    return createRestoreHistoryView(intake.path, {
+      restoreResult: {
+        status: "CONFIRMATION_REQUIRED",
+        label: "Confirmation required",
+        headline: "Confirm before restoring",
+        message: "Review the restore point and confirm that Levi should restore this version.",
+        restoredFiles: [],
+        fileCount: 0,
+        internalState: "Levi internal state was not changed.",
+        error: null,
+      },
+    });
+  }
+
+  try {
+    const restoreResult = restoreProject(intake.path, restorePointId, "CONFIRM_RESTORE");
+    return createRestoreHistoryView(intake.path, {
+      restoreResult: restoreSubmitResultFor(restoreResult),
+    });
+  } catch (error) {
+    return createRestoreHistoryView(intake.path, {
+      restoreResult: restoreSubmitResultFromError(error.message),
+    });
   }
 }
 
@@ -1561,6 +1635,824 @@ function projectHealthActionsFor(status, recommendations) {
   };
 }
 
+function emptyRestoreHistoryView(repositoryPath, message) {
+  const restore = unavailableRestoreInspection(message || "No restore point is available yet.");
+
+  return {
+    status: "EMPTY",
+    project: repositoryPath ? selectedProject(path.resolve(repositoryPath)) : {
+      status: "NONE",
+      name: "No project selected",
+      root: UNKNOWN,
+    },
+    headline: "No history yet",
+    summary: message || "No task history or restore point is recorded for this project yet.",
+    topSummary: restoreHistoryTopSummary([], restore),
+    historyCount: 0,
+    lastSuccessfulTask: "No successful task is recorded yet.",
+    restore,
+    timeline: [],
+    actions: restoreHistoryActionsFor(restore),
+    restoreResult: null,
+  };
+}
+
+function restoreHistoryErrorView(repositoryPath, message) {
+  return {
+    ...emptyRestoreHistoryView(repositoryPath, message || "Levi could not read restore history."),
+    status: "ERROR",
+    headline: "History needs attention",
+    summary: message || "Levi could not read restore history.",
+    restore: restoreInspectionErrorFor(message || "Levi could not read restore history."),
+    actions: restoreHistoryActionsFor(unavailableRestoreInspection("Restore is unavailable while history is blocked.")),
+    error: {
+      title: "History could not be opened",
+      detail: message || "Levi could not read restore history.",
+    },
+  };
+}
+
+function restoreHistoryViewFor(repositoryPath, state, memoryRecords, restoreInspection) {
+  const timeline = restoreHistoryEntriesFor(state, memoryRecords, restoreInspection);
+
+  if (timeline.length === 0 && !restoreInspection.available) {
+    return emptyRestoreHistoryView(repositoryPath, "No task history or restore point is recorded for this project yet.");
+  }
+
+  return {
+    status: restoreInspection.status === "CORRUPTED" || restoreInspection.status === "ERROR" ? "ATTENTION" : "READY",
+    project: selectedProject(path.resolve(repositoryPath)),
+    headline: timeline.length > 0 ? "Recent activity" : "Restore point available",
+    summary: restoreHistorySummaryText(timeline, restoreInspection),
+    topSummary: restoreHistoryTopSummary(timeline, restoreInspection),
+    historyCount: timeline.length,
+    lastSuccessfulTask: lastSuccessfulTaskText(timeline),
+    restore: restoreInspection,
+    timeline,
+    actions: restoreHistoryActionsFor(restoreInspection),
+    restoreResult: null,
+  };
+}
+
+function inspectLatestRestoreForHistory(repositoryPath) {
+  try {
+    return restoreInspectionForUi(inspectLatestRestorePoint(repositoryPath));
+  } catch (error) {
+    return restoreInspectionErrorFor(error.message);
+  }
+}
+
+function restoreInspectionForUi(inspection) {
+  if (!isPlainObject(inspection) || !isPlainObject(inspection.metadata)) {
+    return restoreInspectionErrorFor("Restore point evidence is corrupted.");
+  }
+
+  const metadata = inspection.metadata;
+  const files = Array.isArray(inspection.files) ? inspection.files.map(restoreFileForUi).filter(Boolean) : [];
+  const counts = operationCountsForRestoreFiles(files);
+  const runtime = isPlainObject(inspection.runtime) ? inspection.runtime : {};
+  const fileCount = Number.isFinite(runtime.fileCount) ? runtime.fileCount : 0;
+  const directoryCount = Number.isFinite(runtime.directoryCount) ? runtime.directoryCount : 0;
+
+  return {
+    status: "AVAILABLE",
+    label: "Available",
+    available: true,
+    id: presentationText(metadata.id),
+    timestamp: timestampOrUnknown(metadata.timestamp),
+    displayTime: formatTimestampForUi(metadata.timestamp),
+    requirementId: presentationText(metadata.requirementId),
+    detail: "Levi can inspect this restore point before any restore action.",
+    exactState: "Restoring returns tracked project files and Levi internal state to the recorded pre-task boundary.",
+    internalState: fileCount > 0 || directoryCount > 0
+      ? `${fileCount} internal file${fileCount === 1 ? "" : "s"} and ${directoryCount} internal folder${directoryCount === 1 ? "" : "s"} have recorded state.`
+      : "No pre-existing Levi internal state files are recorded for this point.",
+    plannedFiles: textListOrUnknown(metadata.plannedFiles),
+    operationTypes: textListOrUnknown(metadata.operationTypes),
+    files,
+    counts,
+  };
+}
+
+function restoreFileForUi(file) {
+  if (!isPlainObject(file)) {
+    return null;
+  }
+
+  const filePath = relativePathText(file.path);
+
+  if (filePath === UNKNOWN) {
+    return null;
+  }
+
+  const action = operationTypeFor(file.operationType);
+  const existed = typeof file.existed === "boolean" ? file.existed : null;
+
+  return {
+    path: filePath,
+    action: titleCase(action),
+    operationType: action,
+    state: existed === null ? UNKNOWN : existed ? "Will restore prior content" : "Will remove file created by Levi",
+  };
+}
+
+function operationCountsForRestoreFiles(files) {
+  const items = Array.isArray(files) ? files : [];
+
+  return {
+    create: items.filter((file) => file.operationType === "create").length,
+    update: items.filter((file) => file.operationType === "update").length,
+    delete: items.filter((file) => file.operationType === "delete").length,
+    total: items.length,
+  };
+}
+
+function restoreInspectionErrorFor(message) {
+  const detail = presentationText(message);
+  const status = restoreErrorStatus(detail);
+
+  if (status === "UNAVAILABLE") {
+    return unavailableRestoreInspection(detail);
+  }
+
+  return {
+    status,
+    label: restoreStatusLabel(status),
+    available: false,
+    id: UNKNOWN,
+    timestamp: UNKNOWN,
+    displayTime: UNKNOWN,
+    requirementId: UNKNOWN,
+    detail,
+    exactState: "Restore state cannot be trusted until Levi Core can inspect the restore point.",
+    internalState: "Levi internal state was not inspected.",
+    plannedFiles: [UNKNOWN],
+    operationTypes: [UNKNOWN],
+    files: [],
+    counts: {
+      create: 0,
+      update: 0,
+      delete: 0,
+      total: 0,
+    },
+  };
+}
+
+function unavailableRestoreInspection(message) {
+  return {
+    status: "UNAVAILABLE",
+    label: "Unavailable",
+    available: false,
+    id: UNKNOWN,
+    timestamp: UNKNOWN,
+    displayTime: UNKNOWN,
+    requirementId: UNKNOWN,
+    detail: presentationText(message || "No restore point exists for the latest Levi-managed operation."),
+    exactState: "No exact restore boundary is available yet.",
+    internalState: "Levi internal state was not changed by a restore.",
+    plannedFiles: [UNKNOWN],
+    operationTypes: [UNKNOWN],
+    files: [],
+    counts: {
+      create: 0,
+      update: 0,
+      delete: 0,
+      total: 0,
+    },
+  };
+}
+
+function restoreErrorStatus(message) {
+  const normalized = stringOrUnknown(message).toLowerCase();
+
+  if (normalized.includes("no restore point")) {
+    return "UNAVAILABLE";
+  }
+
+  if (normalized.includes("corrupt") || normalized.includes("does not match restore data")) {
+    return "CORRUPTED";
+  }
+
+  if (normalized.includes("invalid")) {
+    return "INVALID";
+  }
+
+  return "ERROR";
+}
+
+function restoreStatusLabel(status) {
+  const normalized = stringOrUnknown(status).toUpperCase();
+
+  if (normalized === "COMPLETED") {
+    return "Restored";
+  }
+
+  if (normalized === "CONFIRMATION_REQUIRED") {
+    return "Confirmation required";
+  }
+
+  if (normalized === "PARTIAL_ROLLBACK") {
+    return "Partial rollback";
+  }
+
+  if (normalized === "CORRUPTED") {
+    return "Corrupted";
+  }
+
+  if (normalized === "INVALID") {
+    return "Invalid";
+  }
+
+  if (normalized === "FAILED" || normalized === "ERROR") {
+    return "Failed";
+  }
+
+  if (normalized === "UNAVAILABLE") {
+    return "Unavailable";
+  }
+
+  if (normalized === "AVAILABLE") {
+    return "Available";
+  }
+
+  return "Unknown";
+}
+
+function restoreHistoryEntriesFor(state, memoryRecords, restoreInspection) {
+  const entries = new Map();
+  let order = 0;
+
+  for (const record of Array.isArray(memoryRecords) ? memoryRecords : []) {
+    if (!isPlainObject(record) || !isPlainObject(record.value)) {
+      continue;
+    }
+
+    addRestoreHistoryEntry(entries, historyEntryForReport(record.value, {
+      source: "memory",
+      order: order += 1,
+      timestamp: record.timestamp,
+      memoryRecord: record,
+      restoreInspection,
+    }));
+  }
+
+  for (const report of reportCandidatesFromState(state)) {
+    addRestoreHistoryEntry(entries, historyEntryForReport(report.report, {
+      source: report.source,
+      order: order += 1,
+      timestamp: report.timestamp,
+      state,
+      isCurrent: report.isCurrent,
+      restoreInspection,
+    }));
+  }
+
+  return Array.from(entries.values()).sort(compareHistoryEntries).map((entry, index) => ({
+    ...entry,
+    position: index + 1,
+  }));
+}
+
+function addRestoreHistoryEntry(entries, entry) {
+  if (!entry) {
+    return;
+  }
+
+  const existing = entries.get(entry.key);
+
+  if (!existing || existing.timestamp === UNKNOWN && entry.timestamp !== UNKNOWN) {
+    entries.set(entry.key, entry);
+  }
+}
+
+function reportCandidatesFromState(state) {
+  const candidates = [];
+
+  if (state && isPlainObject(state.report)) {
+    candidates.push({
+      source: "current-report",
+      report: state.report,
+      timestamp: state.memoryRecord && state.memoryRecord.timestamp || state.report.timestamp,
+      isCurrent: true,
+    });
+  }
+
+  for (const key of ["completionReports", "reports", "taskHistory", "history"]) {
+    const items = state && Array.isArray(state[key]) ? state[key] : [];
+
+    items.forEach((item, index) => {
+      const report = isPlainObject(item && item.report) ? item.report : item;
+
+      if (!isPlainObject(report)) {
+        return;
+      }
+
+      candidates.push({
+        source: key,
+        report,
+        timestamp: item.timestamp || report.timestamp,
+        isCurrent: false,
+        order: index,
+      });
+    });
+  }
+
+  return candidates;
+}
+
+function historyEntryForReport(report, context) {
+  if (!isPlainObject(report)) {
+    return null;
+  }
+
+  const state = context.state || {};
+  const timestamp = timestampOrUnknown(context.timestamp || report.timestamp);
+  const changedFiles = historyChangedFilesFor(report, state);
+  const validation = historyValidationFor(report, state);
+  const cost = historyCostFor(report, state);
+  const restore = historyRestoreFor(context.restoreInspection, context.isCurrent);
+  const memoryOutcome = historyMemoryOutcomeFor(context.memoryRecord, state);
+  const objective = firstKnownText([
+    report.objective,
+    report.normalizedObjective,
+    state.plan && state.plan.objective,
+    state.request && state.request.intake && state.request.intake.normalizedObjective,
+    state.request && state.request.intake && state.request.intake.originalRequest,
+    report.changeSummary,
+    report.requirementId,
+  ]);
+  const summary = firstKnownText([report.changeSummary, report.summary, "No completion summary is recorded."]);
+  const status = presentationText(report.status);
+  const key = [
+    presentationText(report.requirementId),
+    status,
+    summary,
+    changedFiles.created.join("|"),
+    changedFiles.updated.join("|"),
+    changedFiles.deleted.join("|"),
+    changedFiles.changed.join("|"),
+  ].join("::");
+
+  return {
+    key,
+    id: `history-${Math.abs(hashText(key)).toString(16)}`,
+    source: presentationText(context.source),
+    objective,
+    timestamp,
+    displayTime: formatTimestampForUi(timestamp),
+    status,
+    label: plainStatus(status),
+    summary,
+    requirementId: presentationText(report.requirementId),
+    changedFiles,
+    validation,
+    cost,
+    restore,
+    memoryOutcome,
+    knownFailures: textListOrUnknown(report.knownFailures).filter((entry) => entry !== UNKNOWN),
+    remainingWork: textListOrUnknown(report.remainingWork).filter((entry) => entry !== UNKNOWN),
+    commandsRun: historyCommandsFor(report, validation),
+    order: context.order || 0,
+  };
+}
+
+function historyChangedFilesFor(report, state) {
+  if (isPlainObject(report.changedFiles)) {
+    return normalizeChangedFileGroups(report.changedFiles);
+  }
+
+  if (isPlainObject(state.patch) && Array.isArray(state.patch.changes)) {
+    return normalizeChangedFileGroups({
+      changes: state.patch.changes,
+    });
+  }
+
+  return normalizeChangedFileGroups({
+    changed: report.filesChanged,
+    created: report.filesCreated || report.createdFiles,
+    updated: report.filesUpdated || report.updatedFiles,
+    deleted: report.filesDeleted || report.deletedFiles,
+  });
+}
+
+function normalizeChangedFileGroups(input) {
+  const source = isPlainObject(input) ? input : {};
+  const changes = Array.isArray(source.changes) ? source.changes.filter(isPlainObject) : [];
+  const created = [
+    ...textListOrEmpty(source.created),
+    ...changes.filter((change) => operationTypeFor(change.type) === "create").map((change) => historyPathText(change.path)),
+  ];
+  const updated = [
+    ...textListOrEmpty(source.updated),
+    ...changes.filter((change) => operationTypeFor(change.type) === "update").map((change) => historyPathText(change.path)),
+  ];
+  const deleted = [
+    ...textListOrEmpty(source.deleted),
+    ...changes.filter((change) => operationTypeFor(change.type) === "delete").map((change) => historyPathText(change.path)),
+  ];
+  const typed = new Set([...created, ...updated, ...deleted].filter((entry) => entry !== UNKNOWN));
+  const changed = [
+    ...textListOrEmpty(source.changed),
+    ...changes
+      .filter((change) => !["create", "update", "delete"].includes(operationTypeFor(change.type)))
+      .map((change) => historyPathText(change.path)),
+  ].filter((entry) => !typed.has(entry));
+
+  const groups = {
+    created: uniqueSorted(created.filter((entry) => entry !== UNKNOWN)),
+    updated: uniqueSorted(updated.filter((entry) => entry !== UNKNOWN)),
+    deleted: uniqueSorted(deleted.filter((entry) => entry !== UNKNOWN)),
+    changed: uniqueSorted(changed.filter((entry) => entry !== UNKNOWN)),
+  };
+
+  return {
+    ...groups,
+    counts: {
+      create: groups.created.length,
+      update: groups.updated.length,
+      delete: groups.deleted.length,
+      changed: groups.changed.length,
+      total: uniqueSorted([...groups.created, ...groups.updated, ...groups.deleted, ...groups.changed]).length,
+    },
+  };
+}
+
+function textListOrEmpty(value) {
+  return collectionTextValues(value).map(historyPathText).filter((entry) => entry !== UNKNOWN);
+}
+
+function historyPathText(value) {
+  const filePath = relativePathText(value);
+
+  if (filePath === UNKNOWN) {
+    return UNKNOWN;
+  }
+
+  if (filePath === ".levi" || filePath.startsWith(".levi/")) {
+    return "Levi internal state";
+  }
+
+  return filePath;
+}
+
+function historyValidationFor(report, state) {
+  const sourceResults = Array.isArray(report.validationResults)
+    ? report.validationResults
+    : state.validation && Array.isArray(state.validation.results)
+      ? state.validation.results
+      : [];
+  const commands = Array.isArray(report.commandsRun)
+    ? report.commandsRun.map((entry) => isPlainObject(entry) ? entry.command : entry)
+    : state.plan && Array.isArray(state.plan.validationCommands)
+      ? state.plan.validationCommands
+      : [];
+  const results = sourceResults.map(validationResultForUi);
+  const failed = results.some((result) => result.status === "FAILED");
+  const status = results.length > 0 ? failed ? "FAILED" : "COMPLETED" : commands.length > 0 ? "PLANNED" : "UNKNOWN";
+
+  return {
+    status,
+    label: validationLabelFor(status, results.length),
+    commands: textListOrUnknown(commands),
+    results,
+  };
+}
+
+function historyCommandsFor(report, validation) {
+  const commands = Array.isArray(report.commandsRun)
+    ? report.commandsRun.map((entry) => isPlainObject(entry) ? entry.command : entry)
+    : validation.commands;
+
+  return textListOrUnknown(commands).filter((entry) => entry !== UNKNOWN);
+}
+
+function historyCostFor(report, state) {
+  const cost = report.costResult || report.costDecision || state.execution && state.execution.costDecision || state.plan && state.plan.budgetState;
+
+  if (!isPlainObject(cost)) {
+    return {
+      ...emptyCostSummary(),
+      detail: "No cost result was recorded for this task.",
+    };
+  }
+
+  const status = stringOrUnknown(cost.status).toUpperCase();
+  const costClass = presentationText(cost.costClass);
+
+  return {
+    status,
+    label: costLabel(status, costClass, false),
+    detail: presentationText(cost.reason || cost.recommendedNextStep || "Cost result was recorded."),
+    costClass,
+    estimatedCost: moneyText(cost.estimatedCost || cost.exactEstimate || cost.estimatedCostRange),
+    budgetCeiling: moneyText(cost.budgetCeiling),
+    approvalRequired: status === "APPROVAL_REQUIRED",
+    approved: false,
+    blocked: status === "BLOCKED",
+  };
+}
+
+function historyRestoreFor(restoreInspection, isCurrent) {
+  if (restoreInspection && restoreInspection.available && isCurrent) {
+    return {
+      status: "AVAILABLE",
+      label: "Available",
+      available: true,
+      detail: "Restore is available for the latest Levi-managed operation.",
+      restorePointId: restoreInspection.id,
+    };
+  }
+
+  return {
+    status: "UNAVAILABLE",
+    label: "Unavailable",
+    available: false,
+    detail: "No restore point is attached to this history entry.",
+    restorePointId: UNKNOWN,
+  };
+}
+
+function historyMemoryOutcomeFor(memoryRecord, state) {
+  const record = isPlainObject(memoryRecord) ? memoryRecord : state.memoryRecord;
+
+  if (!isPlainObject(record)) {
+    return {
+      status: "UNKNOWN",
+      label: "Unknown",
+      detail: "Verified Project Knowledge outcome is UNKNOWN for this task.",
+      timestamp: UNKNOWN,
+    };
+  }
+
+  const confidence = presentationText(record.confidenceState || "VERIFIED");
+
+  return {
+    status: confidence === "VERIFIED" ? "VERIFIED" : "UNKNOWN",
+    label: confidence === "VERIFIED" ? "Verified" : "Unknown",
+    detail: confidence === "VERIFIED"
+      ? "Verified task outcome was recorded for Project Knowledge."
+      : "Project Knowledge outcome needs review.",
+    timestamp: timestampOrUnknown(record.timestamp),
+  };
+}
+
+function compareHistoryEntries(left, right) {
+  const leftTime = timestampSortValue(left.timestamp);
+  const rightTime = timestampSortValue(right.timestamp);
+
+  if (leftTime !== rightTime) {
+    return rightTime - leftTime;
+  }
+
+  return left.order - right.order || left.id.localeCompare(right.id);
+}
+
+function timestampSortValue(value) {
+  const text = timestampOrUnknown(value);
+  const milliseconds = Date.parse(text);
+  return Number.isFinite(milliseconds) ? milliseconds : 0;
+}
+
+function formatTimestampForUi(value) {
+  const text = timestampOrUnknown(value);
+  const milliseconds = Date.parse(text);
+
+  if (!Number.isFinite(milliseconds)) {
+    return UNKNOWN;
+  }
+
+  const date = new Date(milliseconds);
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  const hour = String(date.getUTCHours()).padStart(2, "0");
+  const minute = String(date.getUTCMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hour}:${minute} UTC`;
+}
+
+function hashText(value) {
+  const text = stringOrUnknown(value);
+  let hash = 0;
+
+  for (let index = 0; index < text.length; index += 1) {
+    hash = (hash << 5) - hash + text.charCodeAt(index);
+    hash |= 0;
+  }
+
+  return hash;
+}
+
+function restoreHistorySummaryText(timeline, restoreInspection) {
+  if (timeline.length === 0 && restoreInspection.available) {
+    return "A restore point is available for inspection. No completion history is recorded yet.";
+  }
+
+  if (timeline.length === 0) {
+    return "No task history is recorded yet.";
+  }
+
+  const restoreText = restoreInspection.available ? "A restore point is available." : "No restore point is available.";
+  return `${timeline.length} task ${timeline.length === 1 ? "entry is" : "entries are"} recorded. ${restoreText}`;
+}
+
+function restoreHistoryTopSummary(timeline, restoreInspection) {
+  return [
+    {
+      label: "Recent activity",
+      value: timeline.length === 0 ? "None" : `${timeline.length} recorded`,
+      detail: timeline.length === 0 ? "No task history is recorded yet." : "Levi has recorded task activity for this project.",
+    },
+    {
+      label: "Last successful task",
+      value: lastSuccessfulTaskValue(timeline),
+      detail: lastSuccessfulTaskText(timeline),
+    },
+    {
+      label: "Latest restore point",
+      value: restoreInspection.label,
+      detail: restoreInspection.detail,
+    },
+    {
+      label: "Project history",
+      value: `${timeline.length}`,
+      detail: "Recorded completion entries available to this screen.",
+    },
+  ];
+}
+
+function lastSuccessfulTaskValue(timeline) {
+  const entry = timeline.find((item) => stringOrUnknown(item.status).toUpperCase() === "COMPLETED");
+  return entry ? "Completed" : "None";
+}
+
+function lastSuccessfulTaskText(timeline) {
+  const entry = timeline.find((item) => stringOrUnknown(item.status).toUpperCase() === "COMPLETED");
+
+  if (!entry) {
+    return "No successful task is recorded yet.";
+  }
+
+  const time = entry.displayTime === UNKNOWN ? "time UNKNOWN" : entry.displayTime;
+  return `${entry.objective} at ${time}.`;
+}
+
+function restoreHistoryActionsFor(restoreInspection) {
+  if (restoreInspection && restoreInspection.available) {
+    return {
+      primary: {
+        label: "Restore this version",
+        action: "restore",
+        enabled: true,
+      },
+      secondary: [
+        {
+          label: "View details",
+          target: "details",
+          enabled: true,
+        },
+        {
+          label: "Start New Task",
+          href: "#new-task",
+          enabled: true,
+        },
+      ],
+    };
+  }
+
+  return {
+    primary: {
+      label: "Start New Task",
+      href: "#new-task",
+      enabled: true,
+    },
+    secondary: [
+      {
+        label: "View details",
+        target: "details",
+        enabled: false,
+      },
+      {
+        label: "Start New Task",
+        href: "#new-task",
+        enabled: true,
+      },
+    ],
+  };
+}
+
+function restoreSubmitResultFor(result) {
+  if (!isPlainObject(result)) {
+    return restoreSubmitResultFromError("Restore result is UNKNOWN.");
+  }
+
+  const status = restoreResultStatusFor(result);
+  const restoredFiles = textListOrEmpty(result.restoredFiles);
+  const runtimeCount = Array.isArray(result.runtimeFiles) ? result.runtimeFiles.length : 0;
+
+  return {
+    status,
+    label: restoreStatusLabel(status),
+    headline: restoreResultHeadline(status),
+    message: restoreResultMessage(status, result.error),
+    restoredFiles,
+    fileCount: restoredFiles.length,
+    internalState: runtimeCount > 0
+      ? `Levi internal state was returned to the recorded boundary for ${runtimeCount} item${runtimeCount === 1 ? "" : "s"}.`
+      : "No Levi internal state files changed during restore.",
+    error: presentationText(result.error),
+  };
+}
+
+function restoreSubmitResultFromError(message, forcedStatus) {
+  const status = forcedStatus || restoreErrorStatus(message);
+
+  return {
+    status,
+    label: restoreStatusLabel(status),
+    headline: restoreResultHeadline(status),
+    message: restoreResultMessage(status, message),
+    restoredFiles: [],
+    fileCount: 0,
+    internalState: "Levi internal state was not changed.",
+    error: presentationText(message),
+  };
+}
+
+function restoreResultStatusFor(result) {
+  const status = stringOrUnknown(result.status).toUpperCase();
+  const error = stringOrUnknown(result.error).toLowerCase();
+
+  if (status === "COMPLETED") {
+    return "COMPLETED";
+  }
+
+  if (status === "CONFIRMATION_REQUIRED") {
+    return "CONFIRMATION_REQUIRED";
+  }
+
+  if (status === "FAILED" && error.includes("rollback failed")) {
+    return "PARTIAL_ROLLBACK";
+  }
+
+  if (status === "FAILED") {
+    return "FAILED";
+  }
+
+  return status === UNKNOWN ? "UNKNOWN" : status;
+}
+
+function restoreResultHeadline(status) {
+  const normalized = stringOrUnknown(status).toUpperCase();
+
+  if (normalized === "COMPLETED") {
+    return "Restore completed";
+  }
+
+  if (normalized === "CONFIRMATION_REQUIRED") {
+    return "Confirm before restoring";
+  }
+
+  if (normalized === "PARTIAL_ROLLBACK") {
+    return "Restore rollback needs attention";
+  }
+
+  if (normalized === "INVALID") {
+    return "Restore point is invalid";
+  }
+
+  if (normalized === "CORRUPTED") {
+    return "Restore point is corrupted";
+  }
+
+  if (normalized === "UNAVAILABLE") {
+    return "Restore unavailable";
+  }
+
+  return "Restore failed";
+}
+
+function restoreResultMessage(status, message) {
+  const normalized = stringOrUnknown(status).toUpperCase();
+
+  if (normalized === "COMPLETED") {
+    return "Levi restored the tracked files for this restore point.";
+  }
+
+  if (normalized === "CONFIRMATION_REQUIRED") {
+    return "Explicit confirmation is required before Levi Core can restore files.";
+  }
+
+  if (normalized === "PARTIAL_ROLLBACK") {
+    return presentationText(message || "Restore failed and rollback also needs attention.");
+  }
+
+  if (normalized === "UNAVAILABLE") {
+    return presentationText(message || "No restore point is available.");
+  }
+
+  return presentationText(message || "Restore could not be completed.");
+}
+
 function listIssues(issues) {
   if (!Array.isArray(issues)) {
     return [];
@@ -2585,6 +3477,46 @@ function loadMemoryRecords(repositoryPath) {
   return project && Array.isArray(project.records) ? project.records : [];
 }
 
+function loadHistoryMemoryRecords(repositoryPath) {
+  const filePath = path.join(repositoryPath, ".levi", "memory.json");
+
+  if (!fs.existsSync(filePath)) {
+    return [];
+  }
+
+  const store = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const projects = isPlainObject(store.projects) ? store.projects : {};
+  const projectIds = uniqueSorted([projectIdFor(repositoryPath), "default"]);
+  const records = [];
+  const seen = new Set();
+
+  for (const projectId of projectIds) {
+    const project = projects[projectId];
+
+    if (!project || !Array.isArray(project.records)) {
+      continue;
+    }
+
+    for (const record of project.records) {
+      if (!isPlainObject(record) || record.type !== "task-outcome") {
+        continue;
+      }
+
+      const id = stringOrUnknown(record.id);
+      const key = id === UNKNOWN ? JSON.stringify(record.source || {}) : id;
+
+      if (seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      records.push(record);
+    }
+  }
+
+  return records;
+}
+
 function projectIdFor(repositoryPath) {
   return path.resolve(repositoryPath);
 }
@@ -2667,5 +3599,7 @@ module.exports = {
   createExecutionCompletionView,
   createProjectHealthView,
   createPlanApprovalView,
+  createRestoreHistoryView,
   submitPlanApproval,
+  submitRestoreConfirmation,
 };
