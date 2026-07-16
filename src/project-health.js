@@ -1161,6 +1161,10 @@ function normalizeEvidence(evidence) {
       const source = normalizeSource(entry.source);
       const signalText = sanitizeText(entry.signal);
 
+      if (unsafeEvidenceSource(entry.source, source)) {
+        return null;
+      }
+
       if (source === UNKNOWN && signalText === UNKNOWN) {
         return null;
       }
@@ -1201,6 +1205,16 @@ function normalizeSource(source) {
   }
 
   return normalized;
+}
+
+function unsafeEvidenceSource(rawSource, normalizedSource) {
+  if (normalizedSource !== UNKNOWN) {
+    return false;
+  }
+
+  const text = sanitizeText(rawSource);
+
+  return text !== UNKNOWN && isUnsafePath(text);
 }
 
 function containsUnsafeValue(value) {
