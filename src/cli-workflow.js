@@ -10,7 +10,7 @@ const { createMemoryStore } = require("./memory-store");
 const { createLocalReadinessReport } = require("./local-readiness-check");
 const { createPublicModelGateway } = require("./model-gateway");
 const { removeProjectDecisions, reviewProjectDecisions } = require("./project-decisions");
-const { collectProjectHealthSignals, summarizeProjectHealth } = require("./project-health");
+const { collectProjectHealthSignals, recommendProjectHealth, summarizeProjectHealth } = require("./project-health");
 const { summarizeProject } = require("./project-summary");
 const { scanRepository } = require("./repository-scanner");
 const { applySafePatch } = require("./safe-patch");
@@ -734,12 +734,17 @@ function plannedOperationSummary(repositoryPath, expectedFile) {
 }
 
 function createProjectHealthSummary(repositoryPath, state = {}) {
-  return summarizeProjectHealth({
-    report: collectProjectHealthSignals({
-      repositoryPath,
-      state,
-    }),
+  const report = collectProjectHealthSignals({
+    repositoryPath,
+    state,
   });
+  const summary = summarizeProjectHealth({ report });
+  const recommendationReport = recommendProjectHealth({ report, summary });
+
+  return {
+    ...summary,
+    recommendations: recommendationReport.recommendations,
+  };
 }
 
 function loadState(repositoryPath) {

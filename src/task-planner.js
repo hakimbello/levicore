@@ -73,6 +73,10 @@ function createTaskPlan(input) {
     plan.budgetState = normalizeBudgetState(input.budgetState);
   }
 
+  if (input.healthRecommendations !== undefined) {
+    plan.healthRecommendations = normalizeHealthRecommendations(input.healthRecommendations);
+  }
+
   return plan;
 }
 
@@ -105,7 +109,7 @@ function createTaskPlanFromIntake(input) {
     : null;
   const decisionValidationCommands = decisionEnforcement ? decisionEnforcement.validationCommands : [];
   const decisionConstraints = decisionEnforcement ? decisionEnforcement.constraints : [];
-  const plan = createTaskPlan({
+  const planInput = {
     requirementId: scope.requirement.id,
     objective: intake.normalizedObjective,
     expectedFiles,
@@ -114,7 +118,14 @@ function createTaskPlanFromIntake(input) {
     risks: risksFor(intake, decisionEnforcement),
     exclusions: exclusionsFor(expectedFiles),
     plannedOperations,
-  });
+  };
+  const healthRecommendations = input.healthRecommendations || input.projectHealthRecommendations;
+
+  if (healthRecommendations !== undefined) {
+    planInput.healthRecommendations = healthRecommendations;
+  }
+
+  const plan = createTaskPlan(planInput);
   const scopeBoundaries = [
     `Plan only for the requested objective: ${intake.normalizedObjective}.`,
     `Limit file changes to: ${expectedFiles.join(", ")}.`,
@@ -220,6 +231,10 @@ function validatePlan(plan) {
   if (plan.budgetState !== undefined) {
     normalizeBudgetState(plan.budgetState);
   }
+
+  if (plan.healthRecommendations !== undefined) {
+    normalizeHealthRecommendations(plan.healthRecommendations);
+  }
 }
 
 function attachCostEstimate(plan, costEstimate) {
@@ -237,6 +252,15 @@ function attachBudgetState(plan, budgetState) {
   return {
     ...plan,
     budgetState: normalizeBudgetState(budgetState),
+  };
+}
+
+function attachHealthRecommendations(plan, recommendations) {
+  validatePlan(plan);
+
+  return {
+    ...plan,
+    healthRecommendations: normalizeHealthRecommendations(recommendations),
   };
 }
 
@@ -284,6 +308,58 @@ function normalizeBudgetState(budgetState) {
   }
 
   return JSON.parse(JSON.stringify(budgetState));
+}
+
+function normalizeHealthRecommendations(recommendations) {
+  if (!Array.isArray(recommendations)) {
+    throw new Error("Task plan healthRecommendations must be an array.");
+  }
+
+  return recommendations.map((recommendation) => {
+    if (!recommendation || typeof recommendation !== "object" || Array.isArray(recommendation)) {
+      throw new Error("Task plan health recommendation must be an object.");
+    }
+
+    for (const fieldName of ["recommendationId", "priority", "category", "action", "reason"]) {
+      requireString(recommendation[fieldName], `healthRecommendation.${fieldName}`);
+    }
+
+    if (!["HIGH", "MEDIUM", "LOW"].includes(recommendation.priority)) {
+      throw new Error("Task plan healthRecommendation.priority is invalid.");
+    }
+
+    requireStringArray(recommendation.supportingSignalIds, "healthRecommendation.supportingSignalIds");
+
+    if (!Array.isArray(recommendation.evidenceReferences)) {
+      throw new Error("Task plan healthRecommendation.evidenceReferences is required.");
+    }
+
+    return {
+      recommendationId: recommendation.recommendationId,
+      priority: recommendation.priority,
+      category: recommendation.category,
+      action: recommendation.action,
+      reason: recommendation.reason,
+      supportingSignalIds: uniqueSorted(recommendation.supportingSignalIds),
+      evidenceReferences: recommendation.evidenceReferences.map(normalizeHealthRecommendationEvidence),
+    };
+  });
+}
+
+function normalizeHealthRecommendationEvidence(evidence) {
+  if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) {
+    throw new Error("Task plan health recommendation evidence must be an object.");
+  }
+
+  for (const fieldName of ["signalId", "source", "signal"]) {
+    requireString(evidence[fieldName], `healthRecommendation.evidence.${fieldName}`);
+  }
+
+  return {
+    signalId: evidence.signalId,
+    source: evidence.source,
+    signal: evidence.signal,
+  };
 }
 
 function inferExpectedFiles(intake, repositorySummary) {
@@ -724,6 +800,7 @@ function requireStringArray(value, fieldName) {
 
 module.exports = {
   APPROVAL_STATES,
+  attachHealthRecommendations,
   attachBudgetState,
   attachCostEstimate,
   approveTaskPlan,

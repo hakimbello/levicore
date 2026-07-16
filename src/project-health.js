@@ -83,6 +83,28 @@ function summarizeProjectHealth(input = {}) {
   return summary;
 }
 
+function recommendProjectHealth(input = {}) {
+  validateSummaryInput(input);
+
+  const signals = normalizeSummarySignals(
+    input.signals ||
+      input.healthSignals ||
+      input.report && input.report.signals ||
+      input.summary && input.summary.highestSeverityIssues,
+  );
+  const issueSignals = signals
+    .filter((entry) => entry.status === BLOCKED || entry.status === ATTENTION || entry.status === UNKNOWN)
+    .sort(compareIssueSignals);
+
+  return {
+    projectId: stringOrUnknown(input.projectId || input.report && input.report.projectId || input.summary && input.summary.projectId),
+    repositoryRoot: stringOrUnknown(
+      input.repositoryRoot || input.report && input.report.repositoryRoot || input.summary && input.summary.repositoryRoot,
+    ),
+    recommendations: groupedRecommendations(issueSignals),
+  };
+}
+
 function resolveScanResult(options) {
   if (isPlainObject(options.scanResult)) {
     return options.scanResult;
@@ -848,6 +870,142 @@ function latestSignalTimestamp(signals) {
   return timestamps.length > 0 ? timestamps[timestamps.length - 1] : UNKNOWN;
 }
 
+function groupedRecommendations(signals) {
+  const groups = new Map();
+
+  for (const signalEntry of signals) {
+    const priority = recommendationPriority(signalEntry.status);
+    const key = `${priority}:${signalEntry.status}:${signalEntry.category}`;
+    const group = groups.get(key) || {
+      priority,
+      status: signalEntry.status,
+      category: signalEntry.category,
+      signals: [],
+    };
+
+    group.signals.push(signalEntry);
+    groups.set(key, group);
+  }
+
+  return Array.from(groups.values())
+    .map(recommendationForGroup)
+    .sort(compareRecommendations);
+}
+
+function recommendationForGroup(group) {
+  const supportingSignals = uniqueSorted(group.signals.map((entry) => entry.signalId));
+  const category = plainCategory(group.category);
+  const recommendationId = recommendationIdFor(group.priority, group.status, group.category);
+
+  return {
+    recommendationId,
+    priority: group.priority,
+    category: group.category,
+    action: recommendationAction(group.status, category),
+    reason: recommendationReason(group.status, group.signals, category),
+    supportingSignalIds: supportingSignals,
+    evidenceReferences: recommendationEvidence(group.signals),
+  };
+}
+
+function recommendationPriority(status) {
+  if (status === BLOCKED) {
+    return "HIGH";
+  }
+
+  if (status === ATTENTION) {
+    return "MEDIUM";
+  }
+
+  return "LOW";
+}
+
+function recommendationAction(status, category) {
+  if (status === BLOCKED) {
+    return `Resolve ${category} blocker.`;
+  }
+
+  if (status === ATTENTION) {
+    return `Review ${category} warning.`;
+  }
+
+  return `Gather evidence for ${category}.`;
+}
+
+function recommendationReason(status, signals, category) {
+  const count = signals.length;
+  const labels = uniqueSorted(signals.map((entry) => entry.label)).slice(0, 3).join(", ");
+
+  if (status === BLOCKED) {
+    return `${count} ${category} blocker signal(s): ${labels}.`;
+  }
+
+  if (status === ATTENTION) {
+    return `${count} ${category} warning signal(s): ${labels}.`;
+  }
+
+  return `${count} ${category} signal(s) have UNKNOWN evidence: ${labels}.`;
+}
+
+function recommendationEvidence(signals) {
+  return signals
+    .flatMap((signalEntry) => signalEntry.evidence.map((evidence) => ({
+      signalId: signalEntry.signalId,
+      source: evidence.source,
+      signal: evidence.signal,
+    })))
+    .filter(isSafeEvidenceReference)
+    .sort(compareRecommendationEvidence)
+    .filter(uniqueEvidenceReference)
+    .slice(0, 12);
+}
+
+function isSafeEvidenceReference(reference) {
+  return (
+    isSafeEvidenceValue(reference.source) &&
+    isSafeEvidenceValue(reference.signal) &&
+    (reference.source !== UNKNOWN || reference.signal !== UNKNOWN)
+  );
+}
+
+function isSafeEvidenceValue(value) {
+  const normalized = stringOrUnknown(value).replace(/\\/g, "/");
+
+  if (normalized === UNKNOWN) {
+    return true;
+  }
+
+  return (
+    !SECRET_KEY_PATTERN.test(normalized) &&
+    !SECRET_VALUE_PATTERN.test(normalized) &&
+    !SECRET_PATH_PATTERN.test(normalized) &&
+    !GENERATED_PATH_PATTERN.test(normalized) &&
+    !DEPENDENCY_PATH_PATTERN.test(normalized) &&
+    !BINARY_EXTENSION_PATTERN.test(normalized) &&
+    !/(^|\/)\.levi($|\/)/i.test(normalized)
+  );
+}
+
+function uniqueEvidenceReference(reference, index, references) {
+  return references.findIndex((entry) =>
+    entry.signalId === reference.signalId &&
+      entry.source === reference.source &&
+      entry.signal === reference.signal,
+  ) === index;
+}
+
+function recommendationIdFor(priority, status, category) {
+  return `health-rec-${slug(priority)}-${slug(status)}-${slug(category)}`;
+}
+
+function plainCategory(category) {
+  return stringOrUnknown(category).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() || "project health";
+}
+
+function slug(value) {
+  return stringOrUnknown(value).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "unknown";
+}
+
 function signal(input) {
   return input;
 }
@@ -1126,6 +1284,26 @@ function compareIssueSignals(left, right) {
   return statusPriority(left.status) - statusPriority(right.status) || compareSignals(left, right);
 }
 
+function compareRecommendations(left, right) {
+  return (
+    recommendationPriorityRank(left.priority) - recommendationPriorityRank(right.priority) ||
+    left.category.localeCompare(right.category) ||
+    left.recommendationId.localeCompare(right.recommendationId)
+  );
+}
+
+function recommendationPriorityRank(priority) {
+  if (priority === "HIGH") {
+    return 0;
+  }
+
+  if (priority === "MEDIUM") {
+    return 1;
+  }
+
+  return 2;
+}
+
 function statusPriority(status) {
   if (status === BLOCKED) {
     return 0;
@@ -1152,6 +1330,10 @@ function compareEvidenceReferences(left, right) {
     left.source.localeCompare(right.source) ||
     left.signal.localeCompare(right.signal)
   );
+}
+
+function compareRecommendationEvidence(left, right) {
+  return compareEvidenceReferences(left, right);
 }
 
 function compareRecords(left, right) {
@@ -1223,5 +1405,6 @@ module.exports = {
   HEALTHY,
   UNKNOWN,
   collectProjectHealthSignals,
+  recommendProjectHealth,
   summarizeProjectHealth,
 };
