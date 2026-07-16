@@ -253,26 +253,27 @@ function indexJavaScript(relativePath, contents) {
       pendingRoute = route.name;
     }
 
-    if (isMiddlewareLine(trimmed, relativePath)) {
+    const middleware = javascriptMiddlewareUsage(trimmed);
+
+    if (middleware) {
       symbols.push(createSymbol({
-        name: middlewareName(trimmed, relativePath),
+        name: middleware.name,
         type: "middleware",
         path: relativePath,
         lineNumber,
         language,
         parent: moduleName(relativePath),
         exported: hasExport(trimmed),
-        signal: "middleware evidence",
+        signal: middleware.signal,
       }));
       relationships.push(createRawRelationship({
         sourceName: moduleName(relativePath),
         sourceType: "module",
         relationshipType: "middleware-usage",
-        targetName: middlewareName(trimmed, relativePath),
-        targetPath: relativePath,
+        targetName: middleware.name,
         sourcePath: relativePath,
         lineNumber,
-        signal: "middleware usage",
+        signal: middleware.signal,
       }));
     }
 
@@ -1269,18 +1270,21 @@ function reactFunctionType(name, relativePath) {
   return "function";
 }
 
-function isMiddlewareLine(trimmed, relativePath) {
-  return /(^|\/)middleware\.[cm]?[jt]s$/.test(relativePath) || /\b(app|router)\.use\(/.test(trimmed);
-}
+function javascriptMiddlewareUsage(trimmed) {
+  const match = trimmed.match(/\b(?:app|router)\.use\((.*)\)/);
 
-function middlewareName(trimmed, relativePath) {
-  const route = javascriptRoute(trimmed);
-
-  if (route) {
-    return route.name;
+  if (!match) {
+    return null;
   }
 
-  return path.basename(relativePath).replace(path.extname(relativePath), "");
+  const identifiers = Array.from(match[1].matchAll(/\b[A-Za-z_$][\w$]*\b/g))
+    .map((entry) => entry[0])
+    .filter((entry) => !["async", "function", "next", "req", "request", "res", "response"].includes(entry));
+
+  return {
+    name: identifiers[identifiers.length - 1] || UNKNOWN,
+    signal: "middleware usage",
+  };
 }
 
 function createSymbol(input) {

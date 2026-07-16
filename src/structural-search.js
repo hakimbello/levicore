@@ -149,13 +149,21 @@ function normalizeRelationshipFilters(filters) {
     targetNames: normalizeTextFilter(filters.targetNames || filters.targetName || filters.targetSymbol),
     sourcePaths: normalizePathFilter(filters.sourcePaths || filters.sourcePath || filters.path),
     targetPaths: normalizePathFilter(filters.targetPaths || filters.targetPath),
-    confidenceStates: normalizeTextFilter(filters.confidenceStates || filters.confidenceState || filters.confidence),
+    confidenceStates: normalizeConfidenceStateFilter(filters.confidenceStates || filters.confidenceState || filters.confidence),
     keywords: normalizeTextFilter(filters.keywords || filters.keyword),
   };
 }
 
 function normalizeTextFilter(value) {
   return uniqueSorted(asArray(value).map(stringOrUnknown).filter((entry) => entry !== UNKNOWN));
+}
+
+function normalizeConfidenceStateFilter(value) {
+  if (value === undefined || value === null) {
+    return [];
+  }
+
+  return uniqueSorted(asArrayIncludingUnknown(value).map(stringOrUnknown).filter((entry) => entry !== ""));
 }
 
 function normalizePathFilter(value) {
@@ -512,7 +520,11 @@ function normalizeEvidence(evidence) {
 }
 
 function isExcludedSymbol(symbol) {
-  return isExcludedPath(symbol.path) || isExcludedPath(symbol.name) || isExcludedPath(symbol.parent);
+  if (!isPlainObject(symbol)) {
+    return false;
+  }
+
+  return isExcludedPath(symbol.path) || isExcludedPath(symbol.evidence && symbol.evidence.source);
 }
 
 function isExcludedRelationship(relationship) {
@@ -610,6 +622,14 @@ function symbolName(symbol) {
 
 function asArray(value) {
   if (value === undefined || value === null || value === UNKNOWN) {
+    return [];
+  }
+
+  return Array.isArray(value) ? value : [value];
+}
+
+function asArrayIncludingUnknown(value) {
+  if (value === undefined || value === null) {
     return [];
   }
 
