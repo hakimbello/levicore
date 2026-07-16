@@ -10,6 +10,7 @@ const { createMemoryStore } = require("./memory-store");
 const { createLocalReadinessReport } = require("./local-readiness-check");
 const { createPublicModelGateway } = require("./model-gateway");
 const { removeProjectDecisions, reviewProjectDecisions } = require("./project-decisions");
+const { collectProjectHealthSignals, summarizeProjectHealth } = require("./project-health");
 const { summarizeProject } = require("./project-summary");
 const { scanRepository } = require("./repository-scanner");
 const { applySafePatch } = require("./safe-patch");
@@ -64,7 +65,12 @@ function initializeProject(repositoryPath) {
 }
 
 function inspectStatus(repositoryPath) {
-  return loadState(repositoryPath);
+  const state = loadState(repositoryPath);
+
+  return {
+    ...state,
+    projectHealth: createProjectHealthSummary(repositoryPath, state),
+  };
 }
 
 function inspectLocalReadiness() {
@@ -319,6 +325,7 @@ function executeApprovedPlan(repositoryPath) {
         knownFailures: completed ? [] : ["Validation failed."],
         remainingWork: completed ? [] : ["Resolve failed validation."],
         status: completed ? "COMPLETED" : "FAILED",
+        projectHealthSummary: createProjectHealthSummary(repositoryPath, state),
       });
       const memoryRecord = recordVerifiedTaskOutcome(memoryStore, "default", report);
 
@@ -421,6 +428,7 @@ function reviewProject(repositoryPath) {
     knownFailures: state.validation.status === "FAILED" ? ["Validation failed."] : [],
     remainingWork: state.validation.status === "FAILED" ? ["Resolve failed validation."] : [],
     status: state.validation.status === "COMPLETED" ? "COMPLETED" : "FAILED",
+    projectHealthSummary: createProjectHealthSummary(repositoryPath, state),
   });
   const memoryStore = createMemoryStore(path.join(repositoryPath, ".levi", "memory.json"));
 
@@ -723,6 +731,15 @@ function plannedOperationSummary(repositoryPath, expectedFile) {
     type: fs.existsSync(targetPath) ? "update" : "create",
     path: expectedFile,
   };
+}
+
+function createProjectHealthSummary(repositoryPath, state = {}) {
+  return summarizeProjectHealth({
+    report: collectProjectHealthSignals({
+      repositoryPath,
+      state,
+    }),
+  });
 }
 
 function loadState(repositoryPath) {

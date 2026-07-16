@@ -4,7 +4,7 @@ function createCompletionReport(input) {
   const validationFailed = input.validationResults.some((result) => result.exitCode !== 0);
   const status = validationFailed ? "FAILED" : input.status;
 
-  return {
+  const report = {
     requirementId: input.requirementId,
     filesChanged: [...input.filesChanged],
     changeSummary: input.changeSummary,
@@ -23,6 +23,12 @@ function createCompletionReport(input) {
     remainingWork: input.remainingWork,
     status,
   };
+
+  if (input.projectHealthSummary) {
+    report.projectHealthSummary = input.projectHealthSummary;
+  }
+
+  return report;
 }
 
 function recordVerifiedTaskOutcome(memoryStore, projectId, report) {
@@ -58,6 +64,13 @@ function validateReportInput(input) {
 
   if (input.knownFailures && !Array.isArray(input.knownFailures)) {
     throw new Error("Completion report knownFailures must be an array.");
+  }
+
+  if (
+    input.projectHealthSummary &&
+    (typeof input.projectHealthSummary !== "object" || Array.isArray(input.projectHealthSummary))
+  ) {
+    throw new Error("Completion report projectHealthSummary must be an object.");
   }
 }
 
