@@ -2,7 +2,14 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const { URL } = require("node:url");
-const { createHomeDashboardView, createHomeIntakePreview } = require("./ui-bridge");
+const {
+  createHomeDashboardView,
+  createHomeIntakePreview,
+  createExecutionCompletionView,
+  createProjectHealthView,
+  createPlanApprovalView,
+  submitPlanApproval,
+} = require("./ui-bridge");
 
 const DEFAULT_PORT = 4317;
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -31,11 +38,36 @@ function createUiServer(options = {}) {
         return sendJson(response, 200, createHomeIntakePreview(repositoryPath, body.requestText));
       }
 
+      if (request.method === "GET" && requestUrl.pathname === "/api/plan") {
+        return sendJson(response, 200, createPlanApprovalView(repositoryPath));
+      }
+
+      if (request.method === "POST" && requestUrl.pathname === "/api/plan/approve") {
+        const body = await readJsonBody(request);
+        return sendJson(response, 200, submitPlanApproval(repositoryPath, body));
+      }
+
+      if (request.method === "GET" && requestUrl.pathname === "/api/execution") {
+        return sendJson(response, 200, createExecutionCompletionView(repositoryPath));
+      }
+
+      if (request.method === "GET" && requestUrl.pathname === "/api/health") {
+        return sendJson(response, 200, createProjectHealthView(repositoryPath));
+      }
+
       if (requestUrl.pathname.startsWith("/api/")) {
         return sendJson(response, 404, {
           status: "ERROR",
           reason: "UI endpoint not found.",
         });
+      }
+
+      if ((request.method === "GET" || request.method === "HEAD") && requestUrl.pathname === "/favicon.ico") {
+        response.writeHead(204, {
+          "Cache-Control": "no-store",
+        });
+        response.end();
+        return undefined;
       }
 
       if (request.method !== "GET" && request.method !== "HEAD") {
