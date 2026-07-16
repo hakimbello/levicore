@@ -54,6 +54,35 @@ function collectProjectHealthSignals(options = {}) {
   };
 }
 
+function summarizeProjectHealth(input = {}) {
+  validateSummaryInput(input);
+
+  const signals = normalizeSummarySignals(
+    input.signals || input.healthSignals || input.report && input.report.signals,
+  );
+  const statusCounts = countSignalStatuses(signals);
+  const overall = summaryOverallStatus(signals);
+  const issues = highestSeverityIssues(signals);
+  const timestamp = latestSignalTimestamp(signals);
+  const summary = {
+    overallStatus: overall,
+    summary: summaryText(overall, statusCounts),
+    signalCounts: statusCounts,
+    groups: summaryGroups(signals),
+    highestSeverityIssues: issues,
+    readyToWork: overall === HEALTHY,
+    evidenceReferences: evidenceReferencesFor(issues.length > 0 ? issues : signals),
+    repositoryRoot: stringOrUnknown(input.repositoryRoot || input.report && input.report.repositoryRoot),
+    projectId: stringOrUnknown(input.projectId || input.report && input.report.projectId),
+  };
+
+  if (timestamp !== UNKNOWN) {
+    summary.timestamp = timestamp;
+  }
+
+  return summary;
+}
+
 function resolveScanResult(options) {
   if (isPlainObject(options.scanResult)) {
     return options.scanResult;
@@ -637,7 +666,7 @@ function unknownEvidenceSignal(projectSummary, context) {
 function normalizeSignal(input) {
   const status = STATUSES.has(input.status) ? input.status : UNKNOWN;
   const normalized = {
-    signalId: `health-${input.category}-${input.name}`.replace(/[^a-z0-9-]/gi, "-").toLowerCase(),
+    signalId: normalizeSignalId(input),
     category: stringOrUnknown(input.category),
     status,
     label: stringOrUnknown(input.label),
@@ -652,6 +681,171 @@ function normalizeSignal(input) {
   }
 
   return normalized;
+}
+
+function normalizeSignalId(input) {
+  const existing = stringOrUnknown(input.signalId);
+
+  if (existing !== UNKNOWN) {
+    return existing.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
+  }
+
+  return `health-${input.category}-${input.name}`.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
+}
+
+function normalizeSummarySignals(signals) {
+  if (!Array.isArray(signals)) {
+    return [];
+  }
+
+  return signals
+    .filter(isPlainObject)
+    .map((entry) => normalizeSignal({
+      signalId: entry.signalId,
+      category: entry.category,
+      name: entry.name || entry.label,
+      status: entry.status,
+      label: entry.label,
+      detail: entry.detail,
+      evidence: entry.evidence,
+      timestamp: entry.timestamp,
+    }))
+    .sort(compareSignals);
+}
+
+function countSignalStatuses(signals) {
+  const counts = {
+    HEALTHY: 0,
+    ATTENTION: 0,
+    BLOCKED: 0,
+    UNKNOWN: 0,
+  };
+
+  for (const entry of signals) {
+    const status = STATUSES.has(entry.status) ? entry.status : UNKNOWN;
+    counts[status] += 1;
+  }
+
+  return counts;
+}
+
+function summaryOverallStatus(signals) {
+  const counts = countSignalStatuses(signals);
+
+  if (counts.BLOCKED > 0) {
+    return BLOCKED;
+  }
+
+  if (counts.ATTENTION > 0) {
+    return ATTENTION;
+  }
+
+  if (counts.UNKNOWN > 0 || signals.length === 0) {
+    return UNKNOWN;
+  }
+
+  return HEALTHY;
+}
+
+function highestSeverityIssues(signals) {
+  const blockers = signals.filter((entry) => entry.status === BLOCKED).sort(compareIssueSignals);
+  const warnings = signals.filter((entry) => entry.status === ATTENTION).sort(compareIssueSignals);
+  const unknowns = signals.filter((entry) => entry.status === UNKNOWN).sort(compareIssueSignals);
+
+  if (blockers.length > 0) {
+    return blockers.map(issueSummary);
+  }
+
+  if (warnings.length > 0) {
+    return warnings.map(issueSummary);
+  }
+
+  if (unknowns.length > 0) {
+    return unknowns.map(issueSummary);
+  }
+
+  return [];
+}
+
+function summaryGroups(signals) {
+  return {
+    blockers: signals.filter((entry) => entry.status === BLOCKED).map(signalReference),
+    warnings: signals.filter((entry) => entry.status === ATTENTION).map(signalReference),
+    unknown: signals.filter((entry) => entry.status === UNKNOWN).map(signalReference),
+    healthy: signals.filter((entry) => entry.status === HEALTHY).map(signalReference),
+    approvedKnowledge: signals
+      .filter((entry) => entry.category === "knowledge" && entry.status === HEALTHY)
+      .map(signalReference),
+  };
+}
+
+function signalReference(signalEntry) {
+  return {
+    signalId: signalEntry.signalId,
+    category: signalEntry.category,
+    status: signalEntry.status,
+    label: signalEntry.label,
+  };
+}
+
+function issueSummary(signalEntry) {
+  const issue = {
+    signalId: signalEntry.signalId,
+    category: signalEntry.category,
+    status: signalEntry.status,
+    severity: signalEntry.severity,
+    label: signalEntry.label,
+    detail: signalEntry.detail,
+    evidence: signalEntry.evidence,
+  };
+
+  if (signalEntry.timestamp) {
+    issue.timestamp = signalEntry.timestamp;
+  }
+
+  return issue;
+}
+
+function evidenceReferencesFor(signals) {
+  return signals
+    .flatMap((signalEntry) => signalEntry.evidence.map((evidence) => ({
+      signalId: signalEntry.signalId,
+      label: signalEntry.label,
+      source: evidence.source,
+      signal: evidence.signal,
+    })))
+    .filter((entry) => entry.source !== UNKNOWN || entry.signal !== UNKNOWN)
+    .sort(compareEvidenceReferences)
+    .slice(0, 12);
+}
+
+function summaryText(status, counts) {
+  if (status === BLOCKED) {
+    return `${counts.BLOCKED} blocker(s) need attention before work can proceed.`;
+  }
+
+  if (status === ATTENTION) {
+    return `${counts.ATTENTION} warning signal(s) need review.`;
+  }
+
+  if (status === UNKNOWN) {
+    if (counts.UNKNOWN === 0) {
+      return "Project health signals are UNKNOWN.";
+    }
+
+    return `${counts.UNKNOWN} signal(s) are UNKNOWN.`;
+  }
+
+  return "Project health signals are healthy.";
+}
+
+function latestSignalTimestamp(signals) {
+  const timestamps = signals
+    .map((entry) => normalizeTimestamp(entry.timestamp))
+    .filter((timestamp) => timestamp !== UNKNOWN)
+    .sort();
+
+  return timestamps.length > 0 ? timestamps[timestamps.length - 1] : UNKNOWN;
 }
 
 function signal(input) {
@@ -928,8 +1122,36 @@ function compareSignals(left, right) {
   return left.category.localeCompare(right.category) || left.signalId.localeCompare(right.signalId);
 }
 
+function compareIssueSignals(left, right) {
+  return statusPriority(left.status) - statusPriority(right.status) || compareSignals(left, right);
+}
+
+function statusPriority(status) {
+  if (status === BLOCKED) {
+    return 0;
+  }
+
+  if (status === ATTENTION) {
+    return 1;
+  }
+
+  if (status === UNKNOWN) {
+    return 2;
+  }
+
+  return 3;
+}
+
 function compareEvidence(left, right) {
   return `${left.source} ${left.signal}`.localeCompare(`${right.source} ${right.signal}`);
+}
+
+function compareEvidenceReferences(left, right) {
+  return (
+    left.signalId.localeCompare(right.signalId) ||
+    left.source.localeCompare(right.source) ||
+    left.signal.localeCompare(right.signal)
+  );
 }
 
 function compareRecords(left, right) {
@@ -985,6 +1207,12 @@ function validateOptions(options) {
   }
 }
 
+function validateSummaryInput(input) {
+  if (!isPlainObject(input)) {
+    throw new Error("Project health summary input is required.");
+  }
+}
+
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -995,4 +1223,5 @@ module.exports = {
   HEALTHY,
   UNKNOWN,
   collectProjectHealthSignals,
+  summarizeProjectHealth,
 };
