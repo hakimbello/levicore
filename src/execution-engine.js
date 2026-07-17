@@ -10,6 +10,10 @@ const {
   ContinueEngine,
 } = require("./continue-engine");
 const {
+  COMPLETION_RESULTS,
+  ObjectiveCompletionEngine,
+} = require("./objective-completion-engine");
+const {
   REPAIR_RESULTS,
   RepairEngine,
 } = require("./repair-engine");
@@ -34,6 +38,12 @@ const EXECUTION_ENGINE_EVENT_TYPES = Object.freeze({
   SECURITY_WARNING: "security_warning",
   SECURITY_REVIEW_REQUIRED: "security_review_required",
   SECURITY_BLOCKED: "security_blocked",
+  COMPLETION_EVALUATION_STARTED: "completion_evaluation_started",
+  COMPLETION_EVALUATION_COMPLETED: "completion_evaluation_completed",
+  OBJECTIVE_INCOMPLETE: "objective_incomplete",
+  OBJECTIVE_BLOCKED: "objective_blocked",
+  COMPLETION_REVIEW_REQUIRED: "completion_review_required",
+  OBJECTIVE_COMPLETED: "objective_completed",
   REPAIR_STARTED: "repair_started",
   REPAIR_PLAN_CREATED: "repair_plan_created",
   REPAIR_ATTEMPTED: "repair_attempted",
@@ -62,6 +72,7 @@ class ExecutionEngine extends EventEmitter {
     this.executeNextTask = options.executeNextTask;
     this.validateResults = options.validateResults;
     this.continueEngine = options.continueEngine || new ContinueEngine();
+    this.objectiveCompletionEngine = options.objectiveCompletionEngine || new ObjectiveCompletionEngine();
     this.repairEngine = options.repairEngine || new RepairEngine();
     this.securityValidator = options.securityValidator || new SecurityValidator();
     this.approvalGateway = options.approvalGateway || new ApprovalGateway();
@@ -180,7 +191,7 @@ class ExecutionEngine extends EventEmitter {
           }
         }
 
-        if (validationPassed(session) && objectiveComplete(session)) {
+        if (validationPassed(session)) {
           const preCompletionSecurityStop = this.evaluateSecuritySession(
             session,
             counters,
@@ -192,7 +203,11 @@ class ExecutionEngine extends EventEmitter {
             return preCompletionSecurityStop;
           }
 
-          moveSessionTo(session, EXECUTION_STATES.COMPLETED);
+          const completionStop = this.evaluateObjectiveCompletion(session, counters, startedAtMs);
+
+          if (completionStop) {
+            return completionStop;
+          }
         }
 
         const postLimit = exceededLimit(this.limits, counters, runtimeMs(startedAtMs, this.now), {
@@ -269,6 +284,95 @@ class ExecutionEngine extends EventEmitter {
     }
 
     return this.run(session);
+  }
+
+  evaluateObjectiveCompletion(session, counters, startedAtMs) {
+    this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.COMPLETION_EVALUATION_STARTED, session, counters);
+    const evaluation = this.objectiveCompletionEngine.evaluate(session, completionContext(session, counters));
+
+    recordCompletionHistory(session, evaluation);
+    this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.COMPLETION_EVALUATION_COMPLETED, session, counters, {
+      completionResult: evaluation.result,
+      findings: evaluation.findings,
+      reasons: evaluation.reasons,
+    });
+
+    if (evaluation.result === COMPLETION_RESULTS.COMPLETE) {
+      mergeSessionMetadata(session, {
+        objectiveComplete: true,
+      });
+      moveSessionTo(session, EXECUTION_STATES.COMPLETED);
+      this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.OBJECTIVE_COMPLETED, session, counters, {
+        completionResult: evaluation.result,
+      });
+      return null;
+    }
+
+    if (evaluation.result === COMPLETION_RESULTS.INCOMPLETE) {
+      this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.OBJECTIVE_INCOMPLETE, session, counters, {
+        completionResult: evaluation.result,
+        findings: evaluation.findings,
+        reasons: evaluation.reasons,
+      });
+
+      if (Array.isArray(session.remainingSteps) && session.remainingSteps.length > 0) {
+        mergeSessionMetadata(session, {
+          objectiveComplete: false,
+        });
+        return null;
+      }
+
+      return this.stop(session, counters, startedAtMs, "PAUSED", CONTINUE_STOP_REASONS.OBJECTIVE_INCOMPLETE, null, {
+        completionResult: evaluation.result,
+        completionFindings: evaluation.findings,
+      });
+    }
+
+    if (evaluation.result === COMPLETION_RESULTS.REQUIRES_REVIEW) {
+      const approvalRequest = this.createCompletionReviewRequest(session, counters, evaluation);
+
+      this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.COMPLETION_REVIEW_REQUIRED, session, counters, {
+        completionResult: evaluation.result,
+        findings: evaluation.findings,
+        approvalRequest,
+      });
+      markSessionWaitingForApproval(session, approvalRequest, null);
+      return this.stop(session, counters, startedAtMs, "PAUSED", CONTINUE_STOP_REASONS.COMPLETION_REVIEW_REQUIRED, null, {
+        approvalRequest,
+        completionResult: evaluation.result,
+        completionFindings: evaluation.findings,
+      });
+    }
+
+    if (evaluation.result === COMPLETION_RESULTS.BLOCKED) {
+      this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.OBJECTIVE_BLOCKED, session, counters, {
+        completionResult: evaluation.result,
+        findings: evaluation.findings,
+        reasons: evaluation.reasons,
+      });
+      return this.stop(session, counters, startedAtMs, "PAUSED", CONTINUE_STOP_REASONS.OBJECTIVE_BLOCKED, null, {
+        completionResult: evaluation.result,
+        completionFindings: evaluation.findings,
+      });
+    }
+
+    throw new Error("Execution engine completion result is invalid.");
+  }
+
+  createCompletionReviewRequest(session, counters, evaluation) {
+    return this.approvalGateway.createApprovalRequest({
+      action: APPROVAL_ACTIONS.COMPLETION_REVIEW,
+      reason: "Completion review is required before autonomous execution can finish.",
+      riskLevel: APPROVAL_RISK_LEVELS.MEDIUM,
+      metadata: {
+        sessionId: session.sessionId,
+        iteration: counters.iterations,
+        findings: evaluation.findings,
+        reasons: evaluation.reasons,
+      },
+    }, {
+      timestamp: timestampIso(this.now),
+    });
   }
 
   validatePendingActionsSecurity(session, counters, startedAtMs, pendingActions) {
@@ -796,6 +900,14 @@ function validateOptions(options) {
     throw new Error("Execution engine continueEngine must expose shouldContinue.");
   }
 
+  if (options.objectiveCompletionEngine !== undefined) {
+    for (const methodName of ["evaluate", "isComplete", "getIncompleteReasons"]) {
+      if (typeof options.objectiveCompletionEngine[methodName] !== "function") {
+        throw new Error(`Execution engine objectiveCompletionEngine must expose ${methodName}.`);
+      }
+    }
+  }
+
   if (options.repairEngine !== undefined) {
     for (const methodName of ["canRepair", "createRepairPlan", "repair"]) {
       if (typeof options.repairEngine[methodName] !== "function") {
@@ -972,6 +1084,40 @@ function storeSecurityFindings(session, findings) {
   }
 
   return added;
+}
+
+function completionContext(session, counters) {
+  return {
+    session: snapshotSession(session),
+    iteration: counters.iterations,
+    repairs: counters.repairs,
+    metadata: session.metadata && isPlainObject(session.metadata.completionContext)
+      ? session.metadata.completionContext
+      : {},
+    requiredSteps: session.metadata && Array.isArray(session.metadata.requiredSteps)
+      ? session.metadata.requiredSteps
+      : undefined,
+    requirePlannedSteps: session.metadata && session.metadata.requirePlannedSteps === true,
+  };
+}
+
+function recordCompletionHistory(session, evaluation) {
+  const existing = session.metadata && Array.isArray(session.metadata.completionHistory)
+    ? session.metadata.completionHistory
+    : [];
+
+  mergeSessionMetadata(session, {
+    completionHistory: [
+      ...existing,
+      {
+        result: evaluation.result,
+        reasons: evaluation.reasons,
+        findings: evaluation.findings,
+        timestamp: evaluation.timestamp,
+        metadata: evaluation.metadata || {},
+      },
+    ],
+  });
 }
 
 function createRepairContext(session, validationResult, counters) {

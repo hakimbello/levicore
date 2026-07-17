@@ -173,6 +173,8 @@ Transitions must be explicit, rejected when invalid, and emitted as typed progre
 
 `src/security-validator.js` evaluates pending actions, execution results, validation results, pre-continuation state, and pre-completion state for security risks. It records deduplicated SecurityFinding entries in `session.metadata.securityFindings`, emits security validation lifecycle events, lets WARNING findings continue, escalates REQUIRES_REVIEW findings through the approval gateway, and stops BLOCKED findings immediately with SECURITY_STOP. Security validation wraps repair and continuation so repaired work and automatic continuation cannot bypass the same safety layer.
 
+`src/objective-completion-engine.js` evaluates whether the user's objective is actually complete before `ExecutionEngine` can transition a session to COMPLETED. Completion gates include objective presence, planned and required steps, remaining executable work, validation state, repair history, approval requests, high-severity security findings, cancellation, restore requirements, blockers, and injected completion rules. COMPLETE permits the final AE-001 transition to COMPLETED, INCOMPLETE continues only when executable work remains or pauses with OBJECTIVE_INCOMPLETE, REQUIRES_REVIEW escalates through the approval gateway, and BLOCKED stops with OBJECTIVE_BLOCKED. Each evaluation is recorded in `session.metadata.completionHistory`.
+
 ## Trust Boundaries
 
 - Repository files are untrusted input.

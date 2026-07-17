@@ -10,6 +10,10 @@ const {
   CONTINUE_STOP_REASONS,
 } = require("../src/continue-engine");
 const {
+  COMPLETION_RESULTS,
+  ObjectiveCompletionEngine,
+} = require("../src/objective-completion-engine");
+const {
   EXECUTION_ENGINE_EVENTS,
   EXECUTION_ENGINE_EVENT_TYPES,
   ExecutionEngine,
@@ -59,7 +63,7 @@ test("completes a session after successful execution and validation", async () =
   assert.equal(result.stopReason, CONTINUE_STOP_REASONS.OBJECTIVE_COMPLETE);
   assert.equal(result.iterations, 1);
   assert.equal(result.session.currentState, EXECUTION_STATES.COMPLETED);
-  assert.deepEqual(nonSecurityEvents(lifecycleEvents), [
+  assert.deepEqual(nonGateEvents(lifecycleEvents), [
     EXECUTION_ENGINE_EVENT_TYPES.EXECUTION_STARTED,
     EXECUTION_ENGINE_EVENT_TYPES.ITERATION_STARTED,
     EXECUTION_ENGINE_EVENT_TYPES.VALIDATION_STARTED,
@@ -375,10 +379,10 @@ test("emits repair events in deterministic order", async () => {
     remainingSteps: ["task-1"],
   }));
 
-  const nonSecurityLifecycleEvents = nonSecurityEvents(lifecycleEvents);
-  const repairStart = nonSecurityLifecycleEvents.indexOf(EXECUTION_ENGINE_EVENT_TYPES.REPAIR_STARTED);
+  const nonGateLifecycleEvents = nonGateEvents(lifecycleEvents);
+  const repairStart = nonGateLifecycleEvents.indexOf(EXECUTION_ENGINE_EVENT_TYPES.REPAIR_STARTED);
 
-  assert.deepEqual(nonSecurityLifecycleEvents.slice(repairStart, repairStart + 7), [
+  assert.deepEqual(nonGateLifecycleEvents.slice(repairStart, repairStart + 7), [
     EXECUTION_ENGINE_EVENT_TYPES.REPAIR_STARTED,
     EXECUTION_ENGINE_EVENT_TYPES.REPAIR_PLAN_CREATED,
     EXECUTION_ENGINE_EVENT_TYPES.REPAIR_ATTEMPTED,
@@ -844,6 +848,247 @@ test("security warnings remain compatible with continuation", async () => {
   assert.equal(result.session.metadata.securityFindings.some((finding) => finding.ruleId === "continuation-warning"), true);
 });
 
+test("stores completion history for completed objectives", async () => {
+  const lifecycleEvents = [];
+  const engine = createEngine({
+    executeNextTask: () => ({
+      completedStep: "task-1",
+      remainingSteps: [],
+    }),
+    validateResults: () => ({
+      validationPassed: true,
+      objectiveComplete: true,
+    }),
+  });
+
+  engine.on(EXECUTION_ENGINE_EVENTS.LIFECYCLE, (event) => lifecycleEvents.push(event.type));
+
+  const result = await engine.run(createSession({
+    remainingSteps: ["task-1"],
+  }));
+
+  assert.equal(result.status, "COMPLETED");
+  assert.equal(result.session.metadata.completionHistory.length, 1);
+  assert.equal(result.session.metadata.completionHistory[0].result, COMPLETION_RESULTS.COMPLETE);
+  assert.equal(lifecycleEvents.includes(EXECUTION_ENGINE_EVENT_TYPES.OBJECTIVE_COMPLETED), true);
+});
+
+test("does not complete when no remaining steps exist but completion rule is incomplete", async () => {
+  const engine = createEngine({
+    objectiveCompletionEngine: createObjectiveCompletionEngine({
+      rules: [() => completionFinding({
+        code: "FEATURE_MISSING",
+        status: COMPLETION_RESULTS.INCOMPLETE,
+      })],
+    }),
+    executeNextTask: () => ({
+      completedStep: "task-1",
+      remainingSteps: [],
+    }),
+    validateResults: () => ({
+      validationPassed: true,
+      objectiveComplete: true,
+    }),
+  });
+
+  const result = await engine.run(createSession({
+    remainingSteps: ["task-1"],
+  }));
+
+  assert.equal(result.status, "PAUSED");
+  assert.equal(result.stopReason, CONTINUE_STOP_REASONS.OBJECTIVE_INCOMPLETE);
+  assert.notEqual(result.session.currentState, EXECUTION_STATES.COMPLETED);
+});
+
+test("continues when objective is incomplete and safe work remains", async () => {
+  const engine = createEngine({
+    objectiveCompletionEngine: createObjectiveCompletionEngine(),
+    executeNextTask: ({ iteration }) => ({
+      completedStep: `task-${iteration}`,
+      remainingSteps: iteration === 1 ? ["task-2"] : [],
+    }),
+    validateResults: ({ iteration }) => ({
+      validationPassed: true,
+      objectiveComplete: iteration === 2,
+    }),
+  });
+
+  const result = await engine.run(createSession({
+    remainingSteps: ["task-1", "task-2"],
+  }));
+
+  assert.equal(result.status, "COMPLETED");
+  assert.equal(result.iterations, 2);
+  assert.equal(result.session.metadata.completionHistory.some((entry) => entry.result === COMPLETION_RESULTS.INCOMPLETE), true);
+});
+
+test("blocks completion when objective evaluation is blocked", async () => {
+  const engine = createEngine({
+    objectiveCompletionEngine: createObjectiveCompletionEngine({
+      rules: [() => completionFinding({
+        code: "BLOCKED_DEPLOYMENT",
+        status: COMPLETION_RESULTS.BLOCKED,
+      })],
+    }),
+    executeNextTask: () => ({
+      completedStep: "task-1",
+      remainingSteps: [],
+    }),
+    validateResults: () => ({
+      validationPassed: true,
+      objectiveComplete: true,
+    }),
+  });
+
+  const result = await engine.run(createSession({
+    remainingSteps: ["task-1"],
+  }));
+
+  assert.equal(result.status, "PAUSED");
+  assert.equal(result.stopReason, CONTINUE_STOP_REASONS.OBJECTIVE_BLOCKED);
+  assert.equal(result.completionResult, COMPLETION_RESULTS.BLOCKED);
+});
+
+test("pauses through approval when completion requires review", async () => {
+  const engine = createEngine({
+    objectiveCompletionEngine: createObjectiveCompletionEngine({
+      rules: [() => completionFinding({
+        code: "ACCEPTANCE_REVIEW",
+        status: COMPLETION_RESULTS.REQUIRES_REVIEW,
+      })],
+    }),
+    executeNextTask: () => ({
+      completedStep: "task-1",
+      remainingSteps: [],
+    }),
+    validateResults: () => ({
+      validationPassed: true,
+      objectiveComplete: true,
+    }),
+  });
+
+  const result = await engine.run(createSession({
+    remainingSteps: ["task-1"],
+  }));
+
+  assert.equal(result.status, "PAUSED");
+  assert.equal(result.stopReason, CONTINUE_STOP_REASONS.COMPLETION_REVIEW_REQUIRED);
+  assert.equal(result.approvalRequest.action.action, APPROVAL_ACTIONS.COMPLETION_REVIEW);
+  assert.equal(result.session.currentState, EXECUTION_STATES.VALIDATING);
+  assert.equal(result.session.approvalRequired, true);
+});
+
+test("completion evaluation sees repair history after repair", async () => {
+  let validationCount = 0;
+  const engine = createEngine({
+    objectiveCompletionEngine: createObjectiveCompletionEngine(),
+    repairEngine: createRepairEngine(),
+    executeNextTask: () => ({
+      completedStep: "task-1",
+      remainingSteps: [],
+    }),
+    validateResults: () => {
+      validationCount += 1;
+      return validationCount === 1
+        ? {
+            validationPassed: false,
+            error: "Needs repair.",
+          }
+        : {
+            validationPassed: true,
+            objectiveComplete: true,
+          };
+    },
+  });
+
+  const result = await engine.run(createSession({
+    remainingSteps: ["task-1"],
+  }));
+
+  assert.equal(result.status, "COMPLETED");
+  assert.equal(result.session.metadata.repairHistory.length, 1);
+  assert.equal(result.session.metadata.completionHistory.at(-1).result, COMPLETION_RESULTS.COMPLETE);
+});
+
+test("completion evaluation blocks unresolved critical security findings", async () => {
+  const engine = createEngine({
+    objectiveCompletionEngine: createObjectiveCompletionEngine(),
+    executeNextTask: () => ({
+      completedStep: "task-1",
+      remainingSteps: [],
+      metadata: {
+        securityFindings: [{
+          id: "security-critical",
+          ruleId: "secret",
+          title: "Secret exposed",
+          severity: "CRITICAL",
+          status: "BLOCKED",
+          evidence: {},
+        }],
+      },
+    }),
+    validateResults: () => ({
+      validationPassed: true,
+      objectiveComplete: true,
+    }),
+  });
+
+  const result = await engine.run(createSession({
+    remainingSteps: ["task-1"],
+  }));
+
+  assert.equal(result.status, "PAUSED");
+  assert.equal(result.stopReason, CONTINUE_STOP_REASONS.OBJECTIVE_BLOCKED);
+});
+
+test("completion events are emitted in deterministic order", async () => {
+  const lifecycleEvents = [];
+  const engine = createEngine({
+    executeNextTask: () => ({
+      completedStep: "task-1",
+      remainingSteps: [],
+    }),
+    validateResults: () => ({
+      validationPassed: true,
+      objectiveComplete: true,
+    }),
+  });
+
+  engine.on(EXECUTION_ENGINE_EVENTS.LIFECYCLE, (event) => lifecycleEvents.push(event.type));
+
+  await engine.run(createSession({
+    remainingSteps: ["task-1"],
+  }));
+
+  const start = lifecycleEvents.indexOf(EXECUTION_ENGINE_EVENT_TYPES.COMPLETION_EVALUATION_STARTED);
+
+  assert.deepEqual(lifecycleEvents.slice(start, start + 3), [
+    EXECUTION_ENGINE_EVENT_TYPES.COMPLETION_EVALUATION_STARTED,
+    EXECUTION_ENGINE_EVENT_TYPES.COMPLETION_EVALUATION_COMPLETED,
+    EXECUTION_ENGINE_EVENT_TYPES.OBJECTIVE_COMPLETED,
+  ]);
+});
+
+test("completion history remains snapshot compatible", async () => {
+  const engine = createEngine({
+    executeNextTask: () => ({
+      completedStep: "task-1",
+      remainingSteps: [],
+    }),
+    validateResults: () => ({
+      validationPassed: true,
+      objectiveComplete: true,
+    }),
+  });
+
+  const result = await engine.run(createSession({
+    remainingSteps: ["task-1"],
+  }));
+
+  assert.equal(Array.isArray(result.session.metadata.completionHistory), true);
+  assert.equal(result.session.metadata.completionHistory[0].result, COMPLETION_RESULTS.COMPLETE);
+});
+
 test("stops immediately when ContinueEngine returns false", async () => {
   const lifecycleEvents = [];
   const engine = createEngine({
@@ -1039,7 +1284,7 @@ test("emits lifecycle events in deterministic order across a continue loop", asy
     remainingSteps: ["task-1", "task-2"],
   }));
 
-  assert.deepEqual(nonSecurityEvents(lifecycleEvents), [
+  assert.deepEqual(nonGateEvents(lifecycleEvents), [
     EXECUTION_ENGINE_EVENT_TYPES.EXECUTION_STARTED,
     EXECUTION_ENGINE_EVENT_TYPES.ITERATION_STARTED,
     EXECUTION_ENGINE_EVENT_TYPES.VALIDATION_STARTED,
@@ -1065,6 +1310,7 @@ function createEngine(options) {
     executeNextTask: options.executeNextTask,
     validateResults: options.validateResults,
     continueEngine: options.continueEngine,
+    objectiveCompletionEngine: options.objectiveCompletionEngine,
     repairEngine: options.repairEngine,
     securityValidator: options.securityValidator,
     approvalGateway: options.approvalGateway,
@@ -1079,8 +1325,24 @@ function createSecurityValidator(options = {}) {
   });
 }
 
+function createObjectiveCompletionEngine(options = {}) {
+  return new ObjectiveCompletionEngine({
+    now: () => BASE_TIME,
+    ...options,
+  });
+}
+
 function nonSecurityEvents(events) {
   return events.filter((event) => !String(event).startsWith("security_"));
+}
+
+function nonGateEvents(events) {
+  return events.filter((event) => {
+    const text = String(event);
+    return !text.startsWith("security_") &&
+      !text.startsWith("completion_") &&
+      !text.startsWith("objective_");
+  });
 }
 
 function securityFinding(input) {
@@ -1092,6 +1354,16 @@ function securityFinding(input) {
     status: input.status || SECURITY_RESULTS.WARNING,
     evidence: input.evidence || {},
     remediation: input.remediation || "Review and remediate the finding.",
+    metadata: input.metadata || {},
+  };
+}
+
+function completionFinding(input) {
+  return {
+    code: input.code,
+    title: input.title || input.code,
+    description: input.description || `${input.code} detected.`,
+    status: input.status || COMPLETION_RESULTS.INCOMPLETE,
     metadata: input.metadata || {},
   };
 }

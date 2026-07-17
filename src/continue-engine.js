@@ -16,6 +16,9 @@ const CONTINUE_STOP_REASONS = Object.freeze({
   MAX_ITERATIONS: "MAX_ITERATIONS",
   MAX_RUNTIME: "MAX_RUNTIME",
   MAX_REPAIRS: "MAX_REPAIRS",
+  OBJECTIVE_BLOCKED: "OBJECTIVE_BLOCKED",
+  OBJECTIVE_INCOMPLETE: "OBJECTIVE_INCOMPLETE",
+  COMPLETION_REVIEW_REQUIRED: "COMPLETION_REVIEW_REQUIRED",
 });
 
 class ContinueEngine extends EventEmitter {
@@ -176,8 +179,7 @@ function approvalRequired(session) {
 function objectiveComplete(session) {
   return (
     session.currentState === EXECUTION_STATES.COMPLETED ||
-    session.metadata.objectiveComplete === true ||
-    session.remainingSteps.length === 0
+    session.metadata.objectiveComplete === true
   );
 }
 
