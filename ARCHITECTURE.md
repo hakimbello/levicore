@@ -209,6 +209,20 @@ Retrieval ranking considers project and scope match, recency, confidence, import
 
 Persistence writes schema-versioned state to `.levi/cross-session-learning.json` by default. Loading supports schema validation, migration hooks, corrupt-file reporting, and an explicit empty fallback for recovery.
 
+## Offline Knowledge Index
+
+`src/offline-knowledge-index.js` provides LI-003 local retrieval. It is platform-independent and uses deterministic lexical scoring only; it has no dependency on VS Code, UI code, model providers, network access, operating-system-specific APIs, embeddings, or a single language parser.
+
+Index documents use normalized fields: `id`, `type`, `projectId`, `path`, `language`, `title`, `content`, `tokens`, `symbols`, `tags`, `references`, `metadata`, `contentHash`, `indexedAt`, and `updatedAt`. Document types cover repositories, directories, files, symbols, imports, exports, references, functions, methods, classes, interfaces, configuration files, tests, dependencies, project knowledge facts, durable decisions, cross-session learning records, and repository graph nodes.
+
+The build flow reuses `scanRepository`, `buildStructuralIndex`, project summaries, LI-001 graph snapshots, LI-002 learning snapshots, durable decision records, and project-knowledge facts. The full build inherits repository scanner ignore behavior; incremental updates apply matching guards for `.git`, dependency directories, build output, generated files, binary content, oversized files, custom ignore patterns, and secret-like names.
+
+Lexical ranking is field-aware. Scores consider exact symbol matches, exact path matches, title hits, phrase hits, token overlap, path/symbol/tag/reference matches, document type, project and language filters, recency, repository graph proximity, learning-record importance, and durable-decision authority. Optional semantic adapters may rerank results, but the core works fully offline without embeddings.
+
+Incremental indexing handles created, modified, deleted, and renamed files. File content hashes prevent unchanged files from being reindexed, while stable IDs and normalized paths prevent duplicate documents. Query APIs include general search, symbol search, path search, reference search, direct lookup, filtering, statistics, compaction, snapshot/restore, save, and load.
+
+Persistence writes atomically where practical to `.levi/offline-knowledge-index.json`. Loading supports schema validation, migration hooks, corrupt-file detection, empty fallback, and rebuild fallback from the repository path. Index statistics report document counts, file counts, symbol counts, indexed bytes, languages, document types, last full build, last incremental update, skipped unchanged files, and ignored files.
+
 ## Trust Boundaries
 
 - Repository files are untrusted input.
