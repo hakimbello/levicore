@@ -193,6 +193,22 @@ Persistence writes a schema-versioned snapshot to `.levi/repository-knowledge-gr
 
 The public graph API supports `build`, `update`, node and edge mutation, neighbor lookups, typed node and edge searches, dependency and dependent traversal, reference/call queries, impact analysis, `snapshot`, `restore`, `save`, and `load`. Lifecycle events cover build, update, node/edge changes, persistence, restore, and rebuild-required states.
 
+## Cross-Session Learning
+
+`src/cross-session-learning-engine.js` provides Layer 2 cross-session learning. It is platform-independent and consumes session snapshots, execution metadata, repository graph context, memory records, and durable decisions through plain objects or injected adapters rather than depending on UI, VS Code, model providers, or a specific language runtime.
+
+Learning records use normalized fields: `id`, `type`, `projectId`, `title`, `summary`, `evidence`, `confidence`, `importance`, `source`, `scope`, `status`, `tags`, `metadata`, `createdAt`, `updatedAt`, `lastUsedAt`, and `useCount`. Supported record types include project conventions, user preferences, architecture patterns, durable decisions, successful and failed strategies, repair outcomes, approval patterns, security lessons, validation lessons, completion lessons, and repository facts. Status values are ACTIVE, SUPERSEDED, CONFLICTED, REJECTED, and ARCHIVED.
+
+The extraction flow starts from `learnFromSession(session, context)`. The engine reads completed or stopped execution snapshots, repair history, approval history, security findings, validation state, completion history, user corrections, durable decision records, and repository changes. Raw history is not automatically promoted; candidates must meet promotion criteria such as explicit user decision, repeated or confirming evidence, high-confidence success, high-severity failure, or durable architectural consequence. Injected extractors can add specialized candidates without modifying the core engine.
+
+Confidence and importance evolve over time. Repeated confirming evidence deduplicates into the same semantic lesson and increases confidence. Contradictory evidence reduces confidence and creates a conflict instead of silently overwriting an active lesson. Durable project decisions are authoritative: learning records may reference them, but contradictions are flagged as conflicts and do not replace the approved decision.
+
+Conflicts store conflicting record IDs, reason, evidence, status, creation and resolution timestamps, and resolution metadata. `resolveConflict` can mark a winning record active while superseding alternatives. Records can also be marked used, superseded, archived, deleted, snapshotted, and restored.
+
+Retrieval ranking considers project and scope match, recency, confidence, importance, prior usefulness, tag relevance, repository graph proximity, and durable-decision authority. Repository graph integration links learning records to files, modules, symbols, dependencies, and decision nodes when evidence or metadata paths match graph nodes.
+
+Persistence writes schema-versioned state to `.levi/cross-session-learning.json` by default. Loading supports schema validation, migration hooks, corrupt-file reporting, and an explicit empty fallback for recovery.
+
 ## Trust Boundaries
 
 - Repository files are untrusted input.
