@@ -239,6 +239,22 @@ Dynamic replanning supports task failure, blockers, validation failure, security
 
 Planning state persists to `.levi/planning-intelligence.json` with schema versioning, migrations, snapshot/restore, corrupt-file reporting, and empty fallback.
 
+## Context Intelligence
+
+`src/context-intelligence-engine.js` provides LI-005 context intelligence. It builds the smallest sufficient context package for planning, execution, repair, validation, security review, approval review, objective completion, code understanding, search, and user-query purposes without depending on UI, VS Code, model-provider SDKs, network access, provider tokenizers, or embeddings.
+
+Context requests normalize project, purpose, objective, plan, task, user instructions, acceptance criteria, paths, symbols, and metadata. Context items normalize source, source ID, title, content, summary, path, symbol, language, tags, authority, relevance, confidence, freshness, risk, estimated tokens, metadata, and timestamps. Packages store selected items, omitted items, findings, token budget, estimated tokens, status, compact metadata, and selection explanations.
+
+Collection is adapter-driven. Collectors expose `collect({ request, options, engine })`, while built-in collectors consume objectives, plans, tasks, repository graph snapshots, offline index search, project knowledge facts, durable decisions, active cross-session learning, execution snapshots, repair history, approval history, security findings, validation results, and completion evidence.
+
+Ranking is deterministic and purpose-aware. It considers direct task and objective relevance, source authority, durable-decision authority, path and symbol matches, graph proximity, offline-index lexical scores, learning confidence and importance, recency, prior usefulness, security sensitivity, stale risk, duplication, and estimated token cost. Source authority rules preserve current user instructions above historical preferences, durable decisions above inferred learning, current repository/index evidence above stale history, validated results above assumptions, and explicit acceptance criteria above inferred criteria.
+
+Selection preserves mandatory user instructions, relevant durable decisions, acceptance criteria, critical security findings, and direct execution targets while suppressing duplicates and omitting low-authority, irrelevant, stale, over-budget, inactive, or source-limit-exceeded items with explicit omission records. Token budgets support package, response-reserve, per-source, per-item, item-count, file-count, symbol-count, and history-count limits using deterministic character-based token estimates unless an adapter is injected.
+
+Compression is deterministic and safe. It trims repeated whitespace, reduces metadata, truncates lower-priority content to item limits, and preserves protected content without lossy compression: durable decisions, current user instructions, acceptance criteria, critical security findings, repair failure evidence, and direct execution targets.
+
+The engine detects conflicts such as user instructions versus durable decisions, task requests versus durable decisions, stale authoritative context, and contradictory acceptance criteria. Refresh recollects the original request, reranks and reselects context, preserves mandatory authoritative items, increments package revision, and records refresh reasons. Persistence writes compact package metadata, item references/content excerpts, findings, omission records, and selection explanations to `.levi/context-intelligence.json` with schema versioning, migrations, snapshot/restore, corrupt-file reporting, and empty fallback.
+
 ## Trust Boundaries
 
 - Repository files are untrusted input.
