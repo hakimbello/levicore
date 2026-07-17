@@ -223,6 +223,22 @@ Incremental indexing handles created, modified, deleted, and renamed files. File
 
 Persistence writes atomically where practical to `.levi/offline-knowledge-index.json`. Loading supports schema validation, migration hooks, corrupt-file detection, empty fallback, and rebuild fallback from the repository path. Index statistics report document counts, file counts, symbol counts, indexed bytes, languages, document types, last full build, last incremental update, skipped unchanged files, and ignored files.
 
+## Planning Intelligence
+
+`src/planning-intelligence-engine.js` provides LI-004 planning intelligence. It converts objectives into normalized dependency-aware plans without depending on UI code, VS Code APIs, model-provider SDKs, operating-system-specific APIs, or a single language/framework parser.
+
+Plans contain `id`, `projectId`, `objective`, `summary`, `status`, `tasks`, `assumptions`, `constraints`, `acceptanceCriteria`, `risks`, `metadata`, `version`, `createdAt`, and `updatedAt`. Plan statuses are DRAFT, READY, ACTIVE, PAUSED, REPLANNING, COMPLETED, BLOCKED, CANCELLED, and FAILED. Tasks contain normalized dependency, context, validation, security, effort, complexity, confidence, strategy, and metadata fields; task statuses are PENDING, READY, RUNNING, WAITING, BLOCKED, COMPLETED, FAILED, SKIPPED, and CANCELLED.
+
+Decomposition is adapter-driven. A decomposition adapter exposes `decompose({ objective, context, options })` and returns compact plan evidence plus tasks. The default deterministic path creates inspection, implementation, and validation tasks from structured objectives, expected files, validation requirements, and acceptance criteria; no LLM is required.
+
+The planner validates dependency references, missing dependencies, cycles, executable paths, acceptance criteria, durable-decision conflicts, security-sensitive work, and planning bounds. It calculates dependents, readiness, topological order, critical path, and parallel execution waves. Prioritization considers readiness, explicit priority, blocker-removal value, critical-path position, risk, confidence, complexity, repository impact, security sensitivity, and successful or failed strategy lessons.
+
+Integration is snapshot/adapter based. Repository graph snapshots enrich tasks with affected files, symbols, modules, and dependency references. Cross-session learning records adjust confidence and risk by reusing successful strategies and avoiding failed ones. Offline index search supplies compact planning evidence for relevant files, tests, docs, project knowledge, decisions, and prior lessons. Durable project decisions are authoritative planning constraints; conflicts are findings, not silently overwritten tasks.
+
+Dynamic replanning supports task failure, blockers, validation failure, security blocks, rejected approval, failed repair, repository change, invalidated assumptions, acceptance-criteria changes, new dependencies, and user corrections. Replanning preserves completed tasks, keeps valid task IDs where possible, adds bounded replacement tasks, recalculates readiness/dependencies, increments plan version, and records trigger rationale. Plan completion exposes completion evidence for `ObjectiveCompletionEngine`, but does not itself mark the user objective complete.
+
+Planning state persists to `.levi/planning-intelligence.json` with schema versioning, migrations, snapshot/restore, corrupt-file reporting, and empty fallback.
+
 ## Trust Boundaries
 
 - Repository files are untrusted input.
