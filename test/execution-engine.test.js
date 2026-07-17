@@ -1,6 +1,12 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
+  APPROVAL_ACTIONS,
+  APPROVAL_DECISIONS,
+  APPROVAL_POLICIES,
+  ApprovalGateway,
+} = require("../src/approval-gateway");
+const {
   CONTINUE_STOP_REASONS,
 } = require("../src/continue-engine");
 const {
@@ -195,6 +201,133 @@ test("stops immediately when ContinueEngine returns false", async () => {
   ]);
 });
 
+test("pauses execution when an action requires approval", async () => {
+  let executed = false;
+  const lifecycleEvents = [];
+  const approvalGateway = createApprovalGateway({
+    policy: APPROVAL_POLICIES.DESTRUCTIVE_ONLY,
+  });
+  const engine = createEngine({
+    approvalGateway,
+    executeNextTask: () => {
+      executed = true;
+      return {
+        completedStep: "delete",
+        remainingSteps: [],
+      };
+    },
+    validateResults: () => ({
+      validationPassed: true,
+      objectiveComplete: true,
+    }),
+  });
+
+  engine.on(EXECUTION_ENGINE_EVENTS.LIFECYCLE, (event) => lifecycleEvents.push(event));
+
+  const result = await engine.run(createSession({
+    remainingSteps: ["delete"],
+    metadata: {
+      pendingActions: [{
+        action: APPROVAL_ACTIONS.DELETE_FILE,
+        metadata: {
+          path: "src/old.js",
+        },
+      }],
+    },
+  }));
+
+  assert.equal(executed, false);
+  assert.equal(result.status, "PAUSED");
+  assert.equal(result.stopReason, CONTINUE_STOP_REASONS.APPROVAL_REQUIRED);
+  assert.equal(result.approvalRequest.action.action, APPROVAL_ACTIONS.DELETE_FILE);
+  assert.equal(result.session.currentState, EXECUTION_STATES.WAITING_FOR_APPROVAL);
+  assert.equal(result.session.approvalRequired, true);
+  assert.equal(lifecycleEvents.at(-1).type, EXECUTION_ENGINE_EVENT_TYPES.EXECUTION_PAUSED);
+  assert.equal(lifecycleEvents.at(-1).approvalRequest.id, result.approvalRequest.id);
+});
+
+test("resumes a paused session after approval", async () => {
+  let executeCount = 0;
+  const approvalGateway = createApprovalGateway({
+    policy: APPROVAL_POLICIES.DESTRUCTIVE_ONLY,
+  });
+  const engine = createEngine({
+    approvalGateway,
+    executeNextTask: () => {
+      executeCount += 1;
+      return {
+        completedStep: "delete",
+        remainingSteps: [],
+      };
+    },
+    validateResults: () => ({
+      validationPassed: true,
+      objectiveComplete: true,
+    }),
+  });
+  const session = createSession({
+    remainingSteps: ["delete"],
+    metadata: {
+      pendingActions: [{
+        action: APPROVAL_ACTIONS.DELETE_FILE,
+        metadata: {
+          path: "src/old.js",
+        },
+      }],
+    },
+  });
+
+  const paused = await engine.run(session);
+  approvalGateway.approveRequest(paused.approvalRequest.id);
+  const resumed = await engine.resume(session);
+
+  assert.equal(executeCount, 1);
+  assert.equal(resumed.status, "COMPLETED");
+  assert.equal(resumed.stopReason, CONTINUE_STOP_REASONS.OBJECTIVE_COMPLETE);
+  assert.equal(resumed.session.approvalRequired, false);
+  assert.equal(resumed.session.metadata.approvalRequest, undefined);
+  assert.deepEqual(resumed.session.metadata.approvedApprovalRequestIds, [paused.approvalRequest.id]);
+});
+
+test("stops gracefully when an action is denied", async () => {
+  let executed = false;
+  const engine = createEngine({
+    approvalGateway: createApprovalGateway({
+      policy: APPROVAL_POLICIES.CUSTOM,
+      customPolicy: () => APPROVAL_DECISIONS.DENIED,
+    }),
+    executeNextTask: () => {
+      executed = true;
+      return {
+        completedStep: "install",
+        remainingSteps: [],
+      };
+    },
+    validateResults: () => ({
+      validationPassed: true,
+      objectiveComplete: true,
+    }),
+  });
+
+  const result = await engine.run(createSession({
+    remainingSteps: ["install"],
+    metadata: {
+      pendingActions: [{
+        action: APPROVAL_ACTIONS.INSTALL_PACKAGE,
+        metadata: {
+          packageName: "left-pad",
+        },
+      }],
+    },
+  }));
+
+  assert.equal(executed, false);
+  assert.equal(result.status, "PAUSED");
+  assert.equal(result.stopReason, CONTINUE_STOP_REASONS.SECURITY_STOP);
+  assert.equal(result.approvalDecision, APPROVAL_DECISIONS.DENIED);
+  assert.equal(result.session.metadata.securityStop, true);
+});
+
 test("handles execution errors as graceful execution_failed stops", async () => {
   const engine = createEngine({
     executeNextTask: () => {
@@ -260,6 +393,15 @@ function createEngine(options) {
     executeNextTask: options.executeNextTask,
     validateResults: options.validateResults,
     continueEngine: options.continueEngine,
+    approvalGateway: options.approvalGateway,
+    getPendingActions: options.getPendingActions,
+  });
+}
+
+function createApprovalGateway(options = {}) {
+  return new ApprovalGateway({
+    now: () => BASE_TIME,
+    ...options,
   });
 }
 

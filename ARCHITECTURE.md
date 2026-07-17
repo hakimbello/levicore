@@ -167,6 +167,8 @@ Transitions must be explicit, rejected when invalid, and emitted as typed progre
 
 `src/execution-engine.js` runs the bounded autonomous execution loop. It executes the next task, validates results, asks the continuation engine whether automatic continuation is safe, and stops immediately when continuation is denied or a configured limit is exceeded. The loop is independent of UI and editor APIs, emits lifecycle events for execution and iteration boundaries, and uses explicit stop reasons for MAX_ITERATIONS, MAX_RUNTIME, and MAX_REPAIRS.
 
+`src/approval-gateway.js` evaluates pending actions before execution using NEVER, SAFE_ONLY, DESTRUCTIVE_ONLY, ALWAYS, or CUSTOM policies. It returns APPROVED, REQUIRES_APPROVAL, or DENIED; approval pauses preserve session state with an ApprovalRequest so `ExecutionEngine.resume(session)` can continue only after approval is recorded.
+
 ## Trust Boundaries
 
 - Repository files are untrusted input.

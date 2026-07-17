@@ -1,5 +1,9 @@
 const { EventEmitter } = require("node:events");
 const {
+  APPROVAL_DECISIONS,
+  ApprovalGateway,
+} = require("./approval-gateway");
+const {
   CONTINUE_STOP_REASONS,
   ContinueEngine,
 } = require("./continue-engine");
@@ -36,6 +40,8 @@ class ExecutionEngine extends EventEmitter {
     this.executeNextTask = options.executeNextTask;
     this.validateResults = options.validateResults;
     this.continueEngine = options.continueEngine || new ContinueEngine();
+    this.approvalGateway = options.approvalGateway || new ApprovalGateway();
+    this.getPendingActions = options.getPendingActions || pendingActionsFromSession;
     this.limits = normalizeLimits(options.limits || {});
     this.now = typeof options.now === "function" ? options.now : Date.now;
   }
@@ -67,6 +73,22 @@ class ExecutionEngine extends EventEmitter {
 
       try {
         moveSessionTo(session, EXECUTION_STATES.PLANNING);
+        const approval = this.evaluateApproval(session, counters);
+
+        if (approval.decision === APPROVAL_DECISIONS.REQUIRES_APPROVAL) {
+          markSessionWaitingForApproval(session, approval.request, approval.action);
+          return this.stop(session, counters, startedAtMs, "PAUSED", CONTINUE_STOP_REASONS.APPROVAL_REQUIRED, null, {
+            approvalRequest: approval.request,
+          });
+        }
+
+        if (approval.decision === APPROVAL_DECISIONS.DENIED) {
+          markSessionApprovalDenied(session, approval.action);
+          return this.stop(session, counters, startedAtMs, "PAUSED", CONTINUE_STOP_REASONS.SECURITY_STOP, null, {
+            approvalDecision: APPROVAL_DECISIONS.DENIED,
+          });
+        }
+
         moveSessionTo(session, EXECUTION_STATES.EXECUTING);
         applySessionUpdate(session, await this.executeNextTask({
           session,
@@ -146,7 +168,77 @@ class ExecutionEngine extends EventEmitter {
     }
   }
 
-  stop(session, counters, startedAtMs, status, stopReason, error) {
+  async resume(session) {
+    validateSession(session);
+
+    const request = session.metadata && session.metadata.approvalRequest;
+
+    if (request) {
+      if (!this.approvalGateway.isApproved(request.id)) {
+        throw new Error("Execution engine cannot resume until the approval request is approved.");
+      }
+
+      clearSessionApproval(session, request.id);
+    }
+
+    return this.run(session);
+  }
+
+  evaluateApproval(session, counters) {
+    const pendingActions = this.getPendingActions({
+      session,
+      iteration: counters.iterations,
+      repairs: counters.repairs,
+    });
+
+    if (!Array.isArray(pendingActions) || pendingActions.length === 0) {
+      return {
+        decision: APPROVAL_DECISIONS.APPROVED,
+        request: null,
+        action: null,
+      };
+    }
+
+    const approvedRequestIds = new Set(
+      session.metadata && Array.isArray(session.metadata.approvedApprovalRequestIds)
+        ? session.metadata.approvedApprovalRequestIds
+        : [],
+    );
+    const unevaluatedActions = pendingActions.filter((action) => {
+      const requestId = action && action.approvalRequestId;
+      return !(typeof requestId === "string" && approvedRequestIds.has(requestId));
+    });
+
+    if (unevaluatedActions.length === 0) {
+      return {
+        decision: APPROVAL_DECISIONS.APPROVED,
+        request: null,
+        action: null,
+      };
+    }
+
+    const result = this.approvalGateway.evaluateActions(unevaluatedActions, {
+      metadata: {
+        sessionId: session.sessionId,
+        iteration: counters.iterations,
+      },
+      timestamp: timestampIso(this.now),
+    });
+
+    if (result.request) {
+      return {
+        ...result,
+        action: unevaluatedActions[0],
+      };
+    }
+
+    return {
+      ...result,
+      action: unevaluatedActions[0],
+    };
+  }
+
+  stop(session, counters, startedAtMs, status, stopReason, error, extra = {}) {
     const eventType = status === "COMPLETED"
       ? EXECUTION_ENGINE_EVENT_TYPES.EXECUTION_COMPLETED
       : EXECUTION_ENGINE_EVENT_TYPES.EXECUTION_PAUSED;
@@ -155,6 +247,7 @@ class ExecutionEngine extends EventEmitter {
       stopReason,
       error: error ? error.message : undefined,
       runtimeMs: runtimeMs(startedAtMs, this.now),
+      ...extra,
     });
 
     return {
@@ -165,6 +258,7 @@ class ExecutionEngine extends EventEmitter {
       runtimeMs: event.runtimeMs,
       session: snapshotSession(session),
       error: error ? error.message : null,
+      ...extra,
     };
   }
 
@@ -373,6 +467,14 @@ function validateOptions(options) {
   if (options.continueEngine !== undefined && typeof options.continueEngine.shouldContinue !== "function") {
     throw new Error("Execution engine continueEngine must expose shouldContinue.");
   }
+
+  if (options.approvalGateway !== undefined && typeof options.approvalGateway.evaluateActions !== "function") {
+    throw new Error("Execution engine approvalGateway must expose evaluateActions.");
+  }
+
+  if (options.getPendingActions !== undefined && typeof options.getPendingActions !== "function") {
+    throw new Error("Execution engine getPendingActions must be a function.");
+  }
 }
 
 function validateSession(session) {
@@ -429,6 +531,63 @@ function normalizeStringArray(values, fieldName) {
 
 function withoutUndefined(value) {
   return Object.fromEntries(Object.entries(value).filter(([, entryValue]) => entryValue !== undefined));
+}
+
+function pendingActionsFromSession({ session }) {
+  return session.metadata && Array.isArray(session.metadata.pendingActions)
+    ? session.metadata.pendingActions
+    : [];
+}
+
+function markSessionWaitingForApproval(session, request, action) {
+  session.approvalRequired = true;
+  const pendingActions = session.metadata && Array.isArray(session.metadata.pendingActions)
+    ? session.metadata.pendingActions.map((pendingAction) => {
+        if (pendingAction === action || actionsMatch(pendingAction, action)) {
+          return {
+            ...pendingAction,
+            approvalRequestId: request.id,
+          };
+        }
+
+        return pendingAction;
+      })
+    : undefined;
+  mergeSessionMetadata(session, {
+    approvalRequest: request,
+    ...(pendingActions ? { pendingActions } : {}),
+  });
+  moveSessionTo(session, EXECUTION_STATES.WAITING_FOR_APPROVAL);
+}
+
+function markSessionApprovalDenied(session, action) {
+  mergeSessionMetadata(session, {
+    approvalDecision: APPROVAL_DECISIONS.DENIED,
+    deniedAction: action || null,
+    securityStop: true,
+  });
+}
+
+function clearSessionApproval(session, requestId) {
+  const metadata = isPlainObject(session.metadata) ? clonePlainObject(session.metadata) : {};
+  const approvedApprovalRequestIds = new Set(Array.isArray(metadata.approvedApprovalRequestIds)
+    ? metadata.approvedApprovalRequestIds
+    : []);
+
+  approvedApprovalRequestIds.add(requestId);
+  delete metadata.approvalRequest;
+  metadata.approvedApprovalRequestIds = Array.from(approvedApprovalRequestIds).sort();
+  session.metadata = metadata;
+  session.approvalRequired = false;
+}
+
+function actionsMatch(left, right) {
+  if (!isPlainObject(left) || !isPlainObject(right)) {
+    return false;
+  }
+
+  return (left.action || left.type) === (right.action || right.type) &&
+    JSON.stringify(left.metadata || {}) === JSON.stringify(right.metadata || {});
 }
 
 function clonePlainObject(value) {
