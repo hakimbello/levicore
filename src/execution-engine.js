@@ -8,6 +8,10 @@ const {
   ContinueEngine,
 } = require("./continue-engine");
 const {
+  REPAIR_RESULTS,
+  RepairEngine,
+} = require("./repair-engine");
+const {
   EXECUTION_STATES,
   canTransition,
 } = require("./execution-session");
@@ -18,6 +22,12 @@ const EXECUTION_ENGINE_EVENT_TYPES = Object.freeze({
   ITERATION_COMPLETED: "iteration_completed",
   VALIDATION_STARTED: "validation_started",
   VALIDATION_COMPLETED: "validation_completed",
+  REPAIR_STARTED: "repair_started",
+  REPAIR_PLAN_CREATED: "repair_plan_created",
+  REPAIR_ATTEMPTED: "repair_attempted",
+  REPAIR_COMPLETED: "repair_completed",
+  REPAIR_FAILED: "repair_failed",
+  RESTORE_REQUIRED: "restore_required",
   EXECUTION_PAUSED: "execution_paused",
   EXECUTION_COMPLETED: "execution_completed",
 });
@@ -40,6 +50,7 @@ class ExecutionEngine extends EventEmitter {
     this.executeNextTask = options.executeNextTask;
     this.validateResults = options.validateResults;
     this.continueEngine = options.continueEngine || new ContinueEngine();
+    this.repairEngine = options.repairEngine || new RepairEngine();
     this.approvalGateway = options.approvalGateway || new ApprovalGateway();
     this.getPendingActions = options.getPendingActions || pendingActionsFromSession;
     this.limits = normalizeLimits(options.limits || {});
@@ -109,9 +120,12 @@ class ExecutionEngine extends EventEmitter {
           validation: normalizeResultForEvent(validationResult),
         });
 
-        if (repairRequired(session, validationResult)) {
-          counters.repairs += 1;
-          moveSessionTo(session, EXECUTION_STATES.REPAIRING);
+        if (!validationPassed(session)) {
+          const repairStop = await this.repairValidationFailure(session, counters, startedAtMs, validationResult);
+
+          if (repairStop) {
+            return repairStop;
+          }
         }
 
         if (validationPassed(session) && objectiveComplete(session)) {
@@ -182,6 +196,125 @@ class ExecutionEngine extends EventEmitter {
     }
 
     return this.run(session);
+  }
+
+  async repairValidationFailure(session, counters, startedAtMs, validationResult) {
+    let currentValidationResult = validationResult;
+
+    while (!validationPassed(session)) {
+      if (counters.repairs >= this.limits.maxRepairs) {
+        return this.stop(session, counters, startedAtMs, "PAUSED", CONTINUE_STOP_REASONS.MAX_REPAIRS);
+      }
+
+      const context = createRepairContext(session, currentValidationResult, counters);
+
+      if (!this.repairEngine.canRepair(context)) {
+        const repairResult = {
+          result: REPAIR_RESULTS.CANNOT_REPAIR,
+          action: "Repair engine declined repair.",
+          metadata: {},
+        };
+
+        this.recordRepairHistory(session, counters.repairs + 1, context, repairResult);
+        this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.REPAIR_FAILED, session, counters, {
+          repairResult: repairResult.result,
+        });
+        return this.stop(session, counters, startedAtMs, "PAUSED", CONTINUE_STOP_REASONS.EXECUTION_FAILED, null, {
+          repairResult: repairResult.result,
+        });
+      }
+
+      counters.repairs += 1;
+      moveSessionTo(session, EXECUTION_STATES.REPAIRING);
+      this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.REPAIR_STARTED, session, counters);
+
+      const repairPlan = this.repairEngine.createRepairPlan({
+        ...context,
+        currentRepairCount: counters.repairs,
+      });
+      this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.REPAIR_PLAN_CREATED, session, counters, {
+        repairPlan,
+      });
+
+      const repairResult = await this.repairEngine.repair({
+        ...context,
+        currentRepairCount: counters.repairs,
+        metadata: {
+          ...context.metadata,
+          repairPlan,
+        },
+      });
+
+      this.recordRepairHistory(session, counters.repairs, context, repairResult);
+      this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.REPAIR_ATTEMPTED, session, counters, {
+        repairResult: repairResult.result,
+        repairAction: repairResult.action,
+      });
+
+      if (repairResult.result === REPAIR_RESULTS.RESTORE_REQUIRED) {
+        this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.RESTORE_REQUIRED, session, counters, {
+          repairResult: repairResult.result,
+          repairAction: repairResult.action,
+        });
+        return this.stop(session, counters, startedAtMs, "PAUSED", CONTINUE_STOP_REASONS.EXECUTION_FAILED, null, {
+          repairResult: repairResult.result,
+        });
+      }
+
+      if (repairResult.result === REPAIR_RESULTS.CANNOT_REPAIR) {
+        this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.REPAIR_FAILED, session, counters, {
+          repairResult: repairResult.result,
+          repairAction: repairResult.action,
+        });
+        return this.stop(session, counters, startedAtMs, "PAUSED", CONTINUE_STOP_REASONS.EXECUTION_FAILED, null, {
+          repairResult: repairResult.result,
+        });
+      }
+
+      if (repairResult.result === REPAIR_RESULTS.REPAIR_FAILED) {
+        this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.REPAIR_FAILED, session, counters, {
+          repairResult: repairResult.result,
+          repairAction: repairResult.action,
+        });
+        continue;
+      }
+
+      this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.REPAIR_COMPLETED, session, counters, {
+        repairResult: repairResult.result,
+        repairAction: repairResult.action,
+      });
+      moveSessionTo(session, EXECUTION_STATES.VALIDATING);
+      this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.VALIDATION_STARTED, session, counters);
+      currentValidationResult = await this.validateResults({
+        session,
+        iteration: counters.iterations,
+        repairs: counters.repairs,
+      });
+      applyValidationResult(session, currentValidationResult);
+      this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.VALIDATION_COMPLETED, session, counters, {
+        validation: normalizeResultForEvent(currentValidationResult),
+      });
+    }
+
+    return null;
+  }
+
+  recordRepairHistory(session, attempt, context, repairResult) {
+    const existing = session.metadata && Array.isArray(session.metadata.repairHistory)
+      ? session.metadata.repairHistory
+      : [];
+    const entry = {
+      attempt,
+      failureSummary: repairResult.failureSummary || failureSummaryFor(context),
+      repairAction: repairResult.action,
+      result: repairResult.result,
+      timestamp: timestampIso(this.now),
+      metadata: repairResult.metadata || {},
+    };
+
+    mergeSessionMetadata(session, {
+      repairHistory: [...existing, entry],
+    });
   }
 
   evaluateApproval(session, counters) {
@@ -373,14 +506,6 @@ function mergeSessionMetadata(session, metadata) {
   };
 }
 
-function repairRequired(session, validationResult) {
-  return (
-    isPlainObject(validationResult) && validationResult.repairRequired === true ||
-    session.metadata && session.metadata.repairRequired === true ||
-    session.currentState === EXECUTION_STATES.REPAIRING
-  );
-}
-
 function validationPassed(session) {
   return session.metadata && session.metadata.validationPassed === true;
 }
@@ -466,6 +591,14 @@ function validateOptions(options) {
 
   if (options.continueEngine !== undefined && typeof options.continueEngine.shouldContinue !== "function") {
     throw new Error("Execution engine continueEngine must expose shouldContinue.");
+  }
+
+  if (options.repairEngine !== undefined) {
+    for (const methodName of ["canRepair", "createRepairPlan", "repair"]) {
+      if (typeof options.repairEngine[methodName] !== "function") {
+        throw new Error(`Execution engine repairEngine must expose ${methodName}.`);
+      }
+    }
   }
 
   if (options.approvalGateway !== undefined && typeof options.approvalGateway.evaluateActions !== "function") {
@@ -588,6 +721,64 @@ function actionsMatch(left, right) {
 
   return (left.action || left.type) === (right.action || right.type) &&
     JSON.stringify(left.metadata || {}) === JSON.stringify(right.metadata || {});
+}
+
+function createRepairContext(session, validationResult, counters) {
+  return {
+    session,
+    validationResult,
+    failureDetails: failureDetailsFor(validationResult, session),
+    failedTask: session.metadata && (session.metadata.failedTask || session.metadata.failedAction) || null,
+    currentRepairCount: counters.repairs,
+    metadata: {
+      sessionId: session.sessionId,
+      iteration: counters.iterations,
+      repairHistory: session.metadata && Array.isArray(session.metadata.repairHistory)
+        ? session.metadata.repairHistory
+        : [],
+      repairContext: session.metadata && isPlainObject(session.metadata.repairContext)
+        ? session.metadata.repairContext
+        : {},
+    },
+  };
+}
+
+function failureDetailsFor(validationResult, session) {
+  if (isPlainObject(validationResult) && validationResult.failureDetails !== undefined) {
+    return validationResult.failureDetails;
+  }
+
+  if (isPlainObject(validationResult) && typeof validationResult.error === "string") {
+    return {
+      summary: validationResult.error,
+    };
+  }
+
+  if (Array.isArray(session.errors) && session.errors.length > 0) {
+    return {
+      summary: session.errors[session.errors.length - 1].message,
+    };
+  }
+
+  return {
+    summary: "Validation failed.",
+  };
+}
+
+function failureSummaryFor(context) {
+  if (isPlainObject(context.failureDetails) && typeof context.failureDetails.summary === "string") {
+    return context.failureDetails.summary;
+  }
+
+  if (typeof context.failureDetails === "string" && context.failureDetails.trim() !== "") {
+    return context.failureDetails.trim();
+  }
+
+  if (isPlainObject(context.validationResult) && typeof context.validationResult.error === "string") {
+    return context.validationResult.error;
+  }
+
+  return "Validation failed.";
 }
 
 function clonePlainObject(value) {

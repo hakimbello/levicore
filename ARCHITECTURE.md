@@ -169,6 +169,8 @@ Transitions must be explicit, rejected when invalid, and emitted as typed progre
 
 `src/approval-gateway.js` evaluates pending actions before execution using NEVER, SAFE_ONLY, DESTRUCTIVE_ONLY, ALWAYS, or CUSTOM policies. It returns APPROVED, REQUIRES_APPROVAL, or DENIED; approval pauses preserve session state with an ApprovalRequest so `ExecutionEngine.resume(session)` can continue only after approval is recorded.
 
+`src/repair-engine.js` coordinates self-repair through injected callbacks for repair eligibility, repair-plan creation, and repair execution. When validation fails, `ExecutionEngine` enters the AE-001 `REPAIRING` state, records bounded repair attempts in session metadata, emits repair lifecycle events, retries validation after REPAIRED or RETRY_VALIDATION results, and stops gracefully at MAX_REPAIRS. CANNOT_REPAIR and RESTORE_REQUIRED results stop execution without inventing editor or provider dependencies; RESTORE_REQUIRED emits a restore_required lifecycle event so a restore workflow can take over.
+
 ## Trust Boundaries
 
 - Repository files are untrusted input.
