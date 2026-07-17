@@ -6,6 +6,7 @@
     "levi": "bin/levi.js"
   },
   "scripts": {
-    "levi": "node bin/levi.js"
+    "levi": "node bin/levi.js",
+    "test": "node --test"
   }
 }

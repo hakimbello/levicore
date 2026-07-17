@@ -148,19 +148,22 @@ Maps to LC-MVP-010.
 
 ## Task State Machine
 
-1. RECEIVED
-2. SCOPE_CHECKED
-3. PLANNED
-4. AWAITING_APPROVAL
-5. APPROVED
-6. EXECUTING
-7. VALIDATING
-8. COMPLETED
-9. PARTIAL
-10. FAILED
-11. REJECTED_OUT_OF_SCOPE
+Autonomous execution sessions use `src/execution-session.js` as the deterministic transition authority.
 
-Transitions must be explicit and persisted.
+1. IDLE
+2. PLANNING
+3. WAITING_FOR_APPROVAL
+4. EXECUTING
+5. VALIDATING
+6. REPAIRING
+7. COMPLETED
+8. FAILED
+9. RESTORED
+10. CANCELLED
+
+Transitions must be explicit, rejected when invalid, and emitted as typed progress events when state changes.
+
+`src/continue-engine.js` decides whether a validated execution session may continue automatically. It continues only after passed validation when approval, completion, security, cost, ambiguity, cancellation, and failure guards are all clear. Stop reasons are explicit constants: OBJECTIVE_COMPLETE, APPROVAL_REQUIRED, SECURITY_STOP, COST_LIMIT, AMBIGUOUS_TASK, USER_CANCELLED, and EXECUTION_FAILED.
 
 ## Trust Boundaries
 
