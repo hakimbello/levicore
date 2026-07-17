@@ -175,6 +175,24 @@ Transitions must be explicit, rejected when invalid, and emitted as typed progre
 
 `src/objective-completion-engine.js` evaluates whether the user's objective is actually complete before `ExecutionEngine` can transition a session to COMPLETED. Completion gates include objective presence, planned and required steps, remaining executable work, validation state, repair history, approval requests, high-severity security findings, cancellation, restore requirements, blockers, and injected completion rules. COMPLETE permits the final AE-001 transition to COMPLETED, INCOMPLETE continues only when executable work remains or pauses with OBJECTIVE_INCOMPLETE, REQUIRES_REVIEW escalates through the approval gateway, and BLOCKED stops with OBJECTIVE_BLOCKED. Each evaluation is recorded in `session.metadata.completionHistory`.
 
+## Repository Knowledge Graph
+
+`src/repository-knowledge-graph.js` provides the Layer 2 structural knowledge graph. It is platform-independent and depends only on Levi-owned scanner, structural index, project summary, memory, and decision interfaces. It has no VS Code, UI, model-provider, or language-specific hard dependency.
+
+Graph nodes use normalized fields: `id`, `type`, `name`, `path`, `language`, `range`, `metadata`, `createdAt`, and `updatedAt`. Supported node types include repository, directory, file, module, class, function, method, interface, type, variable, test, configuration, dependency, and decision.
+
+Graph edges use normalized fields: `id`, `type`, `sourceId`, `targetId`, `evidence`, `confidence`, `metadata`, `createdAt`, and `updatedAt`. Supported relationship types include contains, imports, exports, calls, references, extends, implements, depends_on, tests, configures, defines, modifies, related_to, and governed_by_decision.
+
+The graph builds from `scanRepository`, reuses the existing `buildStructuralIndex` symbol and relationship output, imports dependency data through project summaries, and can attach approved durable decisions or approved project-knowledge facts through injected records or memory-store adapters. Structural relationship edges keep their precise type and also provide normalized reference edges for higher-level traversal and impact queries.
+
+Language analysis is adapter-driven. A language analyzer exposes `analyzeFile({ repositoryRoot, filePath, content, language, graph, options })` and returns graph nodes and edges. The built-in lightweight path reuses Levi's structural index for JavaScript, TypeScript, and Python files, while future analyzers can parse Java, Go, Rust, or other languages without changing the graph core.
+
+Incremental updates accept created, modified, deleted, and renamed files. Changed file nodes and their file-owned symbols are replaced without requiring a full repository rebuild, while deterministic IDs preserve stable identities for unchanged paths and symbol names. Update events record modifications and preserve query compatibility for existing consumers.
+
+Persistence writes a schema-versioned snapshot to `.levi/repository-knowledge-graph.json` by default. Loading validates the snapshot, emits `knowledge_graph_restored` on success, emits `knowledge_graph_rebuild_required` on corrupt or incompatible data, and can rebuild from the repository path when `rebuildOnCorruption` is enabled.
+
+The public graph API supports `build`, `update`, node and edge mutation, neighbor lookups, typed node and edge searches, dependency and dependent traversal, reference/call queries, impact analysis, `snapshot`, `restore`, `save`, and `load`. Lifecycle events cover build, update, node/edge changes, persistence, restore, and rebuild-required states.
+
 ## Trust Boundaries
 
 - Repository files are untrusted input.
