@@ -19,6 +19,11 @@ const {
   RepairEngine,
 } = require("../src/repair-engine");
 const {
+  SECURITY_RESULTS,
+  SECURITY_SEVERITIES,
+  SecurityValidator,
+} = require("../src/security-validator");
+const {
   EXECUTION_PROGRESS_EVENTS,
   EXECUTION_PROGRESS_EVENT_TYPES,
   EXECUTION_STATES,
@@ -54,7 +59,7 @@ test("completes a session after successful execution and validation", async () =
   assert.equal(result.stopReason, CONTINUE_STOP_REASONS.OBJECTIVE_COMPLETE);
   assert.equal(result.iterations, 1);
   assert.equal(result.session.currentState, EXECUTION_STATES.COMPLETED);
-  assert.deepEqual(lifecycleEvents, [
+  assert.deepEqual(nonSecurityEvents(lifecycleEvents), [
     EXECUTION_ENGINE_EVENT_TYPES.EXECUTION_STARTED,
     EXECUTION_ENGINE_EVENT_TYPES.ITERATION_STARTED,
     EXECUTION_ENGINE_EVENT_TYPES.VALIDATION_STARTED,
@@ -370,7 +375,10 @@ test("emits repair events in deterministic order", async () => {
     remainingSteps: ["task-1"],
   }));
 
-  assert.deepEqual(lifecycleEvents.slice(4, 11), [
+  const nonSecurityLifecycleEvents = nonSecurityEvents(lifecycleEvents);
+  const repairStart = nonSecurityLifecycleEvents.indexOf(EXECUTION_ENGINE_EVENT_TYPES.REPAIR_STARTED);
+
+  assert.deepEqual(nonSecurityLifecycleEvents.slice(repairStart, repairStart + 7), [
     EXECUTION_ENGINE_EVENT_TYPES.REPAIR_STARTED,
     EXECUTION_ENGINE_EVENT_TYPES.REPAIR_PLAN_CREATED,
     EXECUTION_ENGINE_EVENT_TYPES.REPAIR_ATTEMPTED,
@@ -405,6 +413,435 @@ test("repair history remains available in session snapshots", async () => {
 
   assert.equal(Array.isArray(result.session.metadata.repairHistory), true);
   assert.equal(result.session.metadata.repairHistory.length, 1);
+});
+
+test("allows safe pending actions through security validation", async () => {
+  let executed = false;
+  const engine = createEngine({
+    securityValidator: createSecurityValidator({
+      actionValidators: [() => null],
+    }),
+    executeNextTask: () => {
+      executed = true;
+      return {
+        completedStep: "read",
+        remainingSteps: [],
+      };
+    },
+    validateResults: () => ({
+      validationPassed: true,
+      objectiveComplete: true,
+    }),
+  });
+
+  const result = await engine.run(createSession({
+    remainingSteps: ["read"],
+    metadata: {
+      pendingActions: [{
+        action: APPROVAL_ACTIONS.SAFE_FILE_READ,
+        safe: true,
+      }],
+    },
+  }));
+
+  assert.equal(executed, true);
+  assert.equal(result.status, "COMPLETED");
+  assert.deepEqual(result.session.metadata.securityFindings || [], []);
+});
+
+test("records warning findings and continues execution", async () => {
+  const lifecycleEvents = [];
+  const engine = createEngine({
+    securityValidator: createSecurityValidator({
+      actionValidators: [() => securityFinding({
+        ruleId: "shell-warning",
+        status: SECURITY_RESULTS.WARNING,
+        severity: SECURITY_SEVERITIES.MEDIUM,
+        evidence: {
+          command: "npm test",
+        },
+      })],
+    }),
+    executeNextTask: () => ({
+      completedStep: "command",
+      remainingSteps: [],
+    }),
+    validateResults: () => ({
+      validationPassed: true,
+      objectiveComplete: true,
+    }),
+  });
+
+  engine.on(EXECUTION_ENGINE_EVENTS.LIFECYCLE, (event) => lifecycleEvents.push(event.type));
+
+  const result = await engine.run(createSession({
+    remainingSteps: ["command"],
+    metadata: {
+      pendingActions: [{
+        action: APPROVAL_ACTIONS.EXECUTE_SHELL_COMMAND,
+        safe: true,
+      }],
+    },
+  }));
+
+  assert.equal(result.status, "COMPLETED");
+  assert.equal(result.session.metadata.securityFindings.length, 1);
+  assert.equal(result.session.metadata.securityFindings[0].ruleId, "shell-warning");
+  assert.equal(lifecycleEvents.includes(EXECUTION_ENGINE_EVENT_TYPES.SECURITY_WARNING), true);
+});
+
+test("blocks unsafe pending actions before execution", async () => {
+  let executed = false;
+  const engine = createEngine({
+    securityValidator: createSecurityValidator({
+      actionValidators: [() => securityFinding({
+        ruleId: "dangerous-delete",
+        status: SECURITY_RESULTS.BLOCKED,
+        severity: SECURITY_SEVERITIES.CRITICAL,
+        evidence: {
+          path: "src/app.js",
+        },
+      })],
+    }),
+    executeNextTask: () => {
+      executed = true;
+      return {
+        completedStep: "delete",
+        remainingSteps: [],
+      };
+    },
+    validateResults: () => ({
+      validationPassed: true,
+      objectiveComplete: true,
+    }),
+  });
+
+  const result = await engine.run(createSession({
+    remainingSteps: ["delete"],
+    metadata: {
+      pendingActions: [{
+        action: APPROVAL_ACTIONS.DELETE_FILE,
+      }],
+    },
+  }));
+
+  assert.equal(executed, false);
+  assert.equal(result.status, "PAUSED");
+  assert.equal(result.stopReason, CONTINUE_STOP_REASONS.SECURITY_STOP);
+  assert.equal(result.securityResult, SECURITY_RESULTS.BLOCKED);
+  assert.equal(result.session.metadata.securityStop, true);
+});
+
+test("pauses through approval when security review is required", async () => {
+  let executed = false;
+  const engine = createEngine({
+    securityValidator: createSecurityValidator({
+      actionValidators: [() => securityFinding({
+        ruleId: "network-review",
+        status: SECURITY_RESULTS.REQUIRES_REVIEW,
+        severity: SECURITY_SEVERITIES.HIGH,
+        evidence: {
+          host: "example.com",
+        },
+      })],
+    }),
+    executeNextTask: () => {
+      executed = true;
+      return {
+        completedStep: "network",
+        remainingSteps: [],
+      };
+    },
+    validateResults: () => ({
+      validationPassed: true,
+      objectiveComplete: true,
+    }),
+  });
+
+  const result = await engine.run(createSession({
+    remainingSteps: ["network"],
+    metadata: {
+      pendingActions: [{
+        action: APPROVAL_ACTIONS.NETWORK_OPERATION,
+      }],
+    },
+  }));
+
+  assert.equal(executed, false);
+  assert.equal(result.status, "PAUSED");
+  assert.equal(result.stopReason, CONTINUE_STOP_REASONS.APPROVAL_REQUIRED);
+  assert.equal(result.securityResult, SECURITY_RESULTS.REQUIRES_REVIEW);
+  assert.equal(result.approvalRequest.action.action, APPROVAL_ACTIONS.SECURITY_REVIEW);
+  assert.equal(result.session.currentState, EXECUTION_STATES.WAITING_FOR_APPROVAL);
+});
+
+test("detects post-execution security findings", async () => {
+  const engine = createEngine({
+    securityValidator: createSecurityValidator({
+      resultValidators: [(result, context) => context.phase === "post_execution"
+        ? securityFinding({
+            ruleId: "post-exec-secret",
+            status: SECURITY_RESULTS.WARNING,
+            evidence: {
+              file: result.changedFile,
+            },
+          })
+        : null],
+    }),
+    executeNextTask: () => ({
+      changedFile: "src/config.js",
+      completedStep: "task-1",
+      remainingSteps: [],
+    }),
+    validateResults: () => ({
+      validationPassed: true,
+      objectiveComplete: true,
+    }),
+  });
+
+  const result = await engine.run(createSession({
+    remainingSteps: ["task-1"],
+  }));
+
+  assert.equal(result.status, "COMPLETED");
+  assert.equal(result.session.metadata.securityFindings[0].ruleId, "post-exec-secret");
+});
+
+test("blocks before automatic continuation", async () => {
+  const engine = createEngine({
+    securityValidator: createSecurityValidator({
+      sessionValidators: [(session, context) => context.phase === "pre_continuation"
+        ? securityFinding({
+            ruleId: "pre-continuation-block",
+            status: SECURITY_RESULTS.BLOCKED,
+            severity: SECURITY_SEVERITIES.CRITICAL,
+            evidence: {
+              sessionId: session.sessionId,
+            },
+          })
+        : null],
+    }),
+    executeNextTask: () => ({
+      completedStep: "task-1",
+      remainingSteps: ["task-2"],
+    }),
+    validateResults: () => ({
+      validationPassed: true,
+      objectiveComplete: false,
+    }),
+  });
+
+  const result = await engine.run(createSession({
+    remainingSteps: ["task-1", "task-2"],
+  }));
+
+  assert.equal(result.status, "PAUSED");
+  assert.equal(result.stopReason, CONTINUE_STOP_REASONS.SECURITY_STOP);
+  assert.equal(result.session.metadata.securityFindings[0].ruleId, "pre-continuation-block");
+});
+
+test("blocks before objective completion", async () => {
+  const engine = createEngine({
+    securityValidator: createSecurityValidator({
+      sessionValidators: [(session, context) => context.phase === "pre_completion"
+        ? securityFinding({
+            ruleId: "pre-completion-block",
+            status: SECURITY_RESULTS.BLOCKED,
+            severity: SECURITY_SEVERITIES.CRITICAL,
+            evidence: {
+              sessionId: session.sessionId,
+            },
+          })
+        : null],
+    }),
+    executeNextTask: () => ({
+      completedStep: "task-1",
+      remainingSteps: [],
+    }),
+    validateResults: () => ({
+      validationPassed: true,
+      objectiveComplete: true,
+    }),
+  });
+
+  const result = await engine.run(createSession({
+    remainingSteps: ["task-1"],
+  }));
+
+  assert.equal(result.status, "PAUSED");
+  assert.equal(result.stopReason, CONTINUE_STOP_REASONS.SECURITY_STOP);
+  assert.notEqual(result.session.currentState, EXECUTION_STATES.COMPLETED);
+});
+
+test("suppresses duplicate security findings during a session", async () => {
+  const duplicateFinding = securityFinding({
+    ruleId: "duplicate-secret",
+    status: SECURITY_RESULTS.WARNING,
+    evidence: {
+      file: "src/config.js",
+    },
+  });
+  const engine = createEngine({
+    securityValidator: createSecurityValidator({
+      resultValidators: [() => duplicateFinding],
+    }),
+    executeNextTask: () => ({
+      completedStep: "task-1",
+      remainingSteps: [],
+    }),
+    validateResults: () => ({
+      validationPassed: true,
+      objectiveComplete: true,
+    }),
+  });
+
+  const result = await engine.run(createSession({
+    remainingSteps: ["task-1"],
+  }));
+
+  assert.equal(result.session.metadata.securityFindings.length, 1);
+});
+
+test("security findings remain snapshot compatible", async () => {
+  const engine = createEngine({
+    securityValidator: createSecurityValidator({
+      resultValidators: [() => securityFinding({
+        ruleId: "snapshot-warning",
+        status: SECURITY_RESULTS.WARNING,
+        evidence: {
+          file: "src/app.js",
+        },
+      })],
+    }),
+    executeNextTask: () => ({
+      completedStep: "task-1",
+      remainingSteps: [],
+    }),
+    validateResults: () => ({
+      validationPassed: true,
+      objectiveComplete: true,
+    }),
+  });
+
+  const result = await engine.run(createSession({
+    remainingSteps: ["task-1"],
+  }));
+
+  assert.equal(Array.isArray(result.session.metadata.securityFindings), true);
+  assert.equal(result.session.metadata.securityFindings[0].ruleId, "snapshot-warning");
+});
+
+test("emits security events in deterministic order for pending actions", async () => {
+  const lifecycleEvents = [];
+  const engine = createEngine({
+    securityValidator: createSecurityValidator({
+      actionValidators: [() => securityFinding({
+        ruleId: "order-warning",
+        status: SECURITY_RESULTS.WARNING,
+        evidence: {
+          action: "read",
+        },
+      })],
+    }),
+    executeNextTask: () => ({
+      completedStep: "read",
+      remainingSteps: [],
+    }),
+    validateResults: () => ({
+      validationPassed: true,
+      objectiveComplete: true,
+    }),
+  });
+
+  engine.on(EXECUTION_ENGINE_EVENTS.LIFECYCLE, (event) => lifecycleEvents.push(event.type));
+
+  await engine.run(createSession({
+    remainingSteps: ["read"],
+    metadata: {
+      pendingActions: [{
+        action: APPROVAL_ACTIONS.SAFE_FILE_READ,
+        safe: true,
+      }],
+    },
+  }));
+
+  assert.deepEqual(lifecycleEvents.slice(2, 5), [
+    EXECUTION_ENGINE_EVENT_TYPES.SECURITY_VALIDATION_STARTED,
+    EXECUTION_ENGINE_EVENT_TYPES.SECURITY_VALIDATION_COMPLETED,
+    EXECUTION_ENGINE_EVENT_TYPES.SECURITY_WARNING,
+  ]);
+});
+
+test("security warnings remain compatible with repair loops", async () => {
+  let validationCount = 0;
+  const engine = createEngine({
+    securityValidator: createSecurityValidator({
+      resultValidators: [() => securityFinding({
+        ruleId: "repair-compatible-warning",
+        status: SECURITY_RESULTS.WARNING,
+        evidence: {
+          file: "src/app.js",
+        },
+      })],
+    }),
+    repairEngine: createRepairEngine(),
+    executeNextTask: () => ({
+      completedStep: "task-1",
+      remainingSteps: [],
+    }),
+    validateResults: () => {
+      validationCount += 1;
+      return validationCount === 1
+        ? {
+            validationPassed: false,
+            error: "Needs repair.",
+          }
+        : {
+            validationPassed: true,
+            objectiveComplete: true,
+          };
+    },
+  });
+
+  const result = await engine.run(createSession({
+    remainingSteps: ["task-1"],
+  }));
+
+  assert.equal(result.status, "COMPLETED");
+  assert.equal(result.repairs, 1);
+  assert.equal(result.session.metadata.securityFindings.length, 1);
+});
+
+test("security warnings remain compatible with continuation", async () => {
+  const engine = createEngine({
+    securityValidator: createSecurityValidator({
+      sessionValidators: [(session, context) => context.phase === "pre_continuation"
+        ? securityFinding({
+            ruleId: "continuation-warning",
+            status: SECURITY_RESULTS.WARNING,
+            evidence: {
+              phase: context.phase,
+            },
+          })
+        : null],
+    }),
+    executeNextTask: ({ iteration }) => ({
+      completedStep: `task-${iteration}`,
+      remainingSteps: iteration === 1 ? ["task-2"] : [],
+    }),
+    validateResults: ({ iteration }) => ({
+      validationPassed: true,
+      objectiveComplete: iteration === 2,
+    }),
+  });
+
+  const result = await engine.run(createSession({
+    remainingSteps: ["task-1", "task-2"],
+  }));
+
+  assert.equal(result.status, "COMPLETED");
+  assert.equal(result.iterations, 2);
+  assert.equal(result.session.metadata.securityFindings.some((finding) => finding.ruleId === "continuation-warning"), true);
 });
 
 test("stops immediately when ContinueEngine returns false", async () => {
@@ -602,7 +1039,7 @@ test("emits lifecycle events in deterministic order across a continue loop", asy
     remainingSteps: ["task-1", "task-2"],
   }));
 
-  assert.deepEqual(lifecycleEvents, [
+  assert.deepEqual(nonSecurityEvents(lifecycleEvents), [
     EXECUTION_ENGINE_EVENT_TYPES.EXECUTION_STARTED,
     EXECUTION_ENGINE_EVENT_TYPES.ITERATION_STARTED,
     EXECUTION_ENGINE_EVENT_TYPES.VALIDATION_STARTED,
@@ -629,9 +1066,34 @@ function createEngine(options) {
     validateResults: options.validateResults,
     continueEngine: options.continueEngine,
     repairEngine: options.repairEngine,
+    securityValidator: options.securityValidator,
     approvalGateway: options.approvalGateway,
     getPendingActions: options.getPendingActions,
   });
+}
+
+function createSecurityValidator(options = {}) {
+  return new SecurityValidator({
+    now: () => BASE_TIME,
+    ...options,
+  });
+}
+
+function nonSecurityEvents(events) {
+  return events.filter((event) => !String(event).startsWith("security_"));
+}
+
+function securityFinding(input) {
+  return {
+    ruleId: input.ruleId,
+    title: input.title || input.ruleId,
+    description: input.description || `${input.ruleId} detected.`,
+    severity: input.severity || SECURITY_SEVERITIES.MEDIUM,
+    status: input.status || SECURITY_RESULTS.WARNING,
+    evidence: input.evidence || {},
+    remediation: input.remediation || "Review and remediate the finding.",
+    metadata: input.metadata || {},
+  };
 }
 
 function createRepairEngine(options = {}) {

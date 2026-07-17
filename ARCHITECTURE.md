@@ -171,6 +171,8 @@ Transitions must be explicit, rejected when invalid, and emitted as typed progre
 
 `src/repair-engine.js` coordinates self-repair through injected callbacks for repair eligibility, repair-plan creation, and repair execution. When validation fails, `ExecutionEngine` enters the AE-001 `REPAIRING` state, records bounded repair attempts in session metadata, emits repair lifecycle events, retries validation after REPAIRED or RETRY_VALIDATION results, and stops gracefully at MAX_REPAIRS. CANNOT_REPAIR and RESTORE_REQUIRED results stop execution without inventing editor or provider dependencies; RESTORE_REQUIRED emits a restore_required lifecycle event so a restore workflow can take over.
 
+`src/security-validator.js` evaluates pending actions, execution results, validation results, pre-continuation state, and pre-completion state for security risks. It records deduplicated SecurityFinding entries in `session.metadata.securityFindings`, emits security validation lifecycle events, lets WARNING findings continue, escalates REQUIRES_REVIEW findings through the approval gateway, and stops BLOCKED findings immediately with SECURITY_STOP. Security validation wraps repair and continuation so repaired work and automatic continuation cannot bypass the same safety layer.
+
 ## Trust Boundaries
 
 - Repository files are untrusted input.

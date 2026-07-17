@@ -1,6 +1,8 @@
 const { EventEmitter } = require("node:events");
 const {
+  APPROVAL_ACTIONS,
   APPROVAL_DECISIONS,
+  APPROVAL_RISK_LEVELS,
   ApprovalGateway,
 } = require("./approval-gateway");
 const {
@@ -12,6 +14,11 @@ const {
   RepairEngine,
 } = require("./repair-engine");
 const {
+  SECURITY_RESULTS,
+  SecurityValidator,
+  findingKey,
+} = require("./security-validator");
+const {
   EXECUTION_STATES,
   canTransition,
 } = require("./execution-session");
@@ -22,6 +29,11 @@ const EXECUTION_ENGINE_EVENT_TYPES = Object.freeze({
   ITERATION_COMPLETED: "iteration_completed",
   VALIDATION_STARTED: "validation_started",
   VALIDATION_COMPLETED: "validation_completed",
+  SECURITY_VALIDATION_STARTED: "security_validation_started",
+  SECURITY_VALIDATION_COMPLETED: "security_validation_completed",
+  SECURITY_WARNING: "security_warning",
+  SECURITY_REVIEW_REQUIRED: "security_review_required",
+  SECURITY_BLOCKED: "security_blocked",
   REPAIR_STARTED: "repair_started",
   REPAIR_PLAN_CREATED: "repair_plan_created",
   REPAIR_ATTEMPTED: "repair_attempted",
@@ -51,6 +63,7 @@ class ExecutionEngine extends EventEmitter {
     this.validateResults = options.validateResults;
     this.continueEngine = options.continueEngine || new ContinueEngine();
     this.repairEngine = options.repairEngine || new RepairEngine();
+    this.securityValidator = options.securityValidator || new SecurityValidator();
     this.approvalGateway = options.approvalGateway || new ApprovalGateway();
     this.getPendingActions = options.getPendingActions || pendingActionsFromSession;
     this.limits = normalizeLimits(options.limits || {});
@@ -84,6 +97,22 @@ class ExecutionEngine extends EventEmitter {
 
       try {
         moveSessionTo(session, EXECUTION_STATES.PLANNING);
+        const pendingActions = this.getPendingActions({
+          session,
+          iteration: counters.iterations,
+          repairs: counters.repairs,
+        });
+        const preExecutionSecurityStop = this.validatePendingActionsSecurity(
+          session,
+          counters,
+          startedAtMs,
+          pendingActions,
+        );
+
+        if (preExecutionSecurityStop) {
+          return preExecutionSecurityStop;
+        }
+
         const approval = this.evaluateApproval(session, counters);
 
         if (approval.decision === APPROVAL_DECISIONS.REQUIRES_APPROVAL) {
@@ -101,11 +130,23 @@ class ExecutionEngine extends EventEmitter {
         }
 
         moveSessionTo(session, EXECUTION_STATES.EXECUTING);
-        applySessionUpdate(session, await this.executeNextTask({
+        const executionResult = await this.executeNextTask({
           session,
           iteration: counters.iterations,
           repairs: counters.repairs,
-        }));
+        });
+        applySessionUpdate(session, executionResult);
+        const postExecutionSecurityStop = this.evaluateSecurityResult(
+          session,
+          counters,
+          startedAtMs,
+          executionResult,
+          "post_execution",
+        );
+
+        if (postExecutionSecurityStop) {
+          return postExecutionSecurityStop;
+        }
 
         this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.VALIDATION_STARTED, session, counters);
         moveSessionTo(session, EXECUTION_STATES.VALIDATING);
@@ -119,6 +160,17 @@ class ExecutionEngine extends EventEmitter {
         this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.VALIDATION_COMPLETED, session, counters, {
           validation: normalizeResultForEvent(validationResult),
         });
+        const postValidationSecurityStop = this.evaluateSecurityResult(
+          session,
+          counters,
+          startedAtMs,
+          validationResult,
+          "post_validation",
+        );
+
+        if (postValidationSecurityStop) {
+          return postValidationSecurityStop;
+        }
 
         if (!validationPassed(session)) {
           const repairStop = await this.repairValidationFailure(session, counters, startedAtMs, validationResult);
@@ -129,6 +181,17 @@ class ExecutionEngine extends EventEmitter {
         }
 
         if (validationPassed(session) && objectiveComplete(session)) {
+          const preCompletionSecurityStop = this.evaluateSecuritySession(
+            session,
+            counters,
+            startedAtMs,
+            "pre_completion",
+          );
+
+          if (preCompletionSecurityStop) {
+            return preCompletionSecurityStop;
+          }
+
           moveSessionTo(session, EXECUTION_STATES.COMPLETED);
         }
 
@@ -145,6 +208,16 @@ class ExecutionEngine extends EventEmitter {
         }
 
         moveSessionTo(session, EXECUTION_STATES.VALIDATING);
+        const preContinuationSecurityStop = this.evaluateSecuritySession(
+          session,
+          counters,
+          startedAtMs,
+          "pre_continuation",
+        );
+
+        if (preContinuationSecurityStop) {
+          return preContinuationSecurityStop;
+        }
 
         const shouldContinue = this.continueEngine.shouldContinue(session);
         const stopReason = shouldContinue ? null : this.continueEngine.getStopReason(session);
@@ -196,6 +269,136 @@ class ExecutionEngine extends EventEmitter {
     }
 
     return this.run(session);
+  }
+
+  validatePendingActionsSecurity(session, counters, startedAtMs, pendingActions) {
+    if (!Array.isArray(pendingActions)) {
+      return null;
+    }
+
+    for (const action of pendingActions) {
+      const securityStop = this.evaluateSecurityAction(session, counters, startedAtMs, action, "pre_execution");
+
+      if (securityStop) {
+        return securityStop;
+      }
+    }
+
+    return null;
+  }
+
+  evaluateSecurityAction(session, counters, startedAtMs, action, phase) {
+    const result = this.runSecurityValidation(session, counters, "action", phase, () =>
+      this.securityValidator.validateAction(action, securityContext(session, counters, phase)));
+
+    return this.handleSecurityResult(session, counters, startedAtMs, result, {
+      phase,
+      subjectType: "action",
+      subject: action,
+    });
+  }
+
+  evaluateSecurityResult(session, counters, startedAtMs, resultValue, phase) {
+    const result = this.runSecurityValidation(session, counters, "result", phase, () =>
+      this.securityValidator.validateResult(resultValue, securityContext(session, counters, phase)));
+
+    return this.handleSecurityResult(session, counters, startedAtMs, result, {
+      phase,
+      subjectType: "result",
+      subject: resultValue,
+    });
+  }
+
+  evaluateSecuritySession(session, counters, startedAtMs, phase) {
+    const result = this.runSecurityValidation(session, counters, "session", phase, () =>
+      this.securityValidator.validateSession(snapshotSession(session), securityContext(session, counters, phase)));
+
+    return this.handleSecurityResult(session, counters, startedAtMs, result, {
+      phase,
+      subjectType: "session",
+      subject: snapshotSession(session),
+    });
+  }
+
+  runSecurityValidation(session, counters, target, phase, validate) {
+    this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.SECURITY_VALIDATION_STARTED, session, counters, {
+      target,
+      phase,
+    });
+    const result = validate();
+    const findings = storeSecurityFindings(session, result.findings || []);
+    const normalized = {
+      status: result.status,
+      findings,
+    };
+
+    this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.SECURITY_VALIDATION_COMPLETED, session, counters, {
+      target,
+      phase,
+      securityStatus: normalized.status,
+      findings,
+    });
+    return normalized;
+  }
+
+  handleSecurityResult(session, counters, startedAtMs, result, input) {
+    if (result.status === SECURITY_RESULTS.SAFE) {
+      return null;
+    }
+
+    if (result.status === SECURITY_RESULTS.WARNING) {
+      this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.SECURITY_WARNING, session, counters, {
+        phase: input.phase,
+        findings: result.findings,
+      });
+      return null;
+    }
+
+    if (result.status === SECURITY_RESULTS.REQUIRES_REVIEW) {
+      const approvalRequest = this.createSecurityReviewRequest(session, counters, result, input);
+      this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.SECURITY_REVIEW_REQUIRED, session, counters, {
+        phase: input.phase,
+        findings: result.findings,
+        approvalRequest,
+      });
+      markSessionWaitingForApproval(session, approvalRequest, null);
+      return this.stop(session, counters, startedAtMs, "PAUSED", CONTINUE_STOP_REASONS.APPROVAL_REQUIRED, null, {
+        approvalRequest,
+        securityResult: SECURITY_RESULTS.REQUIRES_REVIEW,
+      });
+    }
+
+    if (result.status === SECURITY_RESULTS.BLOCKED) {
+      mergeSessionMetadata(session, {
+        securityStop: true,
+      });
+      this.emitLifecycle(EXECUTION_ENGINE_EVENT_TYPES.SECURITY_BLOCKED, session, counters, {
+        phase: input.phase,
+        findings: result.findings,
+      });
+      return this.stop(session, counters, startedAtMs, "PAUSED", CONTINUE_STOP_REASONS.SECURITY_STOP, null, {
+        securityResult: SECURITY_RESULTS.BLOCKED,
+      });
+    }
+
+    throw new Error("Execution engine security result is invalid.");
+  }
+
+  createSecurityReviewRequest(session, counters, result, input) {
+    return this.approvalGateway.createApprovalRequest({
+      action: APPROVAL_ACTIONS.SECURITY_REVIEW,
+      reason: "Security review is required before autonomous execution can continue.",
+      riskLevel: APPROVAL_RISK_LEVELS.HIGH,
+      metadata: {
+        sessionId: session.sessionId,
+        iteration: counters.iterations,
+        phase: input.phase,
+        subjectType: input.subjectType,
+        findings: result.findings,
+      },
+    }, {
+      timestamp: timestampIso(this.now),
+    });
   }
 
   async repairValidationFailure(session, counters, startedAtMs, validationResult) {
@@ -601,6 +804,14 @@ function validateOptions(options) {
     }
   }
 
+  if (options.securityValidator !== undefined) {
+    for (const methodName of ["validateAction", "validateResult", "validateSession"]) {
+      if (typeof options.securityValidator[methodName] !== "function") {
+        throw new Error(`Execution engine securityValidator must expose ${methodName}.`);
+      }
+    }
+  }
+
   if (options.approvalGateway !== undefined && typeof options.approvalGateway.evaluateActions !== "function") {
     throw new Error("Execution engine approvalGateway must expose evaluateActions.");
   }
@@ -721,6 +932,46 @@ function actionsMatch(left, right) {
 
   return (left.action || left.type) === (right.action || right.type) &&
     JSON.stringify(left.metadata || {}) === JSON.stringify(right.metadata || {});
+}
+
+function securityContext(session, counters, phase) {
+  return {
+    session: snapshotSession(session),
+    iteration: counters.iterations,
+    repairs: counters.repairs,
+    phase,
+  };
+}
+
+function storeSecurityFindings(session, findings) {
+  if (!Array.isArray(findings) || findings.length === 0) {
+    return [];
+  }
+
+  const existing = session.metadata && Array.isArray(session.metadata.securityFindings)
+    ? session.metadata.securityFindings
+    : [];
+  const seen = new Set(existing.map(findingKey));
+  const added = [];
+
+  for (const finding of findings) {
+    const key = findingKey(finding);
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    added.push(finding);
+  }
+
+  if (added.length > 0) {
+    mergeSessionMetadata(session, {
+      securityFindings: [...existing, ...added],
+    });
+  }
+
+  return added;
 }
 
 function createRepairContext(session, validationResult, counters) {

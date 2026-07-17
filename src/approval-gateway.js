@@ -24,6 +24,7 @@ const APPROVAL_ACTIONS = Object.freeze({
   MODIFY_CONFIGURATION: "modify_configuration",
   GIT_OPERATION: "git_operation",
   NETWORK_OPERATION: "network_operation",
+  SECURITY_REVIEW: "security_review",
   SAFE_FILE_READ: "safe_file_read",
   SAFE_FILE_CREATE: "safe_file_create",
 });
@@ -226,6 +227,7 @@ function riskLevelFor(action) {
     APPROVAL_ACTIONS.RENAME_FILE,
     APPROVAL_ACTIONS.EXECUTE_SHELL_COMMAND,
     APPROVAL_ACTIONS.MODIFY_CONFIGURATION,
+    APPROVAL_ACTIONS.SECURITY_REVIEW,
   ].includes(action)) {
     return APPROVAL_RISK_LEVELS.MEDIUM;
   }
