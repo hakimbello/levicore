@@ -41,22 +41,22 @@
 22. `where.exe code`
 23. `Get-Command code | Select-Object -ExpandProperty Source`
 24. `Get-Command Code.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source`
-25. `code.cmd --new-window --user-data-dir "$env:TEMP\levicore-rc006a-user-data" --extensions-dir "$env:TEMP\levicore-rc006a-extensions" --extensionDevelopmentPath=packages/vscode-extension "C:\Users\wetie\OneDrive\Desktop\LeviCore"`
+25. `code.cmd --new-window --user-data-dir "$env:TEMP\levicore-rc006a-user-data" --extensions-dir "$env:TEMP\levicore-rc006a-extensions" --extensionDevelopmentPath=packages/vscode-extension "<REPO_ROOT>"`
 26. `Get-ChildItem -Path $env:TEMP\levicore-rc006a-user-data -Force | Select-Object FullName,Mode,Length,LastWriteTime`
 27. `Get-ChildItem -Path $env:TEMP\levicore-rc006a-user-data\logs -Recurse -File -ErrorAction SilentlyContinue | Select-Object FullName,Length,LastWriteTime`
 28. `Select-String -Path $env:TEMP\levicore-rc006a-user-data\logs\20260718T212508\window1\exthost\exthost.log -Pattern 'levi|error|warn|fail|activation|ExtensionDevelopmentPath' -CaseSensitive:$false`
 29. `Select-String -Path $env:TEMP\levicore-rc006a-user-data\logs\20260718T212508\window1\renderer.log -Pattern 'levi|error|warn|fail|activation' -CaseSensitive:$false`
 30. `Select-String -Path $env:TEMP\levicore-rc006a-user-data\logs\20260718T212508\main.log -Pattern 'levi|error|warn|fail|ExtensionDevelopmentPath|extensionDevelopmentPath' -CaseSensitive:$false`
-31. `code.cmd --new-window --user-data-dir "$env:TEMP\levicore-rc006a-user-data-absolute" --extensions-dir "$env:TEMP\levicore-rc006a-extensions-absolute" --extensionDevelopmentPath="C:\Users\wetie\OneDrive\Desktop\LeviCore\packages\vscode-extension" "C:\Users\wetie\OneDrive\Desktop\LeviCore"`
+31. `code.cmd --new-window --user-data-dir "$env:TEMP\levicore-rc006a-user-data-absolute" --extensions-dir "$env:TEMP\levicore-rc006a-extensions-absolute" --extensionDevelopmentPath="<REPO_ROOT>\packages\vscode-extension" "<REPO_ROOT>"`
 32. `Select-String -Path $env:TEMP\levicore-rc006a-user-data-absolute\logs\*\window1\exthost\exthost.log -Pattern 'levi|error|warn|fail|activation|ExtensionService' -CaseSensitive:$false`
 33. `Select-String -Path $env:TEMP\levicore-rc006a-user-data-absolute\logs\*\window1\renderer.log -Pattern 'levi|error|warn|fail|activation' -CaseSensitive:$false`
 34. `Get-Content $env:TEMP\levicore-rc006a-user-data-absolute\logs\20260718T213001\window1\exthost\output_logging_20260718T213003\1-Levi.log`
 35. `node -e "const pkg=require('./packages/vscode-extension/package.json'); const fs=require('fs'); const constants=fs.readFileSync('./packages/vscode-extension/src/constants.js','utf8'); const ids=pkg.contributes.commands.map(c=>c.command); const missing=ids.filter(id=>!constants.includes(id)); console.log(JSON.stringify({manifestCommandCount:ids.length, duplicateIds:ids.filter((v,i,a)=>a.indexOf(v)!==i), missingFromConstants:missing}, null, 2));"`
-36. `code.cmd --new-window --user-data-dir "$env:TEMP\levicore-rc006a-user-data-absolute" --extensions-dir "$env:TEMP\levicore-rc006a-extensions-absolute" --extensionDevelopmentPath="C:\Users\wetie\OneDrive\Desktop\LeviCore\packages\vscode-extension" "C:\Users\wetie\OneDrive\Desktop\LeviCore"`
+36. `code.cmd --new-window --user-data-dir "$env:TEMP\levicore-rc006a-user-data-absolute" --extensions-dir "$env:TEMP\levicore-rc006a-extensions-absolute" --extensionDevelopmentPath="<REPO_ROOT>\packages\vscode-extension" "<REPO_ROOT>"`
 37. `Get-Content $env:TEMP\levicore-rc006a-user-data-absolute\logs\20260718T213251\terminal.log -ErrorAction SilentlyContinue`
 38. `Get-Content $env:TEMP\levicore-rc006a-user-data-absolute\logs\20260718T213251\window1\network.log -ErrorAction SilentlyContinue`
 39. `Get-Content $env:TEMP\levicore-rc006a-user-data-absolute\logs\20260718T213251\network-shared.log -ErrorAction SilentlyContinue`
-40. `Select-String -Path $env:TEMP\levicore-rc006a-user-data-absolute\logs\20260718T213251\**\* -Pattern 'api[_-]?key|token|secret|password|BEGIN|PRIVATE KEY|prompt|source code|C:\\Users\\wetie\\OneDrive\\Desktop\\LeviCore\\src' -CaseSensitive:$false -ErrorAction SilentlyContinue`
+40. `Select-String -Path $env:TEMP\levicore-rc006a-user-data-absolute\logs\20260718T213251\**\* -Pattern 'api[_-]?key|token|secret|password|BEGIN|PRIVATE KEY|prompt|source code|<REPO_ROOT>\\src' -CaseSensitive:$false -ErrorAction SilentlyContinue`
 41. `$env:PROCESSOR_ARCHITECTURE`
 42. `git status --porcelain=v1`
 
@@ -93,7 +93,7 @@ UI actions performed in the Extension Development Host:
 Documented relative launch used:
 
 ```powershell
-code.cmd --new-window --user-data-dir "$env:TEMP\levicore-rc006a-user-data" --extensions-dir "$env:TEMP\levicore-rc006a-extensions" --extensionDevelopmentPath=packages/vscode-extension "C:\Users\wetie\OneDrive\Desktop\LeviCore"
+code.cmd --new-window --user-data-dir "$env:TEMP\levicore-rc006a-user-data" --extensions-dir "$env:TEMP\levicore-rc006a-extensions" --extensionDevelopmentPath=packages/vscode-extension "<REPO_ROOT>"
 ```
 
 Renderer error from documented relative launch:
@@ -113,7 +113,7 @@ No runnable Levi command was present.
 Absolute-path diagnostic activation evidence:
 
 ```text
-2026-07-18 21:30:03.672 [info] Loading development extension at c:\Users\wetie\OneDrive\Desktop\LeviCore\packages\vscode-extension
+2026-07-18 21:30:03.672 [info] Loading development extension at <REPO_ROOT>\packages\vscode-extension
 2026-07-18 21:30:04.817 [info] ExtensionService#_doActivateExtension levi-platform.levi-vscode-extension, startup: false, activationEvent: 'onStartupFinished'
 Levi extension activation started.
 Extension event: extension_runtime_ready
@@ -227,7 +227,7 @@ No production code was modified. No lockfile, dependency folder, generated build
 
 - Severity: RELEASE_BLOCKER
 - Reproduction steps:
-  1. From the repository root, run the documented relative launch path through VS Code CLI: `code.cmd --new-window --user-data-dir "$env:TEMP\levicore-rc006a-user-data" --extensions-dir "$env:TEMP\levicore-rc006a-extensions" --extensionDevelopmentPath=packages/vscode-extension "C:\Users\wetie\OneDrive\Desktop\LeviCore"`.
+  1. From the repository root, run the documented relative launch path through VS Code CLI: `code.cmd --new-window --user-data-dir "$env:TEMP\levicore-rc006a-user-data" --extensions-dir "$env:TEMP\levicore-rc006a-extensions" --extensionDevelopmentPath=packages/vscode-extension "<REPO_ROOT>"`.
   2. Open Command Palette.
   3. Search `Levi: Open Dashboard`.
 - Expected behavior: VS Code loads `packages/vscode-extension`; Levi appears; documented Levi commands are registered.
@@ -321,7 +321,7 @@ Validation commands and actions:
 
 ```powershell
 npm.cmd --prefix packages/vscode-extension run check
-code.cmd --new-window --user-data-dir "$env:TEMP\levicore-rc006a-repair-user-data" --extensions-dir "$env:TEMP\levicore-rc006a-repair-extensions" "C:\Users\wetie\OneDrive\Desktop\LeviCore"
+code.cmd --new-window --user-data-dir "$env:TEMP\levicore-rc006a-repair-user-data" --extensions-dir "$env:TEMP\levicore-rc006a-repair-extensions" "<REPO_ROOT>"
 ```
 
 Then in VS Code Run and Debug, selected and started:
@@ -345,7 +345,7 @@ The repository root was opened in VS Code with a temporary user-data directory, 
 Renderer log from the first corrected launch:
 
 ```text
-2026-07-18 21:47:11.873 [info] Loading development extension at c:\Users\wetie\OneDrive\Desktop\LeviCore\packages\vscode-extension
+2026-07-18 21:47:11.873 [info] Loading development extension at <REPO_ROOT>\packages\vscode-extension
 ```
 
 Extension Host activation log from the first corrected launch:
@@ -371,7 +371,7 @@ After stopping the first Extension Development Host session, the same `Levi: Ext
 Renderer log from the restart:
 
 ```text
-2026-07-18 21:49:53.471 [info] Loading development extension at c:\Users\wetie\OneDrive\Desktop\LeviCore\packages\vscode-extension
+2026-07-18 21:49:53.471 [info] Loading development extension at <REPO_ROOT>\packages\vscode-extension
 ```
 
 Extension Host activation log from the restart:
@@ -415,7 +415,7 @@ Invalid workspace state transition: DEGRADED -> ANALYZING.
 During the corrected-launch restart, the exact remaining runtime error appeared in:
 
 ```text
-C:\Users\wetie\AppData\Local\Temp\levicore-rc006a-repair-user-data\logs\20260718T214610\window3\exthost\output_logging_20260718T214955\1-Levi.log
+<TEMP_DIR>\levicore-rc006a-repair-user-data\logs\20260718T214610\window3\exthost\output_logging_20260718T214955\1-Levi.log
 ```
 
 Exact error payload excerpt:
@@ -428,3 +428,147 @@ Exact error payload excerpt:
   "userMessage": "Invalid workspace state transition: DEGRADED -> ANALYZING."
 }
 ```
+
+## RC-006A-03 Remediation - Workspace State Transition Repair
+
+### Root Cause
+
+The Extension Development Host startup path initialized Levi successfully and reached runtime `READY`, then auto-opened the workspace. `LeviApplicationRuntime.openWorkspace()` already calls `initializeWorkspace()`, which performs workspace analysis. In the baseline host environment, optional workspace analysis stages produced limitations, so the runtime correctly completed the first startup analysis by transitioning the workspace to `DEGRADED`.
+
+After that successful degraded open, `LeviVSCodeExtension.openWorkspace({ analyze: true })` immediately called `analyzeProject()`. That second startup analysis invoked `runtime.analyzeWorkspace(workspace.id, {})` while the workspace was already `DEGRADED`. The workspace transition table intentionally allows `DEGRADED -> READY`, `DEGRADED -> CLOSING`, and `DEGRADED -> FAILED`, but not `DEGRADED -> ANALYZING`, so the state validator raised:
+
+```text
+Invalid workspace state transition: DEGRADED -> ANALYZING.
+```
+
+The workspace became `DEGRADED` because startup analysis completed with bounded limitations from unavailable optional project-intelligence analysis in the Extension Host baseline, not because of provider availability, stale persistence, missing Git, or a weakened workspace boundary.
+
+### Startup Transition Sequence Before Repair
+
+```text
+Runtime CREATED -> INITIALIZING: extension activation calls initializeRuntime().
+Runtime INITIALIZING -> READY: runtime initialization succeeds.
+Workspace CLOSED -> OPENING -> OPEN: extension startup calls openWorkspace({ analyze: true }).
+Workspace OPEN -> ANALYZING: runtime.openWorkspace() initializes/analyzes workspace.
+Workspace ANALYZING -> DEGRADED: optional analysis limitations are recorded.
+Workspace DEGRADED -> ANALYZING: extension calls analyzeProject() after openWorkspace(); validator rejects this transition.
+```
+
+### Startup Transition Sequence After Repair
+
+```text
+Runtime CREATED -> INITIALIZING: extension activation calls initializeRuntime().
+Runtime INITIALIZING -> READY: runtime initialization succeeds.
+Workspace CLOSED -> OPENING -> OPEN: extension startup calls openWorkspace({ analyze: true }).
+Workspace OPEN -> ANALYZING: runtime.openWorkspace() initializes/analyzes workspace.
+Workspace ANALYZING -> DEGRADED: optional analysis limitations are recorded and remain visible.
+No second startup analyzeWorkspace() call is made from DEGRADED.
+```
+
+### Files Changed
+
+- `packages/vscode-extension/src/levi-extension.js`: removed the duplicate startup `analyzeProject()` call after successful `runtime.openWorkspace()`.
+- `packages/vscode-extension/test/extension-shell.test.js`: added regression coverage for Extension startup with a real runtime and degraded workspace open, asserting the invalid transition is absent.
+- `test/levi-application-runtime.test.js`: added runtime guard coverage proving direct analysis from a degraded workspace remains rejected by the state machine.
+- `RELEASE_CANDIDATE_006A_EXTENSION_HOST_BASELINE.md`: added this RC-006A-03 remediation record.
+
+### Tests Added Or Changed
+
+- `does not request duplicate startup analysis after a degraded workspace open`
+- `keeps direct analysis from degraded workspace rejected by the state machine`
+
+### Exact Commands
+
+```powershell
+node --test --test-name-pattern "degraded workspace" test\levi-application-runtime.test.js
+node --test --test-name-pattern "duplicate startup analysis" packages\vscode-extension\test\extension-shell.test.js
+npm.cmd --prefix packages/vscode-extension run check
+npm.cmd test
+code.cmd --new-window --user-data-dir "$env:TEMP\levicore-rc006a-03-user-data" --extensions-dir "$env:TEMP\levicore-rc006a-03-extensions" "<REPO_ROOT>"
+```
+
+Then in VS Code Run and Debug, selected and started:
+
+```text
+Levi: Extension Development Host
+```
+
+Restart verification closed the first Extension Development Host and started the same `Levi: Extension Development Host` configuration again.
+
+### Extension Development Host Evidence
+
+First corrected host launch:
+
+```text
+2026-07-18 23:37:45.996 [info] Loading development extension at <REPO_ROOT>\packages\vscode-extension
+2026-07-18 23:37:47.628 [info] ExtensionService#_doActivateExtension levi-platform.levi-vscode-extension, startup: false, activationEvent: 'onStartupFinished'
+Runtime initialized: READY.
+Runtime event: workspace_analysis_started operation-000245-2ddc8734
+Runtime event: workspace_analysis_completed operation-000245-2ddc8734
+Runtime event: workspace_degraded operation-000245-2ddc8734
+Workspace attached: Untitled Workspace.
+```
+
+Levi view evidence: the Extension Development Host rendered the Levi activity view with `Runtime READY`, `Workspace DEGRADED`, project/environment sections, operations, approvals, and no visible `Invalid workspace state transition` runtime error.
+
+Log scan evidence: no `Invalid workspace state transition` or `invalid-workspace-state-transition` entries appeared in the first corrected host launch logs.
+
+### Restart Evidence
+
+Restarted corrected host launch:
+
+```text
+2026-07-18 23:38:40.392 [info] Loading development extension at <REPO_ROOT>\packages\vscode-extension
+2026-07-18 23:38:42.160 [info] ExtensionService#_doActivateExtension levi-platform.levi-vscode-extension, startup: false, activationEvent: 'onView:levi.overview'
+Runtime initialized: READY.
+Runtime event: workspace_analysis_started operation-000245-2ddc8734
+Runtime event: workspace_analysis_completed operation-000245-2ddc8734
+Runtime event: workspace_degraded operation-000245-2ddc8734
+Workspace attached: Untitled Workspace.
+```
+
+Log scan evidence: no `Invalid workspace state transition` or `invalid-workspace-state-transition` entries appeared in the restarted host logs.
+
+### Automated Test Result
+
+Focused tests:
+
+```text
+tests 1
+pass 1
+fail 0
+```
+
+for each focused command.
+
+Full automated suite:
+
+```text
+npm.cmd test
+tests 293
+pass 293
+fail 0
+duration_ms 86049.6196
+```
+
+### Logs And Observations
+
+Extension Host warnings observed during corrected host launch and restart:
+
+```text
+[warning] [vscode.git] Accessing a resource scoped configuration without providing a resource is not expected. To get the effective value for 'git.openRepositoryInParentFolders', provide the URI of a resource or 'null' for any resource.
+[warning] [vscode.git] Accessing a resource scoped configuration without providing a resource is not expected. To get the effective value for 'git.showProgress', provide the URI of a resource or 'null' for any resource.
+```
+
+Shutdown after the first corrected host run logged a non-blocking VS Code Extension Host channel-close message while exiting with code 0:
+
+```text
+2026-07-18 23:38:37.444 [error] Error: Channel has been closed
+2026-07-18 23:38:37.444 [info] Extension host with pid 20508 exiting with code 0
+```
+
+Sensitive-data scan of the corrected host logs found no matches for secret, token, API key, password, private key, prompt, source-code, or the repaired invalid-transition strings.
+
+### Remaining Blockers
+
+No RC-006A blocker remains for `Invalid workspace state transition: DEGRADED -> ANALYZING.` after this repair.
