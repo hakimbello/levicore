@@ -1,16 +1,34 @@
 {
   "name": "levi-vscode-extension",
-  "displayName": "Levi",
-  "description": "VS Code shell for the Levi application runtime.",
+  "displayName": "Levi — Local AI Coding Assistant",
+  "description": "Privacy-first AI coding assistant for VS Code using local Ollama models. Review changes before they touch your workspace.",
   "version": "0.6.0",
   "publisher": "levi-platform",
-  "private": true,
-  "engines": {
-    "vscode": "^1.85.0"
+  "license": "MIT",
+  "homepage": "https://github.com/hakimbello/levicore#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hakimbello/levicore.git"
   },
+  "bugs": {
+    "url": "https://github.com/hakimbello/levicore/issues"
+  },
+  "keywords": [
+    "ai",
+    "assistant",
+    "ollama",
+    "local",
+    "privacy",
+    "offline",
+    "code review",
+    "copilot"
+  ],
   "categories": [
     "Other"
   ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
   "activationEvents": [
     "onStartupFinished",
     "onCommand:levi.open",
@@ -68,160 +86,847 @@
   },
   "contributes": {
     "commands": [
-      { "command": "levi.openDashboard", "title": "Levi: Open Dashboard", "category": "Levi" },
-      { "command": "levi.open", "title": "Levi: Open", "category": "Levi" },
-      { "command": "levi.focusComposer", "title": "Levi: Focus Composer", "category": "Levi" },
-      { "command": "levi.newChat", "title": "Levi: New Chat", "category": "Levi" },
-      { "command": "levi.showEnvironment", "title": "Levi: Show Environment", "category": "Levi" },
-      { "command": "levi.showActiveWorkflow", "title": "Levi: Show Active Workflow", "category": "Levi" },
-      { "command": "levi.showActiveApproval", "title": "Levi: Show Active Approval", "category": "Levi" },
-      { "command": "levi.showActiveChange", "title": "Levi: Show Active Change", "category": "Levi" },
-      { "command": "levi.initialize", "title": "Levi: Initialize", "category": "Levi" },
-      { "command": "levi.openWorkspace", "title": "Levi: Open Workspace", "category": "Levi" },
-      { "command": "levi.refreshWorkspace", "title": "Levi: Refresh Workspace", "category": "Levi" },
-      { "command": "levi.analyzeProject", "title": "Levi: Analyze Project", "category": "Levi" },
-      { "command": "levi.showProjectSummary", "title": "Levi: Show Project Summary", "category": "Levi" },
-      { "command": "levi.showArchitecture", "title": "Levi: Show Project Architecture", "category": "Levi" },
-      { "command": "levi.showAssessment", "title": "Levi: Show Project Assessment", "category": "Levi" },
-      { "command": "levi.showBlockers", "title": "Levi: Show Blockers", "category": "Levi" },
-      { "command": "levi.showRisks", "title": "Levi: Show Risks", "category": "Levi" },
-      { "command": "levi.showNextActions", "title": "Levi: Show Next Actions", "category": "Levi" },
-      { "command": "levi.showReleaseReadiness", "title": "Levi: Show Release Readiness", "category": "Levi" },
-      { "command": "levi.searchWorkspace", "title": "Levi: Search Workspace", "category": "Levi" },
-      { "command": "levi.showCapabilities", "title": "Levi: Show Capabilities", "category": "Levi" },
-      { "command": "levi.showRuntimeHealth", "title": "Levi: Show Runtime Health", "category": "Levi" },
-      { "command": "levi.showCertification", "title": "Levi: Show Certification", "category": "Levi" },
-      { "command": "levi.runCertification", "title": "Levi: Run Certification", "category": "Levi" },
-      { "command": "levi.showOperations", "title": "Levi: Show Operations", "category": "Levi" },
-      { "command": "levi.cancelOperation", "title": "Levi: Cancel Operation", "category": "Levi" },
-      { "command": "levi.showApprovals", "title": "Levi: Review Approvals", "category": "Levi" },
-      { "command": "levi.respondToApproval", "title": "Levi: Respond To Approval", "category": "Levi" },
-      { "command": "levi.saveState", "title": "Levi: Save State", "category": "Levi" },
-      { "command": "levi.restoreState", "title": "Levi: Restore State", "category": "Levi" },
-      { "command": "levi.understandCurrentFile", "title": "Levi: Understand This File", "category": "Levi" },
-      { "command": "levi.showModelProviders", "title": "Levi: Show Model Providers", "category": "Levi" },
-      { "command": "levi.showModels", "title": "Levi: Show Models", "category": "Levi" },
-      { "command": "levi.showModelHealth", "title": "Levi: Show Model Health", "category": "Levi" },
-      { "command": "levi.selectModel", "title": "Levi: Select Model", "category": "Levi" },
-      { "command": "levi.testModelConnection", "title": "Levi: Test Model Connection", "category": "Levi" },
-      { "command": "levi.showModelUsage", "title": "Levi: Show Model Usage", "category": "Levi" },
-      { "command": "levi.configureProviderCredential", "title": "Levi: Configure Provider Credential", "category": "Levi" },
-      { "command": "levi.clearProviderCredential", "title": "Levi: Clear Provider Credential", "category": "Levi" },
-      { "command": "levi.openOnboarding", "title": "Levi: Open Onboarding", "category": "Levi" },
-      { "command": "levi.showContext", "title": "Levi: Show Context", "category": "Levi" },
-      { "command": "levi.showTechnicalDetails", "title": "Levi: Show Technical Details", "category": "Levi" },
-      { "command": "levi.openAgent", "title": "Levi: Open Agent", "category": "Levi" },
-      { "command": "levi.newConversation", "title": "Levi: New Conversation", "category": "Levi" },
-      { "command": "levi.sendAgentMessage", "title": "Levi: Send Agent Message", "category": "Levi" },
-      { "command": "levi.cancelAgentTurn", "title": "Levi: Cancel Agent Turn", "category": "Levi" },
-      { "command": "levi.retryAgentTurn", "title": "Levi: Retry Agent Turn", "category": "Levi" },
-      { "command": "levi.showAgentContext", "title": "Levi: Show Agent Context", "category": "Levi" },
-      { "command": "levi.showAgentPlan", "title": "Levi: Show Agent Plan", "category": "Levi" },
-      { "command": "levi.showAgentTools", "title": "Levi: Show Agent Tools", "category": "Levi" },
-      { "command": "levi.clearConversation", "title": "Levi: Clear Conversation", "category": "Levi" },
-      { "command": "levi.createChangeProposal", "title": "Levi: Create Change Proposal", "category": "Levi" },
-      { "command": "levi.previewChange", "title": "Levi: Preview Change", "category": "Levi" },
-      { "command": "levi.previewFileDiff", "title": "Levi: Preview File Diff", "category": "Levi" },
-      { "command": "levi.validateChangeProposal", "title": "Levi: Validate Change Proposal", "category": "Levi" },
-      { "command": "levi.applyApprovedChange", "title": "Levi: Apply Approved Change", "category": "Levi" },
-      { "command": "levi.rejectChange", "title": "Levi: Reject Change", "category": "Levi" },
-      { "command": "levi.revertChange", "title": "Levi: Revert Change", "category": "Levi" },
-      { "command": "levi.showChangeHistory", "title": "Levi: Show Change History", "category": "Levi" },
-      { "command": "levi.runChangeValidation", "title": "Levi: Run Change Validation", "category": "Levi" },
-      { "command": "levi.showValidationResult", "title": "Levi: Show Validation Result", "category": "Levi" },
-      { "command": "levi.showAllowedCommands", "title": "Levi: Show Allowed Commands", "category": "Levi" },
-      { "command": "levi.showSourceControlStatus", "title": "Levi: Show Source Control Status", "category": "Levi" },
-      { "command": "levi.showSourceControlDiff", "title": "Levi: Show Source Control Diff", "category": "Levi" },
-      { "command": "levi.showMultiAgentTeam", "title": "Levi: Show Multi-Agent Team", "category": "Levi" },
-      { "command": "levi.previewDelegation", "title": "Levi: Preview Delegation", "category": "Levi" },
-      { "command": "levi.startDelegatedTask", "title": "Levi: Start Delegated Task", "category": "Levi" },
-      { "command": "levi.cancelDelegatedTask", "title": "Levi: Cancel Delegated Task", "category": "Levi" },
-      { "command": "levi.showAssignment", "title": "Levi: Show Assignment", "category": "Levi" },
-      { "command": "levi.retryAssignment", "title": "Levi: Retry Assignment", "category": "Levi" },
-      { "command": "levi.requestAssignmentRevision", "title": "Levi: Request Assignment Revision", "category": "Levi" },
-      { "command": "levi.showAgentConflicts", "title": "Levi: Show Agent Conflicts", "category": "Levi" },
-      { "command": "levi.resolveAgentConflict", "title": "Levi: Resolve Agent Conflict", "category": "Levi" },
-      { "command": "levi.reconcileAgentResults", "title": "Levi: Reconcile Agent Results", "category": "Levi" },
-      { "command": "levi.showWorkflows", "title": "Levi: Show Workflows", "category": "Levi" },
-      { "command": "levi.createWorkflow", "title": "Levi: Create Workflow", "category": "Levi" },
-      { "command": "levi.startWorkflow", "title": "Levi: Start Workflow", "category": "Levi" },
-      { "command": "levi.pauseWorkflow", "title": "Levi: Pause Workflow", "category": "Levi" },
-      { "command": "levi.resumeWorkflow", "title": "Levi: Resume Workflow", "category": "Levi" },
-      { "command": "levi.cancelWorkflow", "title": "Levi: Cancel Workflow", "category": "Levi" },
-      { "command": "levi.retryWorkflow", "title": "Levi: Retry Workflow", "category": "Levi" },
-      { "command": "levi.showWorkflow", "title": "Levi: Show Workflow", "category": "Levi" },
-      { "command": "levi.showWorkflowResult", "title": "Levi: Show Workflow Result", "category": "Levi" },
-      { "command": "levi.showWorkflowSteps", "title": "Levi: Show Workflow Steps", "category": "Levi" },
-      { "command": "levi.retryWorkflowStep", "title": "Levi: Retry Workflow Step", "category": "Levi" },
-      { "command": "levi.skipWorkflowStep", "title": "Levi: Skip Workflow Step", "category": "Levi" },
-      { "command": "levi.showWorkflowCheckpoints", "title": "Levi: Show Workflow Checkpoints", "category": "Levi" },
-      { "command": "levi.createWorkflowCheckpoint", "title": "Levi: Create Workflow Checkpoint", "category": "Levi" },
-      { "command": "levi.restoreWorkflowCheckpoint", "title": "Levi: Restore Workflow Checkpoint", "category": "Levi" },
-      { "command": "levi.resolveWorkflowDecision", "title": "Levi: Resolve Workflow Decision", "category": "Levi" },
-      { "command": "levi.showPerformance", "title": "Levi: Show Performance", "category": "Levi" },
-      { "command": "levi.clearCache", "title": "Levi: Clear Performance Cache", "category": "Levi" },
-      { "command": "levi.runBenchmark", "title": "Levi: Run Performance Benchmark", "category": "Levi" },
-      { "command": "levi.rebuildRepositoryGraph", "title": "Levi: Rebuild Repository Graph", "category": "Levi" },
-      { "command": "levi.showMemoryUsage", "title": "Levi: Show Memory Usage", "category": "Levi" },
-      { "command": "levi.showReliability", "title": "Levi: Show Reliability", "category": "Levi" },
-      { "command": "levi.runReliabilitySmoke", "title": "Levi: Run Reliability Smoke", "category": "Levi" },
-      { "command": "levi.runReliabilityStandard", "title": "Levi: Run Reliability Standard", "category": "Levi" },
-      { "command": "levi.runReliabilityStrict", "title": "Levi: Run Reliability Strict", "category": "Levi" },
-      { "command": "levi.runReliabilityReleaseCandidate", "title": "Levi: Run Reliability Release Candidate", "category": "Levi" },
-      { "command": "levi.cancelReliabilityRun", "title": "Levi: Cancel Reliability Run", "category": "Levi" },
-      { "command": "levi.showReliabilityReport", "title": "Levi: Show Reliability Report", "category": "Levi" },
-      { "command": "levi.showReliabilityBlockers", "title": "Levi: Show Reliability Blockers", "category": "Levi" },
-      { "command": "levi.showReliabilityConsistency", "title": "Levi: Show Reliability Consistency", "category": "Levi" },
-      { "command": "levi.showReliabilityRecovery", "title": "Levi: Show Reliability Recovery", "category": "Levi" },
-      { "command": "levi.showReliabilityResources", "title": "Levi: Show Reliability Resources", "category": "Levi" },
-      { "command": "levi.showSecurityAssurance", "title": "Levi: Show Security Assurance", "category": "Levi" },
-      { "command": "levi.runSecuritySmoke", "title": "Levi: Run Security Smoke", "category": "Levi" },
-      { "command": "levi.runSecurityStandard", "title": "Levi: Run Security Standard", "category": "Levi" },
-      { "command": "levi.runSecurityStrict", "title": "Levi: Run Security Strict", "category": "Levi" },
-      { "command": "levi.runSecurityReleaseCandidate", "title": "Levi: Run Security Release Candidate", "category": "Levi" },
-      { "command": "levi.cancelSecurityAudit", "title": "Levi: Cancel Security Audit", "category": "Levi" },
-      { "command": "levi.showSecurityReport", "title": "Levi: Show Security Report", "category": "Levi" },
-      { "command": "levi.showSecurityBlockers", "title": "Levi: Show Security Blockers", "category": "Levi" },
-      { "command": "levi.showSecurityFindings", "title": "Levi: Show Security Findings", "category": "Levi" },
-      { "command": "levi.showSecurityChecks", "title": "Levi: Show Security Checks", "category": "Levi" },
-      { "command": "levi.showThreatModel", "title": "Levi: Show Threat Model", "category": "Levi" },
-      { "command": "levi.showApprovalSecurity", "title": "Levi: Show Approval Security", "category": "Levi" },
-      { "command": "levi.showWorkspaceIsolation", "title": "Levi: Show Workspace Isolation", "category": "Levi" },
-      { "command": "levi.showPromptInjectionReport", "title": "Levi: Show Prompt Injection Report", "category": "Levi" },
-      { "command": "levi.showSecretHandlingReport", "title": "Levi: Show Secret Handling Report", "category": "Levi" },
-      { "command": "levi.showDependencySecurity", "title": "Levi: Show Dependency Security", "category": "Levi" },
-      { "command": "levi.showSupplyChainSecurity", "title": "Levi: Show Supply Chain Security", "category": "Levi" },
-      { "command": "levi.showStressScalability", "title": "Levi: Show Stress & Scalability", "category": "Levi" },
-      { "command": "levi.runStressSmoke", "title": "Levi: Run Stress Smoke", "category": "Levi" },
-      { "command": "levi.runStressStandard", "title": "Levi: Run Stress Standard", "category": "Levi" },
-      { "command": "levi.runStressStrict", "title": "Levi: Run Stress Strict", "category": "Levi" },
-      { "command": "levi.runStressReleaseCandidate", "title": "Levi: Run Stress Release Candidate", "category": "Levi" },
-      { "command": "levi.cancelStressRun", "title": "Levi: Cancel Stress Run", "category": "Levi" },
-      { "command": "levi.showStressReport", "title": "Levi: Show Stress Report", "category": "Levi" },
-      { "command": "levi.showStressBlockers", "title": "Levi: Show Stress Blockers", "category": "Levi" },
-      { "command": "levi.showStressFindings", "title": "Levi: Show Stress Findings", "category": "Levi" },
-      { "command": "levi.showStressRepositoryMetrics", "title": "Levi: Show Repository Stress Metrics", "category": "Levi" },
-      { "command": "levi.showStressConcurrency", "title": "Levi: Show Concurrency Stress", "category": "Levi" },
-      { "command": "levi.showStressMemory", "title": "Levi: Show Memory Stress", "category": "Levi" },
-      { "command": "levi.showStressQueue", "title": "Levi: Show Queue Stress", "category": "Levi" },
-      { "command": "levi.showStressProvider", "title": "Levi: Show Provider Stress", "category": "Levi" },
-      { "command": "levi.showStressWorkflow", "title": "Levi: Show Workflow Stress", "category": "Levi" },
-      { "command": "levi.showStressCancellation", "title": "Levi: Show Cancellation Stress", "category": "Levi" },
-      { "command": "levi.showStressPresentationPressure", "title": "Levi: Show Presentation Pressure", "category": "Levi" },
-      { "command": "levi.showQualification", "title": "Levi: Show Release Qualification", "category": "Levi" },
-      { "command": "levi.runQualificationSmoke", "title": "Levi: Run Qualification Smoke", "category": "Levi" },
-      { "command": "levi.runQualificationStandard", "title": "Levi: Run Qualification Standard", "category": "Levi" },
-      { "command": "levi.runQualificationStrict", "title": "Levi: Run Qualification Strict", "category": "Levi" },
-      { "command": "levi.runQualificationReleaseCandidate", "title": "Levi: Run Qualification Release Candidate", "category": "Levi" },
-      { "command": "levi.cancelQualificationRun", "title": "Levi: Cancel Qualification Run", "category": "Levi" },
-      { "command": "levi.showQualificationReport", "title": "Levi: Show Qualification Report", "category": "Levi" },
-      { "command": "levi.showQualificationBlockers", "title": "Levi: Show Qualification Blockers", "category": "Levi" },
-      { "command": "levi.showQualificationManualChecks", "title": "Levi: Show Manual Qualification Checks", "category": "Levi" },
-      { "command": "levi.showQualificationDefects", "title": "Levi: Show Qualification Defects", "category": "Levi" },
-      { "command": "levi.showQualificationFixtures", "title": "Levi: Show Qualification Fixtures", "category": "Levi" },
-      { "command": "levi.showQualificationJourneys", "title": "Levi: Show Qualification Journeys", "category": "Levi" },
-      { "command": "levi.showExtensionHostQualification", "title": "Levi: Show Extension Host Qualification", "category": "Levi" },
-      { "command": "levi.showLocalOllamaQualification", "title": "Levi: Show Local Ollama Qualification", "category": "Levi" }
+      {
+        "command": "levi.openDashboard",
+        "title": "Levi: Open Dashboard",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.open",
+        "title": "Levi: Open",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.focusComposer",
+        "title": "Levi: Focus Composer",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.newChat",
+        "title": "Levi: New Chat",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showEnvironment",
+        "title": "Levi: Show Environment",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showActiveWorkflow",
+        "title": "Levi: Show Active Workflow",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showActiveApproval",
+        "title": "Levi: Show Active Approval",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showActiveChange",
+        "title": "Levi: Show Active Change",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.initialize",
+        "title": "Levi: Initialize",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.openWorkspace",
+        "title": "Levi: Open Workspace",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.refreshWorkspace",
+        "title": "Levi: Refresh Workspace",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.analyzeProject",
+        "title": "Levi: Analyze Project",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showProjectSummary",
+        "title": "Levi: Show Project Summary",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showArchitecture",
+        "title": "Levi: Show Project Architecture",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showAssessment",
+        "title": "Levi: Show Project Assessment",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showBlockers",
+        "title": "Levi: Show Blockers",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showRisks",
+        "title": "Levi: Show Risks",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showNextActions",
+        "title": "Levi: Show Next Actions",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showReleaseReadiness",
+        "title": "Levi: Show Release Readiness",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.searchWorkspace",
+        "title": "Levi: Search Workspace",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showCapabilities",
+        "title": "Levi: Show Capabilities",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showRuntimeHealth",
+        "title": "Levi: Show Runtime Health",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showCertification",
+        "title": "Levi: Show Certification",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.runCertification",
+        "title": "Levi: Run Certification",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showOperations",
+        "title": "Levi: Show Operations",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.cancelOperation",
+        "title": "Levi: Cancel Operation",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showApprovals",
+        "title": "Levi: Review Approvals",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.respondToApproval",
+        "title": "Levi: Respond To Approval",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.saveState",
+        "title": "Levi: Save State",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.restoreState",
+        "title": "Levi: Restore State",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.understandCurrentFile",
+        "title": "Levi: Understand This File",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showModelProviders",
+        "title": "Levi: Show AI Models",
+        "category": "Levi Advanced",
+        "enablement": "config.levi.experience.showAdvancedDetails || config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showModels",
+        "title": "Levi: Show AI Models",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showModelHealth",
+        "title": "Levi: Check AI Model Connection",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.selectModel",
+        "title": "Levi: Select AI Model",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.testModelConnection",
+        "title": "Levi: Test AI Model Connection",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showModelUsage",
+        "title": "Levi: Show Model Usage",
+        "category": "Levi Advanced",
+        "enablement": "config.levi.experience.showAdvancedDetails || config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.configureProviderCredential",
+        "title": "Levi: Configure Provider Credential",
+        "category": "Levi Advanced",
+        "enablement": "config.levi.experience.showAdvancedDetails || config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.clearProviderCredential",
+        "title": "Levi: Clear Provider Credential",
+        "category": "Levi Advanced",
+        "enablement": "config.levi.experience.showAdvancedDetails || config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.openOnboarding",
+        "title": "Levi: Open Setup Guide",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showContext",
+        "title": "Levi: Show Context",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showTechnicalDetails",
+        "title": "Levi: Show Technical Details",
+        "category": "Levi Advanced",
+        "enablement": "config.levi.experience.showAdvancedDetails || config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.openAgent",
+        "title": "Levi: Open Agent",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.newConversation",
+        "title": "Levi: New Conversation",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.sendAgentMessage",
+        "title": "Levi: Send Agent Message",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.cancelAgentTurn",
+        "title": "Levi: Cancel Agent Turn",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.retryAgentTurn",
+        "title": "Levi: Retry Agent Turn",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showAgentContext",
+        "title": "Levi: Show Agent Context",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showAgentPlan",
+        "title": "Levi: Show Agent Plan",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showAgentTools",
+        "title": "Levi: Show Agent Tools",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.clearConversation",
+        "title": "Levi: Clear Conversation",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.createChangeProposal",
+        "title": "Levi: Create Change Proposal",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.previewChange",
+        "title": "Levi: Preview Change",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.previewFileDiff",
+        "title": "Levi: Preview File Diff",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.validateChangeProposal",
+        "title": "Levi: Validate Change Proposal",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.applyApprovedChange",
+        "title": "Levi: Apply Approved Change",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.rejectChange",
+        "title": "Levi: Reject Change",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.revertChange",
+        "title": "Levi: Revert Change",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showChangeHistory",
+        "title": "Levi: Show Change History",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.runChangeValidation",
+        "title": "Levi: Run Change Validation",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showValidationResult",
+        "title": "Levi: Show Validation Result",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showAllowedCommands",
+        "title": "Levi: Show Allowed Commands",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showSourceControlStatus",
+        "title": "Levi: Show Source Control Status",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showSourceControlDiff",
+        "title": "Levi: Show Source Control Diff",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showMultiAgentTeam",
+        "title": "Levi: Show Team Review",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.previewDelegation",
+        "title": "Levi: Preview Delegation",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.startDelegatedTask",
+        "title": "Levi: Start Delegated Task",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.cancelDelegatedTask",
+        "title": "Levi: Cancel Delegated Task",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showAssignment",
+        "title": "Levi: Show Assignment",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.retryAssignment",
+        "title": "Levi: Retry Assignment",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.requestAssignmentRevision",
+        "title": "Levi: Request Assignment Revision",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showAgentConflicts",
+        "title": "Levi: Show Agent Conflicts",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.resolveAgentConflict",
+        "title": "Levi: Resolve Agent Conflict",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.reconcileAgentResults",
+        "title": "Levi: Reconcile Agent Results",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showWorkflows",
+        "title": "Levi: Show Project Rules",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.createWorkflow",
+        "title": "Levi: Create Project Rule",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.startWorkflow",
+        "title": "Levi: Start Workflow",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.pauseWorkflow",
+        "title": "Levi: Pause Workflow",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.resumeWorkflow",
+        "title": "Levi: Resume Workflow",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.cancelWorkflow",
+        "title": "Levi: Cancel Workflow",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.retryWorkflow",
+        "title": "Levi: Retry Workflow",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showWorkflow",
+        "title": "Levi: Show Workflow",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showWorkflowResult",
+        "title": "Levi: Show Workflow Result",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showWorkflowSteps",
+        "title": "Levi: Show Workflow Steps",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.retryWorkflowStep",
+        "title": "Levi: Retry Workflow Step",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.skipWorkflowStep",
+        "title": "Levi: Skip Workflow Step",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showWorkflowCheckpoints",
+        "title": "Levi: Show Workflow Checkpoints",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.createWorkflowCheckpoint",
+        "title": "Levi: Create Workflow Checkpoint",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.restoreWorkflowCheckpoint",
+        "title": "Levi: Restore Workflow Checkpoint",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.resolveWorkflowDecision",
+        "title": "Levi: Resolve Workflow Decision",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.showPerformance",
+        "title": "Levi: Show Performance",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.clearCache",
+        "title": "Levi: Clear Performance Cache",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.runBenchmark",
+        "title": "Levi: Run Performance Benchmark",
+        "category": "Levi Advanced",
+        "enablement": "config.levi.experience.showAdvancedDetails || config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.rebuildRepositoryGraph",
+        "title": "Levi: Rebuild Repository Graph",
+        "category": "Levi Advanced",
+        "enablement": "config.levi.experience.showAdvancedDetails || config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showMemoryUsage",
+        "title": "Levi: Show Memory Usage",
+        "category": "Levi Advanced",
+        "enablement": "config.levi.experience.showAdvancedDetails || config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showReliability",
+        "title": "Levi: Show Reliability",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.runReliabilitySmoke",
+        "title": "Levi: Run Reliability Smoke",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.runReliabilityStandard",
+        "title": "Levi: Run Reliability Standard",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.runReliabilityStrict",
+        "title": "Levi: Run Reliability Strict",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.runReliabilityReleaseCandidate",
+        "title": "Levi: Run Reliability Release Candidate",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.cancelReliabilityRun",
+        "title": "Levi: Cancel Reliability Run",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showReliabilityReport",
+        "title": "Levi: Show Reliability Report",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showReliabilityBlockers",
+        "title": "Levi: Show Reliability Blockers",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showReliabilityConsistency",
+        "title": "Levi: Show Reliability Consistency",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showReliabilityRecovery",
+        "title": "Levi: Show Reliability Recovery",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showReliabilityResources",
+        "title": "Levi: Show Reliability Resources",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showSecurityAssurance",
+        "title": "Levi: Show Security Assurance",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.runSecuritySmoke",
+        "title": "Levi: Run Security Smoke",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.runSecurityStandard",
+        "title": "Levi: Run Security Standard",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.runSecurityStrict",
+        "title": "Levi: Run Security Strict",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.runSecurityReleaseCandidate",
+        "title": "Levi: Run Security Release Candidate",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.cancelSecurityAudit",
+        "title": "Levi: Cancel Security Audit",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showSecurityReport",
+        "title": "Levi: Show Security Report",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showSecurityBlockers",
+        "title": "Levi: Show Security Blockers",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showSecurityFindings",
+        "title": "Levi: Show Security Findings",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showSecurityChecks",
+        "title": "Levi: Show Security Checks",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showThreatModel",
+        "title": "Levi: Show Threat Model",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showApprovalSecurity",
+        "title": "Levi: Show Approval Security",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showWorkspaceIsolation",
+        "title": "Levi: Show Workspace Isolation",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showPromptInjectionReport",
+        "title": "Levi: Show Prompt Injection Report",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showSecretHandlingReport",
+        "title": "Levi: Show Secret Handling Report",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showDependencySecurity",
+        "title": "Levi: Show Dependency Security",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showSupplyChainSecurity",
+        "title": "Levi: Show Supply Chain Security",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showStressScalability",
+        "title": "Levi: Show Stress & Scalability",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.runStressSmoke",
+        "title": "Levi: Run Stress Smoke",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.runStressStandard",
+        "title": "Levi: Run Stress Standard",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.runStressStrict",
+        "title": "Levi: Run Stress Strict",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.runStressReleaseCandidate",
+        "title": "Levi: Run Stress Release Candidate",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.cancelStressRun",
+        "title": "Levi: Cancel Stress Run",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showStressReport",
+        "title": "Levi: Show Stress Report",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showStressBlockers",
+        "title": "Levi: Show Stress Blockers",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showStressFindings",
+        "title": "Levi: Show Stress Findings",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showStressRepositoryMetrics",
+        "title": "Levi: Show Repository Stress Metrics",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showStressConcurrency",
+        "title": "Levi: Show Concurrency Stress",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showStressMemory",
+        "title": "Levi: Show Memory Stress",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showStressQueue",
+        "title": "Levi: Show Queue Stress",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showStressProvider",
+        "title": "Levi: Show Provider Stress",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showStressWorkflow",
+        "title": "Levi: Show Workflow Stress",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showStressCancellation",
+        "title": "Levi: Show Cancellation Stress",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showStressPresentationPressure",
+        "title": "Levi: Show Presentation Pressure",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showQualification",
+        "title": "Levi: Show Release Qualification",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.runQualificationSmoke",
+        "title": "Levi: Run Qualification Smoke",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.runQualificationStandard",
+        "title": "Levi: Run Qualification Standard",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.runQualificationStrict",
+        "title": "Levi: Run Qualification Strict",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.runQualificationReleaseCandidate",
+        "title": "Levi: Run Qualification Release Candidate",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.cancelQualificationRun",
+        "title": "Levi: Cancel Qualification Run",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showQualificationReport",
+        "title": "Levi: Show Qualification Report",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showQualificationBlockers",
+        "title": "Levi: Show Qualification Blockers",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showQualificationManualChecks",
+        "title": "Levi: Show Manual Qualification Checks",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showQualificationDefects",
+        "title": "Levi: Show Qualification Defects",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showQualificationFixtures",
+        "title": "Levi: Show Qualification Fixtures",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showQualificationJourneys",
+        "title": "Levi: Show Qualification Journeys",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showExtensionHostQualification",
+        "title": "Levi: Show Extension Host Qualification",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.showLocalOllamaQualification",
+        "title": "Levi: Show Local Ollama Qualification",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      }
     ],
     "viewsContainers": {
       "activitybar": [
@@ -234,325 +939,1676 @@
     },
     "views": {
       "levi": [
-        { "id": "levi.overview", "name": "Overview" },
-        { "id": "levi.environment", "name": "Environment" },
-        { "id": "levi.project", "name": "Project" },
-        { "id": "levi.operations", "name": "Operations" },
-        { "id": "levi.approvals", "name": "Approvals" },
-        { "id": "levi.models", "name": "Models" },
-        { "id": "levi.agent", "name": "Agent" },
-        { "id": "levi.changes", "name": "Change Review" },
-        { "id": "levi.multiAgent", "name": "Multi-Agent" },
-        { "id": "levi.workflows", "name": "Workflows" },
-        { "id": "levi.performance", "name": "Performance" },
-        { "id": "levi.reliability", "name": "Reliability" },
-        { "id": "levi.securityAssurance", "name": "Security Assurance" },
-        { "id": "levi.stressScalability", "name": "Stress & Scalability" },
-        { "id": "levi.qualification", "name": "Release Qualification" },
-        { "id": "levi.diagnostics", "name": "Diagnostics" }
+        {
+          "id": "levi.overview",
+          "name": "Overview"
+        },
+        {
+          "id": "levi.environment",
+          "name": "Environment"
+        },
+        {
+          "id": "levi.project",
+          "name": "Project"
+        },
+        {
+          "id": "levi.operations",
+          "name": "Operations"
+        },
+        {
+          "id": "levi.approvals",
+          "name": "Approvals"
+        },
+        {
+          "id": "levi.models",
+          "name": "AI Models"
+        },
+        {
+          "id": "levi.agent",
+          "name": "Agent"
+        },
+        {
+          "id": "levi.changes",
+          "name": "Change Review"
+        },
+        {
+          "id": "levi.multiAgent",
+          "name": "Team Review"
+        },
+        {
+          "id": "levi.workflows",
+          "name": "Project Rules"
+        },
+        {
+          "id": "levi.performance",
+          "name": "Performance"
+        },
+        {
+          "id": "levi.reliability",
+          "name": "Reliability",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "id": "levi.securityAssurance",
+          "name": "Security Assurance",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "id": "levi.stressScalability",
+          "name": "Stress & Scalability",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "id": "levi.qualification",
+          "name": "Release Qualification",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "id": "levi.diagnostics",
+          "name": "Diagnostics",
+          "when": "config.levi.diagnostics.enabled"
+        }
       ]
     },
     "configuration": {
       "title": "Levi",
       "properties": {
-        "levi.enabled": { "type": "boolean", "default": true, "description": "Enable the Levi extension shell." },
-        "levi.autoInitialize": { "type": "boolean", "default": true, "description": "Initialize LeviApplicationRuntime during extension activation." },
-        "levi.autoAnalyzeWorkspace": { "type": "boolean", "default": true, "description": "Open and analyze the active workspace after initialization." },
-        "levi.offlineMode": { "type": "boolean", "default": true, "description": "Keep Levi runtime operation offline by default." },
-        "levi.strictSecurity": { "type": "boolean", "default": true, "description": "Preserve strict runtime security checks." },
-        "levi.persistence.enabled": { "type": "boolean", "default": true, "description": "Persist compact runtime state in extension storage." },
-        "levi.workspace.maxFiles": { "type": "number", "default": 500, "minimum": 1, "description": "Maximum workspace files the adapter lists for a runtime request." },
-        "levi.workspace.maxFileBytes": { "type": "number", "default": 262144, "minimum": 1, "description": "Maximum bytes the adapter reads from a single file." },
+        "levi.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Enable Levi in this VS Code installation."
+        },
+        "levi.autoInitialize": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Start Levi automatically when VS Code opens a workspace."
+        },
+        "levi.autoAnalyzeWorkspace": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Analyze the open workspace after Levi starts."
+        },
+        "levi.offlineMode": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Keep AI requests on local models by default. Your source code stays on your machine unless you explicitly enable remote models."
+        },
+        "levi.strictSecurity": {
+          "type": "boolean",
+          "default": true,
+          "description": "Preserve strict runtime security checks."
+        },
+        "levi.persistence.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Persist compact runtime state in extension storage."
+        },
+        "levi.workspace.maxFiles": {
+          "type": "number",
+          "default": 500,
+          "minimum": 1,
+          "description": "Maximum workspace files the adapter lists for a runtime request."
+        },
+        "levi.workspace.maxFileBytes": {
+          "type": "number",
+          "default": 262144,
+          "minimum": 1,
+          "description": "Maximum bytes the adapter reads from a single file."
+        },
         "levi.workspace.exclude": {
           "type": "array",
-          "default": [".git/**", ".levi/**", "node_modules/**", "dist/**", "build/**", "coverage/**", ".cache/**", "vendor/**", "**/*.min.js", "**/*.map"],
-          "items": { "type": "string" },
+          "default": [
+            ".git/**",
+            ".levi/**",
+            "node_modules/**",
+            "dist/**",
+            "build/**",
+            "coverage/**",
+            ".cache/**",
+            "vendor/**",
+            "**/*.min.js",
+            "**/*.map"
+          ],
+          "items": {
+            "type": "string"
+          },
           "description": "Glob patterns excluded or deprioritized by the workspace adapter."
         },
-        "levi.ui.showNotifications": { "type": "boolean", "default": true, "description": "Show user-facing Levi notifications." },
-        "levi.ui.progressLocation": { "type": "string", "default": "notification", "enum": ["notification", "window"], "description": "Where long-running Levi progress appears." },
-        "levi.diagnostics.enabled": { "type": "boolean", "default": false, "description": "Enable safe extension/runtime integration diagnostics." },
-        "levi.experience.enabled": { "type": "boolean", "default": true, "description": "Enable the cohesive Levi product experience." },
-        "levi.experience.defaultMode": { "type": "string", "default": "Ask", "enum": ["Ask", "Plan", "Build", "Fix", "Review", "Teach"], "description": "Default Copilot composer mode." },
-        "levi.experience.showAdvancedDetails": { "type": "boolean", "default": false, "description": "Show technical details on demand in product views." },
-        "levi.experience.compactEnvironment": { "type": "boolean", "default": true, "description": "Use compact Environment panel summaries." },
-        "levi.experience.autoOpenOnFirstRun": { "type": "boolean", "default": false, "description": "Offer onboarding automatically on first run." },
-        "levi.experience.showCompletionNotifications": { "type": "boolean", "default": true, "description": "Show product-level completion notifications." },
-        "levi.experience.timelineExpanded": { "type": "boolean", "default": false, "description": "Expand workflow timeline details by default." },
-        "levi.experience.preferredPanelLocation": { "type": "string", "default": "beside", "enum": ["beside", "active"], "description": "Preferred Copilot panel placement." },
-        "levi.models.enabled": { "type": "boolean", "default": true, "description": "Enable the Levi model provider gateway." },
-        "levi.models.routingStrategy": { "type": "string", "default": "PRIVACY_FIRST", "enum": ["EXPLICIT", "LOCAL_FIRST", "REMOTE_FIRST", "LOWEST_COST", "LOWEST_LATENCY", "HIGHEST_CAPABILITY", "PRIVACY_FIRST", "BALANCED", "FALLBACK_CHAIN"], "description": "Default Levi model routing strategy." },
-        "levi.models.defaultProvider": { "type": "string", "default": "", "description": "Default Levi model provider id." },
-        "levi.models.defaultModel": { "type": "string", "default": "", "description": "Default Levi model id or name." },
-        "levi.models.allowRemoteSourceCode": { "type": "boolean", "default": false, "description": "Allow source-code requests to route to remote providers." },
-        "levi.models.allowRemoteSensitiveContent": { "type": "boolean", "default": false, "description": "Allow sensitive requests to route to remote providers." },
-        "levi.models.requestTimeoutMs": { "type": "number", "default": 30000, "minimum": 1000, "description": "Model provider request timeout in milliseconds." },
-        "levi.models.maximumRetries": { "type": "number", "default": 1, "minimum": 0, "description": "Maximum provider retries before fallback." },
-        "levi.ollama.enabled": { "type": "boolean", "default": true, "description": "Enable the local Ollama provider package." },
-        "levi.ollama.baseUrl": { "type": "string", "default": "http://127.0.0.1:11434", "description": "Local Ollama base URL." },
-        "levi.ollama.defaultModel": { "type": "string", "default": "", "description": "Optional default Ollama model name." },
-        "levi.openAICompatible.enabled": { "type": "boolean", "default": false, "description": "Enable an OpenAI-compatible remote provider package." },
-        "levi.openAICompatible.baseUrl": { "type": "string", "default": "", "description": "OpenAI-compatible provider base URL." },
-        "levi.openAICompatible.defaultModel": { "type": "string", "default": "", "description": "Optional OpenAI-compatible default model name." },
-        "levi.openAICompatible.credentialKey": { "type": "string", "default": "openai-compatible-api-key", "description": "Secret-storage reference for the provider API key." },
-        "levi.agent.enabled": { "type": "boolean", "default": true, "description": "Enable the Levi agent orchestration UI." },
-        "levi.agent.defaultMode": { "type": "string", "default": "PROPOSAL_ONLY", "enum": ["OFFLINE_ONLY", "READ_ONLY", "PROPOSAL_ONLY", "APPROVAL_GATED", "EXECUTION_ENABLED", "DIAGNOSTIC"], "description": "Default agent orchestration mode." },
-        "levi.agent.maximumTurns": { "type": "number", "default": 16, "minimum": 1, "description": "Maximum turns per Levi agent conversation." },
-        "levi.agent.maximumToolCalls": { "type": "number", "default": 8, "minimum": 0, "description": "Maximum tool calls per Levi agent turn." },
-        "levi.agent.enableStreaming": { "type": "boolean", "default": true, "description": "Enable streaming model responses into the Levi Agent UI." },
-        "levi.agent.requirePlanForProtectedActions": { "type": "boolean", "default": true, "description": "Require a plan before protected agent actions." },
-        "levi.agent.autoCreateConversation": { "type": "boolean", "default": true, "description": "Create an agent conversation automatically when sending the first message." },
-        "levi.agent.persistConversationSummaries": { "type": "boolean", "default": true, "description": "Persist compact Levi agent conversation summaries." },
-        "levi.workspaceTools.enabled": { "type": "boolean", "default": true, "description": "Enable controlled workspace tool proposals and review." },
-        "levi.workspaceTools.allowSourceChanges": { "type": "boolean", "default": false, "description": "Allow approved Levi proposals to mutate workspace files." },
-        "levi.workspaceTools.allowCommandExecution": { "type": "boolean", "default": false, "description": "Allow approved Levi validation commands to execute." },
-        "levi.workspaceTools.allowFileCreation": { "type": "boolean", "default": false, "description": "Allow approved Levi proposals to create files." },
-        "levi.workspaceTools.allowFileDeletion": { "type": "boolean", "default": false, "description": "Allow approved Levi proposals to delete files." },
-        "levi.workspaceTools.allowFileRename": { "type": "boolean", "default": false, "description": "Allow approved Levi proposals to rename files." },
-        "levi.workspaceTools.requireApproval": { "type": "boolean", "default": true, "description": "Require explicit approval before Levi mutates files or runs commands." },
-        "levi.workspaceTools.requireCheckpoint": { "type": "boolean", "default": true, "description": "Request source-control checkpoint support before workspace mutation." },
-        "levi.multiAgent.enabled": { "type": "boolean", "default": true, "description": "Enable bounded Levi multi-agent coordination." },
-        "levi.multiAgent.defaultStrategy": { "type": "string", "default": "ADAPTIVE_BOUNDED", "enum": ["NONE", "SEQUENTIAL", "PARALLEL_INDEPENDENT", "PARALLEL_REVIEW", "PIPELINE", "REVIEW_BOARD", "ADAPTIVE_BOUNDED"], "description": "Default bounded multi-agent delegation strategy." },
-        "levi.multiAgent.maximumAgents": { "type": "number", "default": 4, "minimum": 1, "maximum": 8, "description": "Maximum specialized roles per Levi team." },
-        "levi.multiAgent.maximumConcurrentAssignments": { "type": "number", "default": 2, "minimum": 1, "maximum": 4, "description": "Maximum concurrent multi-agent assignments." },
-        "levi.multiAgent.maximumDelegationRounds": { "type": "number", "default": 2, "minimum": 1, "maximum": 4, "description": "Maximum delegation planning rounds." },
-        "levi.multiAgent.requireIndependentChangeReview": { "type": "boolean", "default": true, "description": "Require independent review for source-changing multi-agent proposals." },
-        "levi.multiAgent.requireSecurityReviewForSensitiveChanges": { "type": "boolean", "default": true, "description": "Require security review for sensitive multi-agent work when available." },
-        "levi.multiAgent.allowSameModelForReview": { "type": "boolean", "default": true, "description": "Allow review roles to use the same model while surfacing the limitation." },
-        "levi.multiAgent.persistTeamSummaries": { "type": "boolean", "default": true, "description": "Persist compact multi-agent team summaries." },
-        "levi.workflows.enabled": { "type": "boolean", "default": true, "description": "Enable durable Levi workflows." },
-        "levi.workflows.maximumActiveWorkflows": { "type": "number", "default": 2, "minimum": 1, "maximum": 4, "description": "Maximum active durable workflows." },
-        "levi.workflows.maximumConcurrentSteps": { "type": "number", "default": 2, "minimum": 1, "maximum": 4, "description": "Maximum concurrently executing workflow steps." },
-        "levi.workflows.maximumStepsPerWorkflow": { "type": "number", "default": 64, "minimum": 1, "maximum": 128, "description": "Maximum steps in a workflow graph." },
-        "levi.workflows.maximumRetriesPerStep": { "type": "number", "default": 2, "minimum": 0, "maximum": 5, "description": "Maximum bounded retries per workflow step." },
-        "levi.workflows.maximumRepairAttempts": { "type": "number", "default": 1, "minimum": 0, "maximum": 3, "description": "Maximum bounded repair attempts per failed workflow step." },
-        "levi.workflows.checkpointIntervalMs": { "type": "number", "default": 60000, "minimum": 1000, "description": "Periodic durable workflow checkpoint interval." },
-        "levi.workflows.autoCheckpoint": { "type": "boolean", "default": true, "description": "Create compact workflow checkpoints automatically." },
-        "levi.workflows.allowSafeAutomaticResume": { "type": "boolean", "default": false, "description": "Allow only safe read-only workflow steps to resume automatically after revalidation." },
-        "levi.workflows.archiveCompleted": { "type": "boolean", "default": false, "description": "Archive completed workflow summaries automatically." },
-        "levi.workflows.persistHistory": { "type": "boolean", "default": true, "description": "Persist compact durable workflow history." },
-        "levi.performance.enabled": { "type": "boolean", "default": true, "description": "Enable repository performance coordination." },
-        "levi.performance.maximumCacheEntries": { "type": "number", "default": 512, "minimum": 1, "description": "Maximum repository performance cache entries." },
-        "levi.performance.maximumMemoryBytes": { "type": "number", "default": 67108864, "minimum": 1024, "description": "Maximum memory budget for performance metadata." },
-        "levi.performance.maximumContextEntries": { "type": "number", "default": 64, "minimum": 1, "description": "Maximum cached reusable context packages." },
-        "levi.performance.cacheTtlMs": { "type": "number", "default": 300000, "minimum": 0, "description": "Repository performance cache TTL in milliseconds." },
-        "levi.performance.maximumParallelism": { "type": "number", "default": 4, "minimum": 1, "maximum": 32, "description": "Maximum safe parallel repository analysis lanes." },
-        "levi.performance.persistSummaries": { "type": "boolean", "default": true, "description": "Persist compact repository performance summaries only." },
-        "levi.performance.benchmarkSampleSize": { "type": "number", "default": 8, "minimum": 1, "description": "Deterministic sample size for repository benchmarks." },
-        "levi.reliability.enabled": { "type": "boolean", "default": true, "description": "Enable reliability assurance diagnostics." },
-        "levi.reliability.failClosed": { "type": "boolean", "default": true, "description": "Fail closed on reliability invariant violations." },
-        "levi.reliability.maximumDiagnosticRuns": { "type": "number", "default": 32, "minimum": 1, "description": "Maximum retained reliability diagnostic runs." },
-        "levi.reliability.maximumConcurrentRuns": { "type": "number", "default": 1, "minimum": 1, "maximum": 4, "description": "Maximum concurrent reliability diagnostic runs." },
-        "levi.reliability.maximumScenariosPerRun": { "type": "number", "default": 32, "minimum": 1, "description": "Maximum scenarios per reliability run." },
-        "levi.reliability.maximumRunDurationMs": { "type": "number", "default": 120000, "minimum": 1, "description": "Maximum reliability run duration." },
-        "levi.reliability.maximumScenarioDurationMs": { "type": "number", "default": 30000, "minimum": 1, "description": "Maximum reliability scenario duration." },
-        "levi.reliability.enableResourceLeakDetection": { "type": "boolean", "default": true, "description": "Enable reliability resource cleanup checks." },
-        "levi.reliability.enableEventIntegrityChecks": { "type": "boolean", "default": true, "description": "Enable reliability event integrity checks." },
-        "levi.reliability.enableStateMachineChecks": { "type": "boolean", "default": true, "description": "Enable reliability state-machine checks." },
-        "levi.reliability.enableRecoveryChecks": { "type": "boolean", "default": true, "description": "Enable reliability recovery checks." },
-        "levi.reliability.enablePersistenceChecks": { "type": "boolean", "default": true, "description": "Enable reliability persistence checks." },
-        "levi.reliability.enableConcurrencyChecks": { "type": "boolean", "default": true, "description": "Enable reliability concurrency checks." },
-        "levi.reliability.requireCleanShutdown": { "type": "boolean", "default": true, "description": "Require clean reliability diagnostic shutdown." },
-        "levi.reliability.requireProtectedActionNonResume": { "type": "boolean", "default": true, "description": "Require proof that protected actions do not auto-resume after recovery." },
-        "levi.reliability.persistReports": { "type": "boolean", "default": true, "description": "Persist compact reliability reports and summaries." },
-        "levi.securityAssurance.enabled": { "type": "boolean", "default": true, "description": "Enable release-candidate security assurance diagnostics." },
-        "levi.securityAssurance.failClosed": { "type": "boolean", "default": true, "description": "Fail closed on security assurance blocker conditions." },
-        "levi.securityAssurance.maximumAuditRuns": { "type": "number", "default": 32, "minimum": 1, "description": "Maximum retained security audit runs." },
-        "levi.securityAssurance.maximumConcurrentRuns": { "type": "number", "default": 1, "minimum": 1, "maximum": 4, "description": "Maximum concurrent security audit runs." },
-        "levi.securityAssurance.maximumScenariosPerRun": { "type": "number", "default": 96, "minimum": 1, "description": "Maximum threat scenarios per security audit run." },
-        "levi.securityAssurance.maximumPayloadBytes": { "type": "number", "default": 8192, "minimum": 1, "description": "Maximum hostile payload bytes retained for diagnostic simulation." },
-        "levi.securityAssurance.maximumPromptCharacters": { "type": "number", "default": 12000, "minimum": 1, "description": "Maximum prompt characters considered by security diagnostics." },
-        "levi.securityAssurance.maximumToolArgumentsBytes": { "type": "number", "default": 8192, "minimum": 1, "description": "Maximum tool argument bytes considered by security diagnostics." },
-        "levi.securityAssurance.maximumWebviewMessageBytes": { "type": "number", "default": 16384, "minimum": 1, "description": "Maximum webview message bytes considered by security diagnostics." },
-        "levi.securityAssurance.maximumEventRate": { "type": "number", "default": 128, "minimum": 1, "description": "Maximum diagnostic event rate." },
-        "levi.securityAssurance.maximumQueueDepth": { "type": "number", "default": 128, "minimum": 1, "description": "Maximum diagnostic queue depth." },
-        "levi.securityAssurance.maximumAgentDepth": { "type": "number", "default": 4, "minimum": 1, "description": "Maximum recursive agent depth assumed by diagnostics." },
-        "levi.securityAssurance.maximumWorkflowSteps": { "type": "number", "default": 64, "minimum": 1, "description": "Maximum workflow steps assumed by diagnostics." },
-        "levi.securityAssurance.maximumAttackVariants": { "type": "number", "default": 8, "minimum": 1, "description": "Maximum attack variants per threat scenario." },
-        "levi.securityAssurance.maximumAttacksPerScenario": { "type": "number", "default": 8, "minimum": 1, "description": "Maximum attacks per threat scenario." },
-        "levi.securityAssurance.maximumAuditDurationMs": { "type": "number", "default": 120000, "minimum": 1, "description": "Maximum security audit duration." },
-        "levi.securityAssurance.maximumRunDurationMs": { "type": "number", "default": 120000, "minimum": 1, "description": "Maximum security audit run duration." },
-        "levi.securityAssurance.maximumScenarioDurationMs": { "type": "number", "default": 30000, "minimum": 1, "description": "Maximum security scenario duration." },
-        "levi.securityAssurance.enablePromptInjectionTests": { "type": "boolean", "default": true, "description": "Enable prompt-injection security diagnostics." },
-        "levi.securityAssurance.enableApprovalTests": { "type": "boolean", "default": true, "description": "Enable approval security diagnostics." },
-        "levi.securityAssurance.enableApprovalBypassTests": { "type": "boolean", "default": true, "description": "Enable approval-bypass security diagnostics." },
-        "levi.securityAssurance.enableWorkspaceIsolationTests": { "type": "boolean", "default": true, "description": "Enable workspace-isolation security diagnostics." },
-        "levi.securityAssurance.enablePathTests": { "type": "boolean", "default": true, "description": "Enable path and URI safety diagnostics." },
-        "levi.securityAssurance.enableCommandTests": { "type": "boolean", "default": true, "description": "Enable command-policy security diagnostics." },
-        "levi.securityAssurance.enableSecretLeakTests": { "type": "boolean", "default": true, "description": "Enable secret-leak security diagnostics." },
-        "levi.securityAssurance.enableProviderTests": { "type": "boolean", "default": true, "description": "Enable provider security diagnostics." },
-        "levi.securityAssurance.enableProviderPrivacyTests": { "type": "boolean", "default": true, "description": "Enable provider privacy security diagnostics." },
-        "levi.securityAssurance.enableWebviewTests": { "type": "boolean", "default": true, "description": "Enable VS Code webview security diagnostics." },
-        "levi.securityAssurance.enablePersistenceTests": { "type": "boolean", "default": true, "description": "Enable persistence redaction security diagnostics." },
-        "levi.securityAssurance.enableSerializationTests": { "type": "boolean", "default": true, "description": "Enable serialization attack security diagnostics." },
-        "levi.securityAssurance.enableResourceAbuseTests": { "type": "boolean", "default": true, "description": "Enable resource-abuse security diagnostics." },
-        "levi.securityAssurance.enableDependencyTests": { "type": "boolean", "default": true, "description": "Enable dependency security diagnostics." },
-        "levi.securityAssurance.enableDependencyReview": { "type": "boolean", "default": true, "description": "Enable offline dependency posture diagnostics." },
-        "levi.securityAssurance.enableSupplyChainTests": { "type": "boolean", "default": true, "description": "Enable supply-chain security diagnostics." },
-        "levi.securityAssurance.requireWorkspaceTrust": { "type": "boolean", "default": true, "description": "Require workspace trust for protected security posture." },
-        "levi.securityAssurance.requireExplicitProtectedApproval": { "type": "boolean", "default": true, "description": "Require explicit user approval for protected operations." },
-        "levi.securityAssurance.requireSecretRedaction": { "type": "boolean", "default": true, "description": "Require secret redaction in security evidence." },
-        "levi.securityAssurance.requireRemotePrivacyPolicy": { "type": "boolean", "default": true, "description": "Require remote provider privacy policy enforcement." },
-        "levi.securityAssurance.persistReports": { "type": "boolean", "default": true, "description": "Persist compact redacted security reports and summaries." },
-        "levi.stressScalability.enabled": { "type": "boolean", "default": true, "description": "Enable deterministic stress and scalability diagnostics." },
-        "levi.stressScalability.failClosed": { "type": "boolean", "default": true, "description": "Fail closed on release-candidate stress blockers." },
-        "levi.stressScalability.maximumRuns": { "type": "number", "default": 32, "minimum": 1, "description": "Maximum retained stress runs." },
-        "levi.stressScalability.maximumConcurrentRuns": { "type": "number", "default": 1, "minimum": 1, "maximum": 4, "description": "Maximum concurrent stress runs." },
-        "levi.stressScalability.maximumScenariosPerRun": { "type": "number", "default": 64, "minimum": 1, "description": "Maximum scenarios per stress run." },
-        "levi.stressScalability.maximumSyntheticFiles": { "type": "number", "default": 100000, "minimum": 1, "description": "Maximum synthetic repository files modeled by diagnostics." },
-        "levi.stressScalability.maximumSyntheticDirectories": { "type": "number", "default": 20000, "minimum": 1, "description": "Maximum synthetic directories modeled by diagnostics." },
-        "levi.stressScalability.maximumSyntheticSymbols": { "type": "number", "default": 1000000, "minimum": 1, "description": "Maximum synthetic symbols modeled by diagnostics." },
-        "levi.stressScalability.maximumSyntheticDependencies": { "type": "number", "default": 250000, "minimum": 0, "description": "Maximum synthetic dependencies modeled by diagnostics." },
-        "levi.stressScalability.maximumRepositoryBytes": { "type": "number", "default": 268435456, "minimum": 1, "description": "Maximum synthetic repository bytes modeled by diagnostics." },
-        "levi.stressScalability.maximumConcurrentOperations": { "type": "number", "default": 16, "minimum": 1, "description": "Maximum modeled concurrent runtime operations." },
-        "levi.stressScalability.maximumConcurrentModelRequests": { "type": "number", "default": 4, "minimum": 1, "description": "Maximum modeled concurrent provider requests." },
-        "levi.stressScalability.maximumConcurrentAgentTurns": { "type": "number", "default": 4, "minimum": 1, "description": "Maximum modeled concurrent agent turns." },
-        "levi.stressScalability.maximumConcurrentAssignments": { "type": "number", "default": 8, "minimum": 1, "description": "Maximum modeled concurrent multi-agent assignments." },
-        "levi.stressScalability.maximumConcurrentWorkflows": { "type": "number", "default": 4, "minimum": 1, "description": "Maximum modeled concurrent workflows." },
-        "levi.stressScalability.maximumConcurrentWorkflowSteps": { "type": "number", "default": 16, "minimum": 1, "description": "Maximum modeled concurrent workflow steps." },
-        "levi.stressScalability.maximumQueueDepth": { "type": "number", "default": 256, "minimum": 1, "description": "Maximum modeled queue depth." },
-        "levi.stressScalability.maximumEventRatePerSecond": { "type": "number", "default": 256, "minimum": 1, "description": "Maximum modeled event rate per second." },
-        "levi.stressScalability.maximumListeners": { "type": "number", "default": 64, "minimum": 1, "description": "Maximum modeled event listeners." },
-        "levi.stressScalability.maximumCacheEntries": { "type": "number", "default": 1024, "minimum": 1, "description": "Maximum modeled cache entries." },
-        "levi.stressScalability.maximumCacheBytes": { "type": "number", "default": 67108864, "minimum": 1, "description": "Maximum modeled cache bytes." },
-        "levi.stressScalability.maximumContextPackages": { "type": "number", "default": 128, "minimum": 1, "description": "Maximum modeled context packages." },
-        "levi.stressScalability.maximumConversationMessages": { "type": "number", "default": 1000, "minimum": 1, "description": "Maximum modeled conversation messages." },
-        "levi.stressScalability.maximumProposalFiles": { "type": "number", "default": 128, "minimum": 1, "description": "Maximum modeled proposal files." },
-        "levi.stressScalability.maximumPatchBytes": { "type": "number", "default": 2097152, "minimum": 1, "description": "Maximum modeled patch bytes." },
-        "levi.stressScalability.maximumPersistenceCycles": { "type": "number", "default": 8, "minimum": 1, "description": "Maximum persistence cycles per diagnostic scenario." },
-        "levi.stressScalability.maximumRecoveryCycles": { "type": "number", "default": 8, "minimum": 1, "description": "Maximum recovery cycles per diagnostic scenario." },
-        "levi.stressScalability.maximumCancellationRate": { "type": "number", "default": 64, "minimum": 1, "description": "Maximum modeled cancellations per run." },
-        "levi.stressScalability.maximumRunDurationMs": { "type": "number", "default": 120000, "minimum": 1, "description": "Maximum stress run duration." },
-        "levi.stressScalability.maximumScenarioDurationMs": { "type": "number", "default": 30000, "minimum": 1, "description": "Maximum stress scenario duration." },
-        "levi.stressScalability.maximumWarmupDurationMs": { "type": "number", "default": 5000, "minimum": 1, "description": "Maximum warmup duration per stress scenario." },
-        "levi.stressScalability.maximumCooldownDurationMs": { "type": "number", "default": 5000, "minimum": 1, "description": "Maximum cooldown duration per stress scenario." },
-        "levi.stressScalability.memoryBudgetBytes": { "type": "number", "default": 134217728, "minimum": 1, "description": "Memory budget used by stress diagnostics." },
-        "levi.stressScalability.warningMemoryRatio": { "type": "number", "default": 0.75, "minimum": 0.01, "maximum": 1, "description": "Memory ratio that produces warning-level evidence." },
-        "levi.stressScalability.criticalMemoryRatio": { "type": "number", "default": 0.9, "minimum": 0.01, "maximum": 1, "description": "Memory ratio that produces blocker-level evidence." },
-        "levi.stressScalability.enableRepositoryStress": { "type": "boolean", "default": true, "description": "Enable repository stress diagnostics." },
-        "levi.stressScalability.enableConcurrencyStress": { "type": "boolean", "default": true, "description": "Enable concurrency stress diagnostics." },
-        "levi.stressScalability.enableProviderStress": { "type": "boolean", "default": true, "description": "Enable provider stress diagnostics." },
-        "levi.stressScalability.enableWorkflowStress": { "type": "boolean", "default": true, "description": "Enable workflow stress diagnostics." },
-        "levi.stressScalability.enableMemoryStress": { "type": "boolean", "default": true, "description": "Enable memory stress diagnostics." },
-        "levi.stressScalability.enableQueueStress": { "type": "boolean", "default": true, "description": "Enable queue stress diagnostics." },
-        "levi.stressScalability.enablePersistenceStress": { "type": "boolean", "default": true, "description": "Enable persistence stress diagnostics." },
-        "levi.stressScalability.enableRecoveryStress": { "type": "boolean", "default": true, "description": "Enable recovery stress diagnostics." },
-        "levi.stressScalability.enableCancellationStress": { "type": "boolean", "default": true, "description": "Enable cancellation stress diagnostics." },
-        "levi.stressScalability.enablePresentationStress": { "type": "boolean", "default": true, "description": "Enable presentation pressure diagnostics." },
-        "levi.stressScalability.persistReports": { "type": "boolean", "default": true, "description": "Persist compact stress reports and run summaries." },
-        "levi.qualification.enabled": { "type": "boolean", "default": true, "description": "Enable deterministic release qualification." },
-        "levi.qualification.failClosed": { "type": "boolean", "default": true, "description": "Fail closed on release qualification blockers." },
-        "levi.qualification.maximumSuites": { "type": "number", "default": 16, "minimum": 1, "description": "Maximum qualification suites." },
-        "levi.qualification.maximumScenariosPerSuite": { "type": "number", "default": 64, "minimum": 1, "description": "Maximum scenarios per qualification suite." },
-        "levi.qualification.maximumConcurrentScenarios": { "type": "number", "default": 1, "minimum": 1, "maximum": 4, "description": "Maximum concurrent qualification scenarios." },
-        "levi.qualification.maximumFixtures": { "type": "number", "default": 16, "minimum": 1, "description": "Maximum retained project fixtures." },
-        "levi.qualification.maximumDefects": { "type": "number", "default": 128, "minimum": 1, "description": "Maximum retained qualification defects." },
-        "levi.qualification.maximumEvidenceItems": { "type": "number", "default": 256, "minimum": 1, "description": "Maximum qualification evidence items." },
-        "levi.qualification.maximumArtifacts": { "type": "number", "default": 64, "minimum": 1, "description": "Maximum qualification artifacts." },
-        "levi.qualification.maximumScenarioDurationMs": { "type": "number", "default": 30000, "minimum": 1, "description": "Maximum qualification scenario duration." },
-        "levi.qualification.maximumRunDurationMs": { "type": "number", "default": 120000, "minimum": 1, "description": "Maximum qualification run duration." },
-        "levi.qualification.maximumReloadCycles": { "type": "number", "default": 2, "minimum": 1, "description": "Maximum modeled reload cycles." },
-        "levi.qualification.maximumRepairAttempts": { "type": "number", "default": 2, "minimum": 1, "description": "Maximum modeled repair attempts." },
-        "levi.qualification.maximumProviderRetries": { "type": "number", "default": 1, "minimum": 1, "description": "Maximum modeled provider retries." },
-        "levi.qualification.maximumWorkspaceBytes": { "type": "number", "default": 2097152, "minimum": 1, "description": "Maximum deterministic fixture workspace bytes." },
-        "levi.qualification.maximumGeneratedFiles": { "type": "number", "default": 64, "minimum": 1, "description": "Maximum generated files per qualification fixture." },
-        "levi.qualification.maximumManualChecklistItems": { "type": "number", "default": 256, "minimum": 1, "description": "Maximum manual validation checklist items." },
-        "levi.qualification.requireExtensionHostVerification": { "type": "boolean", "default": true, "description": "Require manual Extension Development Host verification for RC qualification." },
-        "levi.qualification.requireLocalModelVerification": { "type": "boolean", "default": true, "description": "Require manual local Ollama verification for RC qualification." },
-        "levi.qualification.requireSourceChangeWorkflow": { "type": "boolean", "default": true, "description": "Require end-to-end source-change workflow qualification." },
-        "levi.qualification.requireValidationWorkflow": { "type": "boolean", "default": true, "description": "Require validation workflow qualification." },
-        "levi.qualification.requireRecoveryWorkflow": { "type": "boolean", "default": true, "description": "Require recovery workflow qualification." },
-        "levi.qualification.requireSecurityBaseline": { "type": "boolean", "default": true, "description": "Require security baseline evidence." },
-        "levi.qualification.requireReliabilityBaseline": { "type": "boolean", "default": true, "description": "Require reliability baseline evidence." },
-        "levi.qualification.requireScalabilityBaseline": { "type": "boolean", "default": true, "description": "Require scalability baseline evidence." },
-        "levi.qualification.requireAccessibilityVerification": { "type": "boolean", "default": true, "description": "Require accessibility verification." },
-        "levi.qualification.requireNoCriticalDefects": { "type": "boolean", "default": true, "description": "Block qualification while critical defects remain open." },
-        "levi.qualification.persistReports": { "type": "boolean", "default": true, "description": "Persist compact release qualification reports." }
+        "levi.ui.showNotifications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show user-facing Levi notifications."
+        },
+        "levi.ui.progressLocation": {
+          "type": "string",
+          "default": "notification",
+          "enum": [
+            "notification",
+            "window"
+          ],
+          "description": "Where long-running Levi progress appears."
+        },
+        "levi.diagnostics.enabled": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Show developer and release-check commands. Leave off for normal daily use.",
+          "order": 1000
+        },
+        "levi.experience.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the cohesive Levi product experience."
+        },
+        "levi.experience.defaultMode": {
+          "type": "string",
+          "default": "Ask",
+          "enum": [
+            "Ask",
+            "Plan",
+            "Build",
+            "Fix",
+            "Review",
+            "Teach"
+          ],
+          "description": "Default Copilot composer mode."
+        },
+        "levi.experience.showAdvancedDetails": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Show advanced technical panels and commands for power users.",
+          "order": 20
+        },
+        "levi.experience.compactEnvironment": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use compact Environment panel summaries."
+        },
+        "levi.experience.autoOpenOnFirstRun": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Open the Levi setup guide the first time you use the extension."
+        },
+        "levi.experience.showCompletionNotifications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show product-level completion notifications."
+        },
+        "levi.experience.timelineExpanded": {
+          "type": "boolean",
+          "default": false,
+          "description": "Expand workflow timeline details by default."
+        },
+        "levi.experience.preferredPanelLocation": {
+          "type": "string",
+          "default": "beside",
+          "enum": [
+            "beside",
+            "active"
+          ],
+          "description": "Preferred Copilot panel placement."
+        },
+        "levi.models.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Enable local and optional remote **AI models**.",
+          "order": 30
+        },
+        "levi.models.routingStrategy": {
+          "type": "string",
+          "default": "PRIVACY_FIRST",
+          "enum": [
+            "EXPLICIT",
+            "LOCAL_FIRST",
+            "REMOTE_FIRST",
+            "LOWEST_COST",
+            "LOWEST_LATENCY",
+            "HIGHEST_CAPABILITY",
+            "PRIVACY_FIRST",
+            "BALANCED",
+            "FALLBACK_CHAIN"
+          ],
+          "markdownDescription": "How Levi chooses an AI model when several are available."
+        },
+        "levi.models.defaultProvider": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Default AI model provider id (for example `ollama-local`)."
+        },
+        "levi.models.defaultModel": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Default AI model id or name."
+        },
+        "levi.models.allowRemoteSourceCode": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Allow source code to be sent to remote AI providers. Off by default to keep code local."
+        },
+        "levi.models.allowRemoteSensitiveContent": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Allow sensitive workspace content to be sent to remote AI providers."
+        },
+        "levi.models.requestTimeoutMs": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 1000,
+          "description": "Model provider request timeout in milliseconds."
+        },
+        "levi.models.maximumRetries": {
+          "type": "number",
+          "default": 1,
+          "minimum": 0,
+          "description": "Maximum provider retries before fallback."
+        },
+        "levi.ollama.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Connect Levi to a local [Ollama](https://ollama.com) server.",
+          "order": 31
+        },
+        "levi.ollama.baseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:11434",
+          "markdownDescription": "Ollama server URL. Default: `http://127.0.0.1:11434`."
+        },
+        "levi.ollama.defaultModel": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Default Ollama model name (for example `qwen2.5-coder:7b`). Install models with `ollama pull` first."
+        },
+        "levi.openAICompatible.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable an OpenAI-compatible remote provider package."
+        },
+        "levi.openAICompatible.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI-compatible provider base URL."
+        },
+        "levi.openAICompatible.defaultModel": {
+          "type": "string",
+          "default": "",
+          "description": "Optional OpenAI-compatible default model name."
+        },
+        "levi.openAICompatible.credentialKey": {
+          "type": "string",
+          "default": "openai-compatible-api-key",
+          "description": "Secret-storage reference for the provider API key."
+        },
+        "levi.agent.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the Levi agent orchestration UI."
+        },
+        "levi.agent.defaultMode": {
+          "type": "string",
+          "default": "PROPOSAL_ONLY",
+          "enum": [
+            "OFFLINE_ONLY",
+            "READ_ONLY",
+            "PROPOSAL_ONLY",
+            "APPROVAL_GATED",
+            "EXECUTION_ENABLED",
+            "DIAGNOSTIC"
+          ],
+          "description": "Default agent orchestration mode."
+        },
+        "levi.agent.maximumTurns": {
+          "type": "number",
+          "default": 16,
+          "minimum": 1,
+          "description": "Maximum turns per Levi agent conversation."
+        },
+        "levi.agent.maximumToolCalls": {
+          "type": "number",
+          "default": 8,
+          "minimum": 0,
+          "description": "Maximum tool calls per Levi agent turn."
+        },
+        "levi.agent.enableStreaming": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable streaming model responses into the Levi Agent UI."
+        },
+        "levi.agent.requirePlanForProtectedActions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require a plan before protected agent actions."
+        },
+        "levi.agent.autoCreateConversation": {
+          "type": "boolean",
+          "default": true,
+          "description": "Create an agent conversation automatically when sending the first message."
+        },
+        "levi.agent.persistConversationSummaries": {
+          "type": "boolean",
+          "default": true,
+          "description": "Persist compact Levi agent conversation summaries."
+        },
+        "levi.workspaceTools.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Enable reviewed file-change proposals in your workspace.",
+          "order": 40
+        },
+        "levi.workspaceTools.allowSourceChanges": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow approved Levi proposals to mutate workspace files."
+        },
+        "levi.workspaceTools.allowCommandExecution": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow approved Levi validation commands to execute."
+        },
+        "levi.workspaceTools.allowFileCreation": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow approved Levi proposals to create files."
+        },
+        "levi.workspaceTools.allowFileDeletion": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow approved Levi proposals to delete files."
+        },
+        "levi.workspaceTools.allowFileRename": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow approved Levi proposals to rename files."
+        },
+        "levi.workspaceTools.requireApproval": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Require your explicit approval before Levi changes files or runs validation commands."
+        },
+        "levi.workspaceTools.requireCheckpoint": {
+          "type": "boolean",
+          "default": true,
+          "description": "Request source-control checkpoint support before workspace mutation."
+        },
+        "levi.multiAgent.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable bounded Levi multi-agent coordination."
+        },
+        "levi.multiAgent.defaultStrategy": {
+          "type": "string",
+          "default": "ADAPTIVE_BOUNDED",
+          "enum": [
+            "NONE",
+            "SEQUENTIAL",
+            "PARALLEL_INDEPENDENT",
+            "PARALLEL_REVIEW",
+            "PIPELINE",
+            "REVIEW_BOARD",
+            "ADAPTIVE_BOUNDED"
+          ],
+          "description": "Default bounded multi-agent delegation strategy."
+        },
+        "levi.multiAgent.maximumAgents": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 8,
+          "description": "Maximum specialized roles per Levi team."
+        },
+        "levi.multiAgent.maximumConcurrentAssignments": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 4,
+          "description": "Maximum concurrent multi-agent assignments."
+        },
+        "levi.multiAgent.maximumDelegationRounds": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 4,
+          "description": "Maximum delegation planning rounds."
+        },
+        "levi.multiAgent.requireIndependentChangeReview": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require independent review for source-changing multi-agent proposals."
+        },
+        "levi.multiAgent.requireSecurityReviewForSensitiveChanges": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require security review for sensitive multi-agent work when available."
+        },
+        "levi.multiAgent.allowSameModelForReview": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow review roles to use the same model while surfacing the limitation."
+        },
+        "levi.multiAgent.persistTeamSummaries": {
+          "type": "boolean",
+          "default": true,
+          "description": "Persist compact multi-agent team summaries."
+        },
+        "levi.workflows.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Enable **Project Rules** workflows for repeatable multi-step tasks.",
+          "order": 50
+        },
+        "levi.workflows.maximumActiveWorkflows": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 4,
+          "description": "Maximum active durable workflows."
+        },
+        "levi.workflows.maximumConcurrentSteps": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 4,
+          "description": "Maximum concurrently executing workflow steps."
+        },
+        "levi.workflows.maximumStepsPerWorkflow": {
+          "type": "number",
+          "default": 64,
+          "minimum": 1,
+          "maximum": 128,
+          "description": "Maximum steps in a workflow graph."
+        },
+        "levi.workflows.maximumRetriesPerStep": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0,
+          "maximum": 5,
+          "description": "Maximum bounded retries per workflow step."
+        },
+        "levi.workflows.maximumRepairAttempts": {
+          "type": "number",
+          "default": 1,
+          "minimum": 0,
+          "maximum": 3,
+          "description": "Maximum bounded repair attempts per failed workflow step."
+        },
+        "levi.workflows.checkpointIntervalMs": {
+          "type": "number",
+          "default": 60000,
+          "minimum": 1000,
+          "description": "Periodic durable workflow checkpoint interval."
+        },
+        "levi.workflows.autoCheckpoint": {
+          "type": "boolean",
+          "default": true,
+          "description": "Create compact workflow checkpoints automatically."
+        },
+        "levi.workflows.allowSafeAutomaticResume": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow only safe read-only workflow steps to resume automatically after revalidation."
+        },
+        "levi.workflows.archiveCompleted": {
+          "type": "boolean",
+          "default": false,
+          "description": "Archive completed workflow summaries automatically."
+        },
+        "levi.workflows.persistHistory": {
+          "type": "boolean",
+          "default": true,
+          "description": "Persist compact durable workflow history."
+        },
+        "levi.performance.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable repository performance coordination."
+        },
+        "levi.performance.maximumCacheEntries": {
+          "type": "number",
+          "default": 512,
+          "minimum": 1,
+          "description": "Maximum repository performance cache entries."
+        },
+        "levi.performance.maximumMemoryBytes": {
+          "type": "number",
+          "default": 67108864,
+          "minimum": 1024,
+          "description": "Maximum memory budget for performance metadata."
+        },
+        "levi.performance.maximumContextEntries": {
+          "type": "number",
+          "default": 64,
+          "minimum": 1,
+          "description": "Maximum cached reusable context packages."
+        },
+        "levi.performance.cacheTtlMs": {
+          "type": "number",
+          "default": 300000,
+          "minimum": 0,
+          "description": "Repository performance cache TTL in milliseconds."
+        },
+        "levi.performance.maximumParallelism": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 32,
+          "description": "Maximum safe parallel repository analysis lanes."
+        },
+        "levi.performance.persistSummaries": {
+          "type": "boolean",
+          "default": true,
+          "description": "Persist compact repository performance summaries only."
+        },
+        "levi.performance.benchmarkSampleSize": {
+          "type": "number",
+          "default": 8,
+          "minimum": 1,
+          "description": "Deterministic sample size for repository benchmarks."
+        },
+        "levi.reliability.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable reliability assurance diagnostics."
+        },
+        "levi.reliability.failClosed": {
+          "type": "boolean",
+          "default": true,
+          "description": "Fail closed on reliability invariant violations."
+        },
+        "levi.reliability.maximumDiagnosticRuns": {
+          "type": "number",
+          "default": 32,
+          "minimum": 1,
+          "description": "Maximum retained reliability diagnostic runs."
+        },
+        "levi.reliability.maximumConcurrentRuns": {
+          "type": "number",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 4,
+          "description": "Maximum concurrent reliability diagnostic runs."
+        },
+        "levi.reliability.maximumScenariosPerRun": {
+          "type": "number",
+          "default": 32,
+          "minimum": 1,
+          "description": "Maximum scenarios per reliability run."
+        },
+        "levi.reliability.maximumRunDurationMs": {
+          "type": "number",
+          "default": 120000,
+          "minimum": 1,
+          "description": "Maximum reliability run duration."
+        },
+        "levi.reliability.maximumScenarioDurationMs": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 1,
+          "description": "Maximum reliability scenario duration."
+        },
+        "levi.reliability.enableResourceLeakDetection": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable reliability resource cleanup checks."
+        },
+        "levi.reliability.enableEventIntegrityChecks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable reliability event integrity checks."
+        },
+        "levi.reliability.enableStateMachineChecks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable reliability state-machine checks."
+        },
+        "levi.reliability.enableRecoveryChecks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable reliability recovery checks."
+        },
+        "levi.reliability.enablePersistenceChecks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable reliability persistence checks."
+        },
+        "levi.reliability.enableConcurrencyChecks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable reliability concurrency checks."
+        },
+        "levi.reliability.requireCleanShutdown": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require clean reliability diagnostic shutdown."
+        },
+        "levi.reliability.requireProtectedActionNonResume": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require proof that protected actions do not auto-resume after recovery."
+        },
+        "levi.reliability.persistReports": {
+          "type": "boolean",
+          "default": true,
+          "description": "Persist compact reliability reports and summaries."
+        },
+        "levi.securityAssurance.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable release-candidate security assurance diagnostics."
+        },
+        "levi.securityAssurance.failClosed": {
+          "type": "boolean",
+          "default": true,
+          "description": "Fail closed on security assurance blocker conditions."
+        },
+        "levi.securityAssurance.maximumAuditRuns": {
+          "type": "number",
+          "default": 32,
+          "minimum": 1,
+          "description": "Maximum retained security audit runs."
+        },
+        "levi.securityAssurance.maximumConcurrentRuns": {
+          "type": "number",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 4,
+          "description": "Maximum concurrent security audit runs."
+        },
+        "levi.securityAssurance.maximumScenariosPerRun": {
+          "type": "number",
+          "default": 96,
+          "minimum": 1,
+          "description": "Maximum threat scenarios per security audit run."
+        },
+        "levi.securityAssurance.maximumPayloadBytes": {
+          "type": "number",
+          "default": 8192,
+          "minimum": 1,
+          "description": "Maximum hostile payload bytes retained for diagnostic simulation."
+        },
+        "levi.securityAssurance.maximumPromptCharacters": {
+          "type": "number",
+          "default": 12000,
+          "minimum": 1,
+          "description": "Maximum prompt characters considered by security diagnostics."
+        },
+        "levi.securityAssurance.maximumToolArgumentsBytes": {
+          "type": "number",
+          "default": 8192,
+          "minimum": 1,
+          "description": "Maximum tool argument bytes considered by security diagnostics."
+        },
+        "levi.securityAssurance.maximumWebviewMessageBytes": {
+          "type": "number",
+          "default": 16384,
+          "minimum": 1,
+          "description": "Maximum webview message bytes considered by security diagnostics."
+        },
+        "levi.securityAssurance.maximumEventRate": {
+          "type": "number",
+          "default": 128,
+          "minimum": 1,
+          "description": "Maximum diagnostic event rate."
+        },
+        "levi.securityAssurance.maximumQueueDepth": {
+          "type": "number",
+          "default": 128,
+          "minimum": 1,
+          "description": "Maximum diagnostic queue depth."
+        },
+        "levi.securityAssurance.maximumAgentDepth": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "description": "Maximum recursive agent depth assumed by diagnostics."
+        },
+        "levi.securityAssurance.maximumWorkflowSteps": {
+          "type": "number",
+          "default": 64,
+          "minimum": 1,
+          "description": "Maximum workflow steps assumed by diagnostics."
+        },
+        "levi.securityAssurance.maximumAttackVariants": {
+          "type": "number",
+          "default": 8,
+          "minimum": 1,
+          "description": "Maximum attack variants per threat scenario."
+        },
+        "levi.securityAssurance.maximumAttacksPerScenario": {
+          "type": "number",
+          "default": 8,
+          "minimum": 1,
+          "description": "Maximum attacks per threat scenario."
+        },
+        "levi.securityAssurance.maximumAuditDurationMs": {
+          "type": "number",
+          "default": 120000,
+          "minimum": 1,
+          "description": "Maximum security audit duration."
+        },
+        "levi.securityAssurance.maximumRunDurationMs": {
+          "type": "number",
+          "default": 120000,
+          "minimum": 1,
+          "description": "Maximum security audit run duration."
+        },
+        "levi.securityAssurance.maximumScenarioDurationMs": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 1,
+          "description": "Maximum security scenario duration."
+        },
+        "levi.securityAssurance.enablePromptInjectionTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable prompt-injection security diagnostics."
+        },
+        "levi.securityAssurance.enableApprovalTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable approval security diagnostics."
+        },
+        "levi.securityAssurance.enableApprovalBypassTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable approval-bypass security diagnostics."
+        },
+        "levi.securityAssurance.enableWorkspaceIsolationTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable workspace-isolation security diagnostics."
+        },
+        "levi.securityAssurance.enablePathTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable path and URI safety diagnostics."
+        },
+        "levi.securityAssurance.enableCommandTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable command-policy security diagnostics."
+        },
+        "levi.securityAssurance.enableSecretLeakTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable secret-leak security diagnostics."
+        },
+        "levi.securityAssurance.enableProviderTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable provider security diagnostics."
+        },
+        "levi.securityAssurance.enableProviderPrivacyTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable provider privacy security diagnostics."
+        },
+        "levi.securityAssurance.enableWebviewTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable VS Code webview security diagnostics."
+        },
+        "levi.securityAssurance.enablePersistenceTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable persistence redaction security diagnostics."
+        },
+        "levi.securityAssurance.enableSerializationTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable serialization attack security diagnostics."
+        },
+        "levi.securityAssurance.enableResourceAbuseTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable resource-abuse security diagnostics."
+        },
+        "levi.securityAssurance.enableDependencyTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable dependency security diagnostics."
+        },
+        "levi.securityAssurance.enableDependencyReview": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable offline dependency posture diagnostics."
+        },
+        "levi.securityAssurance.enableSupplyChainTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable supply-chain security diagnostics."
+        },
+        "levi.securityAssurance.requireWorkspaceTrust": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require workspace trust for protected security posture."
+        },
+        "levi.securityAssurance.requireExplicitProtectedApproval": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require explicit user approval for protected operations."
+        },
+        "levi.securityAssurance.requireSecretRedaction": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require secret redaction in security evidence."
+        },
+        "levi.securityAssurance.requireRemotePrivacyPolicy": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require remote provider privacy policy enforcement."
+        },
+        "levi.securityAssurance.persistReports": {
+          "type": "boolean",
+          "default": true,
+          "description": "Persist compact redacted security reports and summaries."
+        },
+        "levi.stressScalability.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable deterministic stress and scalability diagnostics."
+        },
+        "levi.stressScalability.failClosed": {
+          "type": "boolean",
+          "default": true,
+          "description": "Fail closed on release-candidate stress blockers."
+        },
+        "levi.stressScalability.maximumRuns": {
+          "type": "number",
+          "default": 32,
+          "minimum": 1,
+          "description": "Maximum retained stress runs."
+        },
+        "levi.stressScalability.maximumConcurrentRuns": {
+          "type": "number",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 4,
+          "description": "Maximum concurrent stress runs."
+        },
+        "levi.stressScalability.maximumScenariosPerRun": {
+          "type": "number",
+          "default": 64,
+          "minimum": 1,
+          "description": "Maximum scenarios per stress run."
+        },
+        "levi.stressScalability.maximumSyntheticFiles": {
+          "type": "number",
+          "default": 100000,
+          "minimum": 1,
+          "description": "Maximum synthetic repository files modeled by diagnostics."
+        },
+        "levi.stressScalability.maximumSyntheticDirectories": {
+          "type": "number",
+          "default": 20000,
+          "minimum": 1,
+          "description": "Maximum synthetic directories modeled by diagnostics."
+        },
+        "levi.stressScalability.maximumSyntheticSymbols": {
+          "type": "number",
+          "default": 1000000,
+          "minimum": 1,
+          "description": "Maximum synthetic symbols modeled by diagnostics."
+        },
+        "levi.stressScalability.maximumSyntheticDependencies": {
+          "type": "number",
+          "default": 250000,
+          "minimum": 0,
+          "description": "Maximum synthetic dependencies modeled by diagnostics."
+        },
+        "levi.stressScalability.maximumRepositoryBytes": {
+          "type": "number",
+          "default": 268435456,
+          "minimum": 1,
+          "description": "Maximum synthetic repository bytes modeled by diagnostics."
+        },
+        "levi.stressScalability.maximumConcurrentOperations": {
+          "type": "number",
+          "default": 16,
+          "minimum": 1,
+          "description": "Maximum modeled concurrent runtime operations."
+        },
+        "levi.stressScalability.maximumConcurrentModelRequests": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "description": "Maximum modeled concurrent provider requests."
+        },
+        "levi.stressScalability.maximumConcurrentAgentTurns": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "description": "Maximum modeled concurrent agent turns."
+        },
+        "levi.stressScalability.maximumConcurrentAssignments": {
+          "type": "number",
+          "default": 8,
+          "minimum": 1,
+          "description": "Maximum modeled concurrent multi-agent assignments."
+        },
+        "levi.stressScalability.maximumConcurrentWorkflows": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "description": "Maximum modeled concurrent workflows."
+        },
+        "levi.stressScalability.maximumConcurrentWorkflowSteps": {
+          "type": "number",
+          "default": 16,
+          "minimum": 1,
+          "description": "Maximum modeled concurrent workflow steps."
+        },
+        "levi.stressScalability.maximumQueueDepth": {
+          "type": "number",
+          "default": 256,
+          "minimum": 1,
+          "description": "Maximum modeled queue depth."
+        },
+        "levi.stressScalability.maximumEventRatePerSecond": {
+          "type": "number",
+          "default": 256,
+          "minimum": 1,
+          "description": "Maximum modeled event rate per second."
+        },
+        "levi.stressScalability.maximumListeners": {
+          "type": "number",
+          "default": 64,
+          "minimum": 1,
+          "description": "Maximum modeled event listeners."
+        },
+        "levi.stressScalability.maximumCacheEntries": {
+          "type": "number",
+          "default": 1024,
+          "minimum": 1,
+          "description": "Maximum modeled cache entries."
+        },
+        "levi.stressScalability.maximumCacheBytes": {
+          "type": "number",
+          "default": 67108864,
+          "minimum": 1,
+          "description": "Maximum modeled cache bytes."
+        },
+        "levi.stressScalability.maximumContextPackages": {
+          "type": "number",
+          "default": 128,
+          "minimum": 1,
+          "description": "Maximum modeled context packages."
+        },
+        "levi.stressScalability.maximumConversationMessages": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 1,
+          "description": "Maximum modeled conversation messages."
+        },
+        "levi.stressScalability.maximumProposalFiles": {
+          "type": "number",
+          "default": 128,
+          "minimum": 1,
+          "description": "Maximum modeled proposal files."
+        },
+        "levi.stressScalability.maximumPatchBytes": {
+          "type": "number",
+          "default": 2097152,
+          "minimum": 1,
+          "description": "Maximum modeled patch bytes."
+        },
+        "levi.stressScalability.maximumPersistenceCycles": {
+          "type": "number",
+          "default": 8,
+          "minimum": 1,
+          "description": "Maximum persistence cycles per diagnostic scenario."
+        },
+        "levi.stressScalability.maximumRecoveryCycles": {
+          "type": "number",
+          "default": 8,
+          "minimum": 1,
+          "description": "Maximum recovery cycles per diagnostic scenario."
+        },
+        "levi.stressScalability.maximumCancellationRate": {
+          "type": "number",
+          "default": 64,
+          "minimum": 1,
+          "description": "Maximum modeled cancellations per run."
+        },
+        "levi.stressScalability.maximumRunDurationMs": {
+          "type": "number",
+          "default": 120000,
+          "minimum": 1,
+          "description": "Maximum stress run duration."
+        },
+        "levi.stressScalability.maximumScenarioDurationMs": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 1,
+          "description": "Maximum stress scenario duration."
+        },
+        "levi.stressScalability.maximumWarmupDurationMs": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 1,
+          "description": "Maximum warmup duration per stress scenario."
+        },
+        "levi.stressScalability.maximumCooldownDurationMs": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 1,
+          "description": "Maximum cooldown duration per stress scenario."
+        },
+        "levi.stressScalability.memoryBudgetBytes": {
+          "type": "number",
+          "default": 134217728,
+          "minimum": 1,
+          "description": "Memory budget used by stress diagnostics."
+        },
+        "levi.stressScalability.warningMemoryRatio": {
+          "type": "number",
+          "default": 0.75,
+          "minimum": 0.01,
+          "maximum": 1,
+          "description": "Memory ratio that produces warning-level evidence."
+        },
+        "levi.stressScalability.criticalMemoryRatio": {
+          "type": "number",
+          "default": 0.9,
+          "minimum": 0.01,
+          "maximum": 1,
+          "description": "Memory ratio that produces blocker-level evidence."
+        },
+        "levi.stressScalability.enableRepositoryStress": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable repository stress diagnostics."
+        },
+        "levi.stressScalability.enableConcurrencyStress": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable concurrency stress diagnostics."
+        },
+        "levi.stressScalability.enableProviderStress": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable provider stress diagnostics."
+        },
+        "levi.stressScalability.enableWorkflowStress": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable workflow stress diagnostics."
+        },
+        "levi.stressScalability.enableMemoryStress": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable memory stress diagnostics."
+        },
+        "levi.stressScalability.enableQueueStress": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable queue stress diagnostics."
+        },
+        "levi.stressScalability.enablePersistenceStress": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable persistence stress diagnostics."
+        },
+        "levi.stressScalability.enableRecoveryStress": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable recovery stress diagnostics."
+        },
+        "levi.stressScalability.enableCancellationStress": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable cancellation stress diagnostics."
+        },
+        "levi.stressScalability.enablePresentationStress": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable presentation pressure diagnostics."
+        },
+        "levi.stressScalability.persistReports": {
+          "type": "boolean",
+          "default": true,
+          "description": "Persist compact stress reports and run summaries."
+        },
+        "levi.qualification.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable deterministic release qualification."
+        },
+        "levi.qualification.failClosed": {
+          "type": "boolean",
+          "default": true,
+          "description": "Fail closed on release qualification blockers."
+        },
+        "levi.qualification.maximumSuites": {
+          "type": "number",
+          "default": 16,
+          "minimum": 1,
+          "description": "Maximum qualification suites."
+        },
+        "levi.qualification.maximumScenariosPerSuite": {
+          "type": "number",
+          "default": 64,
+          "minimum": 1,
+          "description": "Maximum scenarios per qualification suite."
+        },
+        "levi.qualification.maximumConcurrentScenarios": {
+          "type": "number",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 4,
+          "description": "Maximum concurrent qualification scenarios."
+        },
+        "levi.qualification.maximumFixtures": {
+          "type": "number",
+          "default": 16,
+          "minimum": 1,
+          "description": "Maximum retained project fixtures."
+        },
+        "levi.qualification.maximumDefects": {
+          "type": "number",
+          "default": 128,
+          "minimum": 1,
+          "description": "Maximum retained qualification defects."
+        },
+        "levi.qualification.maximumEvidenceItems": {
+          "type": "number",
+          "default": 256,
+          "minimum": 1,
+          "description": "Maximum qualification evidence items."
+        },
+        "levi.qualification.maximumArtifacts": {
+          "type": "number",
+          "default": 64,
+          "minimum": 1,
+          "description": "Maximum qualification artifacts."
+        },
+        "levi.qualification.maximumScenarioDurationMs": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 1,
+          "description": "Maximum qualification scenario duration."
+        },
+        "levi.qualification.maximumRunDurationMs": {
+          "type": "number",
+          "default": 120000,
+          "minimum": 1,
+          "description": "Maximum qualification run duration."
+        },
+        "levi.qualification.maximumReloadCycles": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "description": "Maximum modeled reload cycles."
+        },
+        "levi.qualification.maximumRepairAttempts": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "description": "Maximum modeled repair attempts."
+        },
+        "levi.qualification.maximumProviderRetries": {
+          "type": "number",
+          "default": 1,
+          "minimum": 1,
+          "description": "Maximum modeled provider retries."
+        },
+        "levi.qualification.maximumWorkspaceBytes": {
+          "type": "number",
+          "default": 2097152,
+          "minimum": 1,
+          "description": "Maximum deterministic fixture workspace bytes."
+        },
+        "levi.qualification.maximumGeneratedFiles": {
+          "type": "number",
+          "default": 64,
+          "minimum": 1,
+          "description": "Maximum generated files per qualification fixture."
+        },
+        "levi.qualification.maximumManualChecklistItems": {
+          "type": "number",
+          "default": 256,
+          "minimum": 1,
+          "description": "Maximum manual validation checklist items."
+        },
+        "levi.qualification.requireExtensionHostVerification": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require manual Extension Development Host verification for RC qualification."
+        },
+        "levi.qualification.requireLocalModelVerification": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require manual local Ollama verification for RC qualification."
+        },
+        "levi.qualification.requireSourceChangeWorkflow": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require end-to-end source-change workflow qualification."
+        },
+        "levi.qualification.requireValidationWorkflow": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require validation workflow qualification."
+        },
+        "levi.qualification.requireRecoveryWorkflow": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require recovery workflow qualification."
+        },
+        "levi.qualification.requireSecurityBaseline": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require security baseline evidence."
+        },
+        "levi.qualification.requireReliabilityBaseline": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require reliability baseline evidence."
+        },
+        "levi.qualification.requireScalabilityBaseline": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require scalability baseline evidence."
+        },
+        "levi.qualification.requireAccessibilityVerification": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require accessibility verification."
+        },
+        "levi.qualification.requireNoCriticalDefects": {
+          "type": "boolean",
+          "default": true,
+          "description": "Block qualification while critical defects remain open."
+        },
+        "levi.qualification.persistReports": {
+          "type": "boolean",
+          "default": true,
+          "description": "Persist compact release qualification reports."
+        }
       }
     },
     "menus": {
       "explorer/context": [
-        { "command": "levi.analyzeProject", "group": "levi@1" },
-        { "command": "levi.understandCurrentFile", "group": "levi@2" },
-        { "command": "levi.createChangeProposal", "group": "levi@3" }
+        {
+          "command": "levi.analyzeProject",
+          "group": "levi@1"
+        },
+        {
+          "command": "levi.understandCurrentFile",
+          "group": "levi@2"
+        },
+        {
+          "command": "levi.createChangeProposal",
+          "group": "levi@3"
+        }
       ],
       "editor/title": [
-        { "command": "levi.understandCurrentFile", "group": "navigation@9" },
-        { "command": "levi.searchWorkspace", "group": "navigation@10" },
-        { "command": "levi.createChangeProposal", "group": "navigation@11" }
+        {
+          "command": "levi.understandCurrentFile",
+          "group": "navigation@9"
+        },
+        {
+          "command": "levi.searchWorkspace",
+          "group": "navigation@10"
+        },
+        {
+          "command": "levi.createChangeProposal",
+          "group": "navigation@11"
+        }
       ],
       "view/title": [
-        { "command": "levi.refreshWorkspace", "when": "view =~ /^levi\\./", "group": "navigation@1" },
-        { "command": "levi.open", "when": "view == levi.overview", "group": "navigation@0" },
-        { "command": "levi.showEnvironment", "when": "view == levi.environment", "group": "navigation@1" },
-        { "command": "levi.showActiveWorkflow", "when": "view == levi.environment", "group": "navigation@2" },
-        { "command": "levi.showActiveApproval", "when": "view == levi.environment", "group": "navigation@3" },
-        { "command": "levi.showActiveChange", "when": "view == levi.environment", "group": "navigation@4" },
-        { "command": "levi.showContext", "when": "view == levi.environment", "group": "navigation@5" },
-        { "command": "levi.showRuntimeHealth", "when": "view == levi.overview", "group": "navigation@2" },
-        { "command": "levi.showModelHealth", "when": "view == levi.models", "group": "navigation@2" },
-        { "command": "levi.testModelConnection", "when": "view == levi.models", "group": "navigation@3" },
-        { "command": "levi.openAgent", "when": "view == levi.agent", "group": "navigation@1" },
-        { "command": "levi.newConversation", "when": "view == levi.agent", "group": "navigation@2" },
-        { "command": "levi.cancelAgentTurn", "when": "view == levi.agent", "group": "navigation@3" },
-        { "command": "levi.previewChange", "when": "view == levi.changes", "group": "navigation@1" },
-        { "command": "levi.validateChangeProposal", "when": "view == levi.changes", "group": "navigation@2" },
-        { "command": "levi.applyApprovedChange", "when": "view == levi.changes", "group": "navigation@3" },
-        { "command": "levi.showAllowedCommands", "when": "view == levi.changes", "group": "navigation@4" },
-        { "command": "levi.previewDelegation", "when": "view == levi.multiAgent", "group": "navigation@1" },
-        { "command": "levi.startDelegatedTask", "when": "view == levi.multiAgent", "group": "navigation@2" },
-        { "command": "levi.cancelDelegatedTask", "when": "view == levi.multiAgent", "group": "navigation@3" },
-        { "command": "levi.showAgentConflicts", "when": "view == levi.multiAgent", "group": "navigation@4" },
-        { "command": "levi.reconcileAgentResults", "when": "view == levi.multiAgent", "group": "navigation@5" },
-        { "command": "levi.createWorkflow", "when": "view == levi.workflows", "group": "navigation@1" },
-        { "command": "levi.startWorkflow", "when": "view == levi.workflows", "group": "navigation@2" },
-        { "command": "levi.pauseWorkflow", "when": "view == levi.workflows", "group": "navigation@3" },
-        { "command": "levi.resumeWorkflow", "when": "view == levi.workflows", "group": "navigation@4" },
-        { "command": "levi.cancelWorkflow", "when": "view == levi.workflows", "group": "navigation@5" },
-        { "command": "levi.showWorkflowCheckpoints", "when": "view == levi.workflows", "group": "navigation@6" },
-        { "command": "levi.showPerformance", "when": "view == levi.performance", "group": "navigation@1" },
-        { "command": "levi.clearCache", "when": "view == levi.performance", "group": "navigation@2" },
-        { "command": "levi.runBenchmark", "when": "view == levi.performance", "group": "navigation@3" },
-        { "command": "levi.rebuildRepositoryGraph", "when": "view == levi.performance", "group": "navigation@4" },
-        { "command": "levi.showMemoryUsage", "when": "view == levi.performance", "group": "navigation@5" },
-        { "command": "levi.showReliability", "when": "view == levi.reliability", "group": "navigation@1" },
-        { "command": "levi.runReliabilitySmoke", "when": "view == levi.reliability", "group": "navigation@2" },
-        { "command": "levi.runReliabilityStandard", "when": "view == levi.reliability", "group": "navigation@3" },
-        { "command": "levi.runReliabilityReleaseCandidate", "when": "view == levi.reliability", "group": "navigation@4" },
-        { "command": "levi.cancelReliabilityRun", "when": "view == levi.reliability", "group": "navigation@5" },
-        { "command": "levi.showReliabilityBlockers", "when": "view == levi.reliability", "group": "navigation@6" },
-        { "command": "levi.showSecurityAssurance", "when": "view == levi.securityAssurance", "group": "navigation@1" },
-        { "command": "levi.runSecuritySmoke", "when": "view == levi.securityAssurance", "group": "navigation@2" },
-        { "command": "levi.runSecurityStandard", "when": "view == levi.securityAssurance", "group": "navigation@3" },
-        { "command": "levi.runSecurityReleaseCandidate", "when": "view == levi.securityAssurance", "group": "navigation@4" },
-        { "command": "levi.cancelSecurityAudit", "when": "view == levi.securityAssurance", "group": "navigation@5" },
-        { "command": "levi.showSecurityBlockers", "when": "view == levi.securityAssurance", "group": "navigation@6" },
-        { "command": "levi.showThreatModel", "when": "view == levi.securityAssurance", "group": "navigation@7" },
-        { "command": "levi.showPromptInjectionReport", "when": "view == levi.securityAssurance", "group": "navigation@8" },
-        { "command": "levi.showSecretHandlingReport", "when": "view == levi.securityAssurance", "group": "navigation@9" },
-        { "command": "levi.showSupplyChainSecurity", "when": "view == levi.securityAssurance", "group": "navigation@10" },
-        { "command": "levi.showStressScalability", "when": "view == levi.stressScalability", "group": "navigation@1" },
-        { "command": "levi.runStressSmoke", "when": "view == levi.stressScalability", "group": "navigation@2" },
-        { "command": "levi.runStressStandard", "when": "view == levi.stressScalability", "group": "navigation@3" },
-        { "command": "levi.runStressReleaseCandidate", "when": "view == levi.stressScalability", "group": "navigation@4" },
-        { "command": "levi.cancelStressRun", "when": "view == levi.stressScalability", "group": "navigation@5" },
-        { "command": "levi.showStressBlockers", "when": "view == levi.stressScalability", "group": "navigation@6" },
-        { "command": "levi.showStressReport", "when": "view == levi.stressScalability", "group": "navigation@7" },
-        { "command": "levi.showStressMemory", "when": "view == levi.stressScalability", "group": "navigation@8" },
-        { "command": "levi.showStressQueue", "when": "view == levi.stressScalability", "group": "navigation@9" },
-        { "command": "levi.showStressRepositoryMetrics", "when": "view == levi.stressScalability", "group": "navigation@10" },
-        { "command": "levi.showQualification", "when": "view == levi.qualification", "group": "navigation@1" },
-        { "command": "levi.runQualificationSmoke", "when": "view == levi.qualification", "group": "navigation@2" },
-        { "command": "levi.runQualificationStandard", "when": "view == levi.qualification", "group": "navigation@3" },
-        { "command": "levi.runQualificationReleaseCandidate", "when": "view == levi.qualification", "group": "navigation@4" },
-        { "command": "levi.cancelQualificationRun", "when": "view == levi.qualification", "group": "navigation@5" },
-        { "command": "levi.showQualificationBlockers", "when": "view == levi.qualification", "group": "navigation@6" },
-        { "command": "levi.showQualificationManualChecks", "when": "view == levi.qualification", "group": "navigation@7" },
-        { "command": "levi.showQualificationReport", "when": "view == levi.qualification", "group": "navigation@8" },
-        { "command": "levi.showExtensionHostQualification", "when": "view == levi.qualification", "group": "navigation@9" },
-        { "command": "levi.showLocalOllamaQualification", "when": "view == levi.qualification", "group": "navigation@10" },
-        { "command": "levi.cancelOperation", "when": "view == levi.operations", "group": "navigation@2" },
-        { "command": "levi.respondToApproval", "when": "view == levi.approvals", "group": "navigation@2" }
+        {
+          "command": "levi.refreshWorkspace",
+          "when": "view =~ /^levi\\./",
+          "group": "navigation@1"
+        },
+        {
+          "command": "levi.open",
+          "when": "view == levi.overview",
+          "group": "navigation@0"
+        },
+        {
+          "command": "levi.showEnvironment",
+          "when": "view == levi.environment",
+          "group": "navigation@1"
+        },
+        {
+          "command": "levi.showActiveWorkflow",
+          "when": "view == levi.environment",
+          "group": "navigation@2"
+        },
+        {
+          "command": "levi.showActiveApproval",
+          "when": "view == levi.environment",
+          "group": "navigation@3"
+        },
+        {
+          "command": "levi.showActiveChange",
+          "when": "view == levi.environment",
+          "group": "navigation@4"
+        },
+        {
+          "command": "levi.showContext",
+          "when": "view == levi.environment",
+          "group": "navigation@5"
+        },
+        {
+          "command": "levi.showRuntimeHealth",
+          "when": "view == levi.overview",
+          "group": "navigation@2"
+        },
+        {
+          "command": "levi.showModelHealth",
+          "when": "view == levi.models",
+          "group": "navigation@2"
+        },
+        {
+          "command": "levi.testModelConnection",
+          "when": "view == levi.models",
+          "group": "navigation@3"
+        },
+        {
+          "command": "levi.openAgent",
+          "when": "view == levi.agent",
+          "group": "navigation@1"
+        },
+        {
+          "command": "levi.newConversation",
+          "when": "view == levi.agent",
+          "group": "navigation@2"
+        },
+        {
+          "command": "levi.cancelAgentTurn",
+          "when": "view == levi.agent",
+          "group": "navigation@3"
+        },
+        {
+          "command": "levi.previewChange",
+          "when": "view == levi.changes",
+          "group": "navigation@1"
+        },
+        {
+          "command": "levi.validateChangeProposal",
+          "when": "view == levi.changes",
+          "group": "navigation@2"
+        },
+        {
+          "command": "levi.applyApprovedChange",
+          "when": "view == levi.changes",
+          "group": "navigation@3"
+        },
+        {
+          "command": "levi.showAllowedCommands",
+          "when": "view == levi.changes",
+          "group": "navigation@4"
+        },
+        {
+          "command": "levi.previewDelegation",
+          "when": "view == levi.multiAgent",
+          "group": "navigation@1"
+        },
+        {
+          "command": "levi.startDelegatedTask",
+          "when": "view == levi.multiAgent",
+          "group": "navigation@2"
+        },
+        {
+          "command": "levi.cancelDelegatedTask",
+          "when": "view == levi.multiAgent",
+          "group": "navigation@3"
+        },
+        {
+          "command": "levi.showAgentConflicts",
+          "when": "view == levi.multiAgent",
+          "group": "navigation@4"
+        },
+        {
+          "command": "levi.reconcileAgentResults",
+          "when": "view == levi.multiAgent",
+          "group": "navigation@5"
+        },
+        {
+          "command": "levi.createWorkflow",
+          "when": "view == levi.workflows",
+          "group": "navigation@1"
+        },
+        {
+          "command": "levi.startWorkflow",
+          "when": "view == levi.workflows",
+          "group": "navigation@2"
+        },
+        {
+          "command": "levi.pauseWorkflow",
+          "when": "view == levi.workflows",
+          "group": "navigation@3"
+        },
+        {
+          "command": "levi.resumeWorkflow",
+          "when": "view == levi.workflows",
+          "group": "navigation@4"
+        },
+        {
+          "command": "levi.cancelWorkflow",
+          "when": "view == levi.workflows",
+          "group": "navigation@5"
+        },
+        {
+          "command": "levi.showWorkflowCheckpoints",
+          "when": "view == levi.workflows",
+          "group": "navigation@6"
+        },
+        {
+          "command": "levi.showPerformance",
+          "when": "view == levi.performance",
+          "group": "navigation@1"
+        },
+        {
+          "command": "levi.clearCache",
+          "when": "view == levi.performance",
+          "group": "navigation@2"
+        },
+        {
+          "command": "levi.runBenchmark",
+          "when": "view == levi.performance",
+          "group": "navigation@3"
+        },
+        {
+          "command": "levi.rebuildRepositoryGraph",
+          "when": "view == levi.performance",
+          "group": "navigation@4"
+        },
+        {
+          "command": "levi.showMemoryUsage",
+          "when": "view == levi.performance",
+          "group": "navigation@5"
+        },
+        {
+          "command": "levi.showReliability",
+          "when": "view == levi.reliability",
+          "group": "navigation@1"
+        },
+        {
+          "command": "levi.runReliabilitySmoke",
+          "when": "view == levi.reliability",
+          "group": "navigation@2"
+        },
+        {
+          "command": "levi.runReliabilityStandard",
+          "when": "view == levi.reliability",
+          "group": "navigation@3"
+        },
+        {
+          "command": "levi.runReliabilityReleaseCandidate",
+          "when": "view == levi.reliability",
+          "group": "navigation@4"
+        },
+        {
+          "command": "levi.cancelReliabilityRun",
+          "when": "view == levi.reliability",
+          "group": "navigation@5"
+        },
+        {
+          "command": "levi.showReliabilityBlockers",
+          "when": "view == levi.reliability",
+          "group": "navigation@6"
+        },
+        {
+          "command": "levi.showSecurityAssurance",
+          "when": "view == levi.securityAssurance",
+          "group": "navigation@1"
+        },
+        {
+          "command": "levi.runSecuritySmoke",
+          "when": "view == levi.securityAssurance",
+          "group": "navigation@2"
+        },
+        {
+          "command": "levi.runSecurityStandard",
+          "when": "view == levi.securityAssurance",
+          "group": "navigation@3"
+        },
+        {
+          "command": "levi.runSecurityReleaseCandidate",
+          "when": "view == levi.securityAssurance",
+          "group": "navigation@4"
+        },
+        {
+          "command": "levi.cancelSecurityAudit",
+          "when": "view == levi.securityAssurance",
+          "group": "navigation@5"
+        },
+        {
+          "command": "levi.showSecurityBlockers",
+          "when": "view == levi.securityAssurance",
+          "group": "navigation@6"
+        },
+        {
+          "command": "levi.showThreatModel",
+          "when": "view == levi.securityAssurance",
+          "group": "navigation@7"
+        },
+        {
+          "command": "levi.showPromptInjectionReport",
+          "when": "view == levi.securityAssurance",
+          "group": "navigation@8"
+        },
+        {
+          "command": "levi.showSecretHandlingReport",
+          "when": "view == levi.securityAssurance",
+          "group": "navigation@9"
+        },
+        {
+          "command": "levi.showSupplyChainSecurity",
+          "when": "view == levi.securityAssurance",
+          "group": "navigation@10"
+        },
+        {
+          "command": "levi.showStressScalability",
+          "when": "view == levi.stressScalability",
+          "group": "navigation@1"
+        },
+        {
+          "command": "levi.runStressSmoke",
+          "when": "view == levi.stressScalability",
+          "group": "navigation@2"
+        },
+        {
+          "command": "levi.runStressStandard",
+          "when": "view == levi.stressScalability",
+          "group": "navigation@3"
+        },
+        {
+          "command": "levi.runStressReleaseCandidate",
+          "when": "view == levi.stressScalability",
+          "group": "navigation@4"
+        },
+        {
+          "command": "levi.cancelStressRun",
+          "when": "view == levi.stressScalability",
+          "group": "navigation@5"
+        },
+        {
+          "command": "levi.showStressBlockers",
+          "when": "view == levi.stressScalability",
+          "group": "navigation@6"
+        },
+        {
+          "command": "levi.showStressReport",
+          "when": "view == levi.stressScalability",
+          "group": "navigation@7"
+        },
+        {
+          "command": "levi.showStressMemory",
+          "when": "view == levi.stressScalability",
+          "group": "navigation@8"
+        },
+        {
+          "command": "levi.showStressQueue",
+          "when": "view == levi.stressScalability",
+          "group": "navigation@9"
+        },
+        {
+          "command": "levi.showStressRepositoryMetrics",
+          "when": "view == levi.stressScalability",
+          "group": "navigation@10"
+        },
+        {
+          "command": "levi.showQualification",
+          "when": "view == levi.qualification",
+          "group": "navigation@1"
+        },
+        {
+          "command": "levi.runQualificationSmoke",
+          "when": "view == levi.qualification",
+          "group": "navigation@2"
+        },
+        {
+          "command": "levi.runQualificationStandard",
+          "when": "view == levi.qualification",
+          "group": "navigation@3"
+        },
+        {
+          "command": "levi.runQualificationReleaseCandidate",
+          "when": "view == levi.qualification",
+          "group": "navigation@4"
+        },
+        {
+          "command": "levi.cancelQualificationRun",
+          "when": "view == levi.qualification",
+          "group": "navigation@5"
+        },
+        {
+          "command": "levi.showQualificationBlockers",
+          "when": "view == levi.qualification",
+          "group": "navigation@6"
+        },
+        {
+          "command": "levi.showQualificationManualChecks",
+          "when": "view == levi.qualification",
+          "group": "navigation@7"
+        },
+        {
+          "command": "levi.showQualificationReport",
+          "when": "view == levi.qualification",
+          "group": "navigation@8"
+        },
+        {
+          "command": "levi.showExtensionHostQualification",
+          "when": "view == levi.qualification",
+          "group": "navigation@9"
+        },
+        {
+          "command": "levi.showLocalOllamaQualification",
+          "when": "view == levi.qualification",
+          "group": "navigation@10"
+        },
+        {
+          "command": "levi.cancelOperation",
+          "when": "view == levi.operations",
+          "group": "navigation@2"
+        },
+        {
+          "command": "levi.respondToApproval",
+          "when": "view == levi.approvals",
+          "group": "navigation@2"
+        }
       ]
     }
   }
