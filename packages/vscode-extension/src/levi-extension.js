@@ -1,10 +1,11 @@
 const path = require("node:path");
-const { LeviApplicationRuntime } = require("../../../src/levi-application-runtime");
-const { InMemoryCredentialResolver } = require("../../../src/credential-resolver");
-const { ModelCapabilityTypes, ModelProviderGateway, PrivacyClassifications, ProviderTypes, RoutingStrategies } = require("../../../src/model-provider-gateway");
-const { OllamaProviderAdapter } = require("../../../src/providers/ollama-provider-adapter");
-const { OpenAICompatibleProviderAdapter } = require("../../../src/providers/openai-compatible-provider-adapter");
-const { NodeHttpTransport } = require("../../../src/transports/http-transport");
+const { requireRuntime } = require("./runtime-loader");
+const { LeviApplicationRuntime } = requireRuntime("levi-application-runtime.js");
+const { InMemoryCredentialResolver } = requireRuntime("credential-resolver.js");
+const { ModelCapabilityTypes, ModelProviderGateway, PrivacyClassifications, ProviderStates, ProviderTypes, RoutingStrategies } = requireRuntime("model-provider-gateway.js");
+const { OllamaProviderAdapter } = requireRuntime("providers/ollama-provider-adapter.js");
+const { OpenAICompatibleProviderAdapter } = requireRuntime("providers/openai-compatible-provider-adapter.js");
+const { NodeHttpTransport } = requireRuntime("transports/http-transport.js");
 const { EXTENSION_COMMANDS, EXTENSION_EVENTS, TERMINAL_RUNTIME_EVENTS, UI_BOUNDS } = require("./constants");
 const { presentRuntimeError } = require("./errors");
 const { renderDocument } = require("./presentation");
