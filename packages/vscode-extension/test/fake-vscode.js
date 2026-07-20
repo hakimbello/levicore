@@ -197,10 +197,14 @@ function createFakeVSCode(options = {}) {
         return { document };
       },
       async showInformationMessage(message, ...items) {
+        vscode.__infoMessages = vscode.__infoMessages || [];
+        vscode.__infoMessages.push(message);
         vscode.__lastInfo = message;
         return options.nextMessageChoice || items[0];
       },
       async showWarningMessage(message, ...items) {
+        vscode.__warningMessages = vscode.__warningMessages || [];
+        vscode.__warningMessages.push(message);
         vscode.__lastWarning = message;
         return options.nextWarningChoice || findChoice(items, "Approve") || items[0];
       },

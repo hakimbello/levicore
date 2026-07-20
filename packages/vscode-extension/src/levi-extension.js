@@ -29,6 +29,7 @@ class LeviVSCodeExtension {
     this.workspaceMutationAdapter = null;
     this.runtime = null;
     this.modelGateway = null;
+    this.startupGuidanceDelivered = false;
     this.agent = null;
     this.agentSubscriptionId = null;
     this.agentPanel = null;
@@ -238,6 +239,7 @@ class LeviVSCodeExtension {
     if (this.config().autoAnalyzeWorkspace !== false && this.runtime && ["READY", "DEGRADED"].includes(this.runtime.getState().state)) {
       await this.openWorkspace({ analyze: true });
     }
+    await this.presentFirstRunGuidance();
     this.refreshViewsNow();
     return this.exports();
   }
@@ -322,6 +324,39 @@ class LeviVSCodeExtension {
     }
     this.outputLine(`Runtime initialized: ${this.runtime.getState().state}.`);
     return result;
+  }
+
+  async presentFirstRunGuidance() {
+    const experience = this.config().experience || {};
+    if (experience.autoOpenOnFirstRun !== false && this.productExperience && !this.productExperience.onboarding.completed) {
+      await this.openOnboarding();
+    }
+    if (!this.runtime || !this.modelGateway || this.startupGuidanceDelivered) return;
+    if (this.config().ui && this.config().ui.showNotifications === false) return;
+
+    await this.runtime.executeCommand("model.health", { check: true }).catch(() => null);
+    const summary = this.modelGateway.getGatewayHealth();
+    const ollamaConfigured = this.config().ollama && this.config().ollama.enabled !== false;
+    const ollamaProvider = this.modelGateway.listProviders().find((entry) => entry.id === "ollama-local" || /ollama/i.test(String(entry.id || entry.name || "")));
+    const ollamaUnreachable = ollamaConfigured && ollamaProvider && [
+      ProviderStates.FAILED,
+      ProviderStates.UNAVAILABLE,
+      ProviderStates.AUTHENTICATION_FAILED,
+    ].includes(ollamaProvider.state);
+
+    if (ollamaUnreachable) {
+      this.startupGuidanceDelivered = true;
+      await this.vscode.window.showWarningMessage(
+        "Levi could not connect to Ollama. Install Ollama from ollama.com if needed, start the Ollama app, then pull or select a supported model (for example qwen2.5-coder:7b). No remote AI service was used. Levi did not change any files or run commands.",
+        "Open Setup Guide",
+      ).then((choice) => choice === "Open Setup Guide" ? this.openOnboarding() : null);
+      return;
+    }
+
+    if (summary.availableModels > 0) {
+      this.startupGuidanceDelivered = true;
+      await this.vscode.window.showInformationMessage("Levi is ready. Open the composer to start working with your local AI model.");
+    }
   }
 
   async openWorkspace(options = {}) {
@@ -533,7 +568,13 @@ class LeviVSCodeExtension {
     const result = await this.runtime.executeCommand("model.models", { availableOnly: false });
     const models = result.data && result.data.models || [];
     if (!models.length) {
-      await this.vscode.window.showInformationMessage("No Levi model is configured.");
+      const choice = await this.vscode.window.showInformationMessage(
+        "Levi needs a local AI model. Install Ollama, run `ollama pull <model>`, then set `levi.ollama.defaultModel` or choose **Select AI Model**.",
+        "Open Setup Guide",
+        "Select AI Model",
+      );
+      if (choice === "Open Setup Guide") await this.openOnboarding();
+      else if (choice === "Select AI Model") await this.showModelHealth(true);
       return null;
     }
     const selected = await this.vscode.window.showQuickPick(models.map((model) => ({
@@ -541,7 +582,7 @@ class LeviVSCodeExtension {
       description: model.providerId,
       detail: (model.capabilities || []).join(", "),
       model,
-    })), { placeHolder: "Select default Levi model" });
+    })), { placeHolder: "Select default AI model" });
     if (!selected) return null;
     this.presentationCache.selectedModel = selected.model;
     this.updateModelStatus();
