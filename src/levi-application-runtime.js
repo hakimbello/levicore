@@ -2538,10 +2538,17 @@ LeviApplicationRuntime.prototype.workspaceToolsCommand = async function workspac
   if (kind === "listProposals") return { status: "AVAILABLE", proposals: engine.listProposals(input.filter || {}) };
   if (kind === "reject") return engine.rejectProposal(input);
   if (kind === "revert") return engine.revertChange(input);
-  if (kind === "validateChange") return engine.validateChange(input, input.options || {});
+  if (kind === "validateChange") {
+    const proposal = engine.getProposal(input.proposalId || input.id);
+    const approval = input.approval || runtimeApprovalForValidationCommand(this, input.approvalRequestId, proposal, input, engine);
+    return engine.validateChange({ ...input, approval }, input.options || {});
+  }
   if (kind === "validationProfiles") return { status: "AVAILABLE", profiles: engine.listValidationProfiles(input.filter || {}) };
   if (kind === "listAllowedCommands") return { status: "AVAILABLE", commands: engine.listAllowedCommands(input.filter || {}) };
-  if (kind === "runCommand") return engine.runCommand(input, input.options || {});
+  if (kind === "runCommand") {
+    const approval = input.approval || runtimeApprovalForDirectCommand(this, input.approvalRequestId, input);
+    return engine.runCommand({ ...input, approval }, input.options || {});
+  }
   if (kind === "cancelCommand") return engine.cancelCommand(input);
   if (kind === "sourceControlStatus") return engine.sourceControlStatus(input);
   if (kind === "sourceControlDiff") return engine.sourceControlDiff(input);
@@ -2915,6 +2922,65 @@ function runtimeApprovalForProposal(runtime, approvalRequestId, proposal) {
     decidedAt: request.resolvedAt || runtime.now(),
     reason: request.decision && request.decision.reason || "Runtime approval request approved.",
   };
+}
+
+function runtimeApprovalForValidationCommand(runtime, approvalRequestId, proposal, input = {}, engine = null) {
+  if (!approvalRequestId) return null;
+  const request = runtime.approvalRequests && runtime.approvalRequests.get(approvalRequestId);
+  if (!request || request.status !== ApprovalStatuses.APPROVED) return null;
+  const requestedAction = request.requestedAction || (request.scope && request.scope.commandId) || null;
+  if (requestedAction && requestedAction !== "validation.run") return null;
+  const nestedCommandIds = resolveValidationProfileCommandIds(engine, input);
+  return {
+    id: request.id,
+    status: "APPROVED",
+    commandIds: ["validation.run"],
+    nestedCommandIds,
+    workspaceId: request.workspaceId || (proposal && proposal.workspace && proposal.workspace.id) || input.workspaceId || null,
+    proposalId: (proposal && proposal.id) || input.proposalId || null,
+    validationRequestId: request.id,
+    expiresAt: request.expiresAt || null,
+    decidedBy: request.decision && request.decision.decidedBy || "runtime-approval",
+    decidedAt: request.resolvedAt || runtime.now(),
+    reason: request.decision && request.decision.reason || "Runtime validation approval request approved.",
+  };
+}
+
+function runtimeApprovalForDirectCommand(runtime, approvalRequestId, input = {}) {
+  if (!approvalRequestId) return null;
+  const request = runtime.approvalRequests && runtime.approvalRequests.get(approvalRequestId);
+  if (!request || request.status !== ApprovalStatuses.APPROVED) return null;
+  const commandId = input.commandId || input.id || (request.scope && request.scope.commandId) || request.requestedAction || null;
+  const requestedAction = request.requestedAction || (request.scope && request.scope.commandId) || null;
+  if (requestedAction && commandId && requestedAction !== commandId && requestedAction !== "command.runValidation") return null;
+  return {
+    id: request.id,
+    status: "APPROVED",
+    commandId,
+    commandIds: commandId ? [commandId] : [],
+    nestedCommandIds: [],
+    workspaceId: request.workspaceId || input.workspaceId || null,
+    proposalId: input.proposalId || null,
+    validationRequestId: request.id,
+    expiresAt: request.expiresAt || null,
+    decidedBy: request.decision && request.decision.decidedBy || "runtime-approval",
+    decidedAt: request.resolvedAt || runtime.now(),
+    reason: request.decision && request.decision.reason || "Runtime command approval request approved.",
+  };
+}
+
+function resolveValidationProfileCommandIds(engine, input = {}) {
+  if (!engine || typeof engine.listValidationProfiles !== "function") return [];
+  const requested = [].concat(input.profileIds || [], input.profiles || [], input.profileId ? [input.profileId] : []);
+  const profiles = engine.listValidationProfiles({});
+  const selected = requested.length
+    ? profiles.filter((profile) => requested.includes(profile.id))
+    : profiles;
+  const commandIds = [];
+  for (const profile of selected) {
+    for (const commandId of profile.commandIds || []) commandIds.push(commandId);
+  }
+  return Array.from(new Set(commandIds.map(String).filter(Boolean)));
 }
 
 function command(id, name, operationType, requiredCapabilities, handler, extra = {}) {
