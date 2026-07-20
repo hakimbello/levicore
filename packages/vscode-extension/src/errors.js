@@ -2,7 +2,10 @@ const { safeText } = require("./safe-json");
 
 function presentRuntimeError(vscode, output, error, options = {}) {
   const normalized = normalizeError(error);
-  const message = `${normalized.userMessage || normalized.message} (${normalized.category || "UNKNOWN"})`;
+  const showDiagnostics = options.diagnostics === true;
+  const message = showDiagnostics
+    ? `${normalized.userMessage || normalized.message} (${normalized.category || "UNKNOWN"})`
+    : (normalized.userMessage || normalized.message);
   if (output && typeof output.appendLine === "function") {
     output.appendLine(`[error] ${safeText(normalized, { diagnostics: options.diagnostics, maximumSize: 2000 })}`);
   }
