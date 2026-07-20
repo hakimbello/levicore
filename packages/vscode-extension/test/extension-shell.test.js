@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { LeviApplicationRuntime } = require("../../../src/levi-application-runtime");
+const { LeviApplicationRuntime } = require("../src/runtime-loader").requireRuntime("levi-application-runtime.js");
 const { createLeviExtension } = require("../src/levi-extension");
 const { EXTENSION_COMMANDS, EXTENSION_EVENTS } = require("../src/constants");
 const { FakeUri, createFakeContext, createFakeVSCode } = require("./fake-vscode");
