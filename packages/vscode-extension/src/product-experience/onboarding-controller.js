@@ -11,12 +11,12 @@ function presentOnboarding(state = {}, config = {}) {
     steps: [
       step("Workspace", Boolean(state.workspace && state.workspace.id), state.workspace ? "Workspace is open" : "Open a workspace"),
       step("Workspace Trust", state.workspace && state.workspace.trusted !== false, state.workspace && state.workspace.trusted === false ? "Trust is required for protected actions" : "Trust boundary is visible"),
-      step("Local Model", hasLocalProvider, hasLocalProvider ? "Local provider configured" : "Ollama can be configured later"),
-      step("Model Selection", hasModels, hasModels ? "A model is available" : "No cloud provider is required"),
+      step("Local AI Model", hasLocalProvider, hasLocalProvider ? "Local Ollama configured" : "Install Ollama and pull a model"),
+      step("Model Selection", hasModels, hasModels ? "An AI model is available" : "Set `levi.ollama.defaultModel` after pulling a model"),
       step("Git", Boolean(state.sourceControl && state.sourceControl.available), state.sourceControl && state.sourceControl.available ? "Git status available" : "Git actions are unavailable"),
       step("Safe Check", true, "Read-only runtime health is available"),
     ],
-    actions: ["Select Model", "Open Setup Guide", "Configure Endpoint", "Skip"],
+    actions: ["Select AI Model", "Open Setup Guide", "Test Ollama Connection", "Skip"],
     noCloudRequired: true,
   });
 }
