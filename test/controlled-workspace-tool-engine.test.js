@@ -127,6 +127,242 @@ test("agent registry includes controlled workspace tools through runtime command
   assert.ok(tools.some((tool) => tool.id === "change.applyApproved" && tool.approvalSensitive === true));
 });
 
+test("validation.run forwards scoped nested command approval and rejects unsafe approval reuse", async () => {
+  const executions = [];
+  const commandAdapter = {
+    validateCommand() { return { valid: true }; },
+    executeCommand(request) {
+      executions.push(request.commandId);
+      return { status: "SUCCEEDED", exitCode: 0, stdout: `ok ${request.commandId}`, stderr: "" };
+    },
+    cancelCommand(id) { return { status: "CANCELLED", id }; },
+    getEnvironmentInfo() { return { status: "AVAILABLE" }; },
+  };
+  const workspaceAdapter = new MemoryWorkspaceMutationAdapter({ "src/app.js": "const value = 1;\n" });
+  const engine = new ControlledWorkspaceToolEngine({
+    workspaceAdapter,
+    commandAdapter,
+    configuration: {
+      allowSourceChanges: true,
+      allowCommandExecution: true,
+      requireApprovalForCommands: true,
+      requireCheckpointBeforeMutation: false,
+    },
+    validationProfiles: [{ id: "default", name: "Default", commandIds: ["validation.test"] }],
+  });
+
+  const proposal = await engine.createProposal({
+    workspace: { id: "workspace-a" },
+    title: "Update value",
+    fileChanges: [{ operation: FileOperations.UPDATE, path: "src/app.js", proposedContent: "const value = 2;\n" }],
+  });
+  engine.bindApproval({
+    proposalId: proposal.id,
+    proposalHash: proposal.proposalHash,
+    workspaceRevision: proposal.workspaceRevision,
+    status: "APPROVED",
+  });
+  await engine.applyPatch({ proposalId: proposal.id });
+  assert.equal(executions.length, 0);
+
+  await assert.rejects(
+    () => engine.validateChange({ proposalId: proposal.id, profileIds: ["default"] }),
+    /requires explicit approval/
+  );
+  assert.equal(executions.length, 0);
+
+  await assert.rejects(
+    () => engine.validateChange({
+      proposalId: proposal.id,
+      profileIds: ["default"],
+      approval: { id: "cmd-rejected", status: "REJECTED", commandIds: ["validation.run"], nestedCommandIds: ["validation.test"], workspaceId: "workspace-a", proposalId: proposal.id },
+    }),
+    /approval was rejected/
+  );
+  assert.equal(executions.length, 0);
+
+  await assert.rejects(
+    () => engine.validateChange({
+      proposalId: proposal.id,
+      profileIds: ["default"],
+      approval: { id: "cmd-mismatch", status: "APPROVED", commandIds: ["validation.lint"], workspaceId: "workspace-a", proposalId: proposal.id },
+    }),
+    /not authorized/
+  );
+  assert.equal(executions.length, 0);
+
+  await assert.rejects(
+    () => engine.validateChange({
+      proposalId: proposal.id,
+      profileIds: ["default"],
+      workspaceId: "workspace-a",
+      approval: { id: "cmd-workspace", status: "APPROVED", commandIds: ["validation.run"], nestedCommandIds: ["validation.test"], workspaceId: "workspace-b", proposalId: proposal.id },
+    }),
+    /workspace does not match/
+  );
+  assert.equal(executions.length, 0);
+
+  const validationApproval = {
+    id: "cmd-valid-nested",
+    status: "APPROVED",
+    commandIds: ["validation.run"],
+    nestedCommandIds: ["validation.test"],
+    workspaceId: "workspace-a",
+    proposalId: proposal.id,
+  };
+  const nested = await engine.validateChange({
+    proposalId: proposal.id,
+    profileIds: ["default"],
+    workspaceId: "workspace-a",
+    approval: validationApproval,
+  });
+  assert.equal(nested.status, "SUCCEEDED");
+  assert.deepEqual(executions, ["validation.test"]);
+
+  await assert.rejects(
+    () => engine.validateChange({
+      proposalId: proposal.id,
+      profileIds: ["default"],
+      workspaceId: "workspace-a",
+      approval: validationApproval,
+    }),
+    /already been consumed/
+  );
+  assert.deepEqual(executions, ["validation.test"]);
+
+  await assert.rejects(
+    () => engine.runCommand({
+      commandId: "validation.test",
+      proposalId: proposal.id,
+      workspaceId: "workspace-a",
+      approval: {
+        id: "cmd-other",
+        status: "APPROVED",
+        commandIds: ["validation.lint"],
+        workspaceId: "workspace-a",
+        proposalId: proposal.id,
+      },
+    }),
+    /not authorized/
+  );
+
+  const direct = await engine.runCommand({
+    commandId: "validation.test",
+    proposalId: proposal.id,
+    workspaceId: "workspace-a",
+    approval: {
+      id: "cmd-direct",
+      status: "APPROVED",
+      commandIds: ["validation.test"],
+      workspaceId: "workspace-a",
+      proposalId: proposal.id,
+    },
+  });
+  assert.equal(direct.status, "SUCCEEDED");
+  assert.deepEqual(executions, ["validation.test", "validation.test"]);
+
+  await assert.rejects(
+    () => engine.runCommand({
+      commandId: "validation.package",
+      proposalId: proposal.id,
+      workspaceId: "workspace-a",
+      approval: {
+        id: "cmd-direct",
+        status: "APPROVED",
+        commandIds: ["validation.test"],
+        workspaceId: "workspace-a",
+        proposalId: proposal.id,
+      },
+    }),
+    /not authorized|already been consumed/
+  );
+});
+
+test("runtime validation.run requests approval then executes nested validation.test with bound approval", async () => {
+  const executions = [];
+  const commandAdapter = {
+    validateCommand() { return { valid: true }; },
+    executeCommand(request) {
+      executions.push(request.commandId);
+      return { status: "SUCCEEDED", exitCode: 0, stdout: "ok 1\n# tests 1\n# pass 1\n", stderr: "" };
+    },
+    cancelCommand(id) { return { status: "CANCELLED", id }; },
+    getEnvironmentInfo() { return { status: "AVAILABLE" }; },
+  };
+  const adapter = new MemoryWorkspaceMutationAdapter({ "src/app.js": "one\n" });
+  const runtime = new LeviApplicationRuntime({
+    enableWorkspaceTools: true,
+    workspaceMutationAdapter: adapter,
+    commandExecutionAdapter: commandAdapter,
+    workspaceToolConfiguration: {
+      allowSourceChanges: true,
+      allowCommandExecution: true,
+      requireApprovalForCommands: true,
+      requireCheckpointBeforeMutation: false,
+      validationProfiles: [{ id: "default", name: "Default", commandIds: ["validation.test"] }],
+    },
+  });
+  await runtime.initialize({ skipChecks: true });
+
+  const created = await runtime.executeCommand("change.createProposal", {
+    workspace: { id: "workspace-runtime" },
+    fileChanges: [{ operation: "UPDATE", path: "src/app.js", proposedContent: "two\n" }],
+  });
+  const pendingApply = await runtime.executeCommand("change.apply", { proposalId: created.data.id });
+  assert.equal(pendingApply.data.status, "WAITING_FOR_APPROVAL");
+  await runtime.executeCommand("approval.respond", {
+    approvalRequestId: pendingApply.data.approvalRequest.id,
+    decision: ApprovalStatuses.APPROVED,
+  });
+  const applied = await runtime.executeCommand("change.apply", {
+    proposalId: created.data.id,
+    approvalRequestId: pendingApply.data.approvalRequest.id,
+  });
+  assert.equal(applied.data.state, "VERIFIED");
+  assert.equal(executions.length, 0);
+
+  const pendingValidation = await runtime.executeCommand("validation.run", {
+    proposalId: created.data.id,
+    profileIds: ["default"],
+  });
+  assert.equal(pendingValidation.data.status, "WAITING_FOR_APPROVAL");
+  assert.equal(executions.length, 0);
+
+  await runtime.executeCommand("approval.respond", {
+    approvalRequestId: pendingValidation.data.approvalRequest.id,
+    decision: ApprovalStatuses.APPROVED,
+    decidedBy: "tester",
+  });
+  const validated = await runtime.executeCommand("validation.run", {
+    proposalId: created.data.id,
+    profileIds: ["default"],
+    approvalRequestId: pendingValidation.data.approvalRequest.id,
+  });
+  assert.equal(validated.success, true);
+  assert.equal(validated.data.status, "SUCCEEDED");
+  assert.deepEqual(executions, ["validation.test"]);
+
+  const directPending = await runtime.executeCommand("command.runValidation", {
+    commandId: "validation.test",
+    proposalId: created.data.id,
+    workspaceId: "workspace-runtime",
+  });
+  assert.equal(directPending.data.status, "WAITING_FOR_APPROVAL");
+  await runtime.executeCommand("approval.respond", {
+    approvalRequestId: directPending.data.approvalRequest.id,
+    decision: ApprovalStatuses.APPROVED,
+  });
+  const direct = await runtime.executeCommand("command.runValidation", {
+    commandId: "validation.test",
+    proposalId: created.data.id,
+    workspaceId: "workspace-runtime",
+    approvalRequestId: directPending.data.approvalRequest.id,
+  });
+  assert.equal(direct.success, true);
+  assert.equal(direct.data.status, "SUCCEEDED");
+  assert.deepEqual(executions, ["validation.test", "validation.test"]);
+});
+
 class MemoryWorkspaceMutationAdapter {
   constructor(files = {}) {
     this.files = new Map(Object.entries(files));

@@ -152,6 +152,7 @@ class ControlledWorkspaceToolEngine extends EventEmitter {
     this.validationProfiles = new Map();
     this.proposals = new Map();
     this.applications = new Map();
+    this.consumedCommandApprovals = new Set();
     this.events = [];
     this.stats = {
       proposalsCreated: 0,
@@ -503,9 +504,26 @@ class ControlledWorkspaceToolEngine extends EventEmitter {
     const proposal = this.requireProposal(input.proposalId || input.id);
     const profileIds = safeArray(input.profileIds || input.profiles || (input.profileId ? [input.profileId] : []));
     const profiles = profileIds.length ? profileIds.map((id) => this.requireValidationProfile(id)) : Array.from(this.validationProfiles.values());
+    const workspaceId = (proposal.workspace && proposal.workspace.id) || input.workspaceId || null;
+    const parentApproval = input.approval || options.approval || null;
     const results = [];
     for (const profile of profiles) {
-      for (const commandId of profile.commandIds) results.push(await this.runCommand({ commandId, proposalId: proposal.id, arguments: input.arguments || [] }, options));
+      for (const commandId of profile.commandIds) {
+        const nestedApproval = this.createNestedValidationCommandApproval(parentApproval, {
+          commandId,
+          proposalId: proposal.id,
+          workspaceId,
+          parentCommandId: "validation.run",
+        });
+        results.push(await this.runCommand({
+          commandId,
+          proposalId: proposal.id,
+          workspaceId,
+          arguments: input.arguments || [],
+          cwd: input.cwd || null,
+          approval: nestedApproval,
+        }, options));
+      }
     }
     const passed = results.length > 0 && results.every((result) => result.status === "SUCCEEDED");
     const validation = {
@@ -530,7 +548,15 @@ class ControlledWorkspaceToolEngine extends EventEmitter {
     if (this.configuration.allowCommandExecution !== true && ![CommandClasses.READ_ONLY, CommandClasses.GIT_READ].includes(definition.commandClass)) throw new Error("Command execution is disabled by configuration.");
     if (!this.commandAdapter) throw new Error("CommandExecutionAdapter is unavailable.");
     if (containsShellControl(input.arguments || [])) throw new Error("Command arguments contain shell control characters.");
-    if (definition.requiresApproval || this.configuration.requireApprovalForCommands) this.validateCommandApproval(definition, input.approval || options.approval);
+    const approval = input.approval || options.approval || null;
+    const workspaceId = input.workspaceId || (input.workspace && input.workspace.id) || null;
+    if (definition.requiresApproval || this.configuration.requireApprovalForCommands) {
+      this.validateCommandApproval(definition, approval, {
+        commandId,
+        workspaceId,
+        proposalId: input.proposalId || null,
+      });
+    }
     const request = {
       id: this.idAdapter.next("command-request", { commandId }),
       commandId,
@@ -541,6 +567,7 @@ class ControlledWorkspaceToolEngine extends EventEmitter {
       environment: clone(input.environment || {}),
       timeoutMs: Math.min(Number(input.timeoutMs || definition.timeoutMs || this.bounds.maximumCommandDurationMs), this.bounds.maximumCommandDurationMs),
       proposalId: input.proposalId || null,
+      workspaceId,
       createdAt: this.now(),
     };
     const adapterValidation = await maybe(this.commandAdapter.validateCommand(request, { definition }));
@@ -557,6 +584,9 @@ class ControlledWorkspaceToolEngine extends EventEmitter {
       completedAt: raw && raw.completedAt || this.now(),
       metadata: clone(raw && raw.metadata || {}),
     };
+    if ((definition.requiresApproval || this.configuration.requireApprovalForCommands) && approval) {
+      this.consumeCommandApproval(approval, definition.id);
+    }
     this.stats.commandsExecuted += 1;
     return clone(result);
   }
@@ -746,9 +776,127 @@ class ControlledWorkspaceToolEngine extends EventEmitter {
     return true;
   }
 
-  validateCommandApproval(definition, approval) {
-    if (!approval || String(approval.status || "").toUpperCase() !== "APPROVED") throw new Error(`Command ${definition.id} requires explicit approval.`);
+  createNestedValidationCommandApproval(parentApproval, context = {}) {
+    const commandId = requiredString(context.commandId, "Nested validation command id is required.");
+    if (!parentApproval) {
+      this.stats.approvalFailures += 1;
+      throw new Error(`Command ${commandId} requires explicit approval.`);
+    }
+    const normalized = normalizeCommandApproval(parentApproval);
+    if (normalized.status === "REJECTED") {
+      this.stats.approvalFailures += 1;
+      throw new Error(`Command ${commandId} approval was rejected.`);
+    }
+    if (normalized.status !== "APPROVED") {
+      this.stats.approvalFailures += 1;
+      throw new Error(`Command ${commandId} requires explicit approval.`);
+    }
+    if (normalized.consumed === true || this.isCommandApprovalConsumed(normalized, commandId)) {
+      this.stats.approvalFailures += 1;
+      throw new Error(`Command ${commandId} approval has already been consumed.`);
+    }
+    if (isApprovalExpired(normalized, this.now())) {
+      this.stats.approvalFailures += 1;
+      throw new Error(`Command ${commandId} approval has expired.`);
+    }
+    const authorizedCommandIds = uniqueStrings([
+      ...normalized.commandIds,
+      ...normalized.nestedCommandIds,
+    ]);
+    const allowsNested = authorizedCommandIds.length === 0
+      || authorizedCommandIds.includes("validation.run")
+      || authorizedCommandIds.includes(commandId);
+    if (!allowsNested) {
+      this.stats.approvalFailures += 1;
+      throw new Error(`Command ${commandId} is not authorized by the provided approval.`);
+    }
+    if (normalized.workspaceId && context.workspaceId && normalized.workspaceId !== context.workspaceId) {
+      this.stats.approvalFailures += 1;
+      throw new Error(`Command ${commandId} approval workspace does not match.`);
+    }
+    if (normalized.proposalId && context.proposalId && normalized.proposalId !== context.proposalId) {
+      this.stats.approvalFailures += 1;
+      throw new Error(`Command ${commandId} approval proposal does not match.`);
+    }
+    return {
+      id: normalized.id,
+      status: "APPROVED",
+      commandId,
+      commandIds: [commandId],
+      nestedCommandIds: [],
+      workspaceId: context.workspaceId || normalized.workspaceId || null,
+      proposalId: context.proposalId || normalized.proposalId || null,
+      validationRequestId: normalized.validationRequestId || normalized.id || null,
+      expiresAt: normalized.expiresAt,
+      decidedBy: normalized.decidedBy,
+      decidedAt: normalized.decidedAt || this.now(),
+      parentCommandId: context.parentCommandId || "validation.run",
+      derivedFrom: normalized.id || normalized.validationRequestId || null,
+      reason: normalized.reason,
+      consumed: false,
+    };
+  }
+
+  validateCommandApproval(definition, approval, context = {}) {
+    if (!approval) {
+      this.stats.approvalFailures += 1;
+      throw new Error(`Command ${definition.id} requires explicit approval.`);
+    }
+    const normalized = normalizeCommandApproval(approval);
+    if (normalized.status === "REJECTED") {
+      this.stats.approvalFailures += 1;
+      throw new Error(`Command ${definition.id} approval was rejected.`);
+    }
+    if (normalized.status !== "APPROVED") {
+      this.stats.approvalFailures += 1;
+      throw new Error(`Command ${definition.id} requires explicit approval.`);
+    }
+    if (normalized.consumed === true || this.isCommandApprovalConsumed(normalized, definition.id)) {
+      this.stats.approvalFailures += 1;
+      throw new Error(`Command ${definition.id} approval has already been consumed.`);
+    }
+    if (isApprovalExpired(normalized, this.now())) {
+      this.stats.approvalFailures += 1;
+      throw new Error(`Command ${definition.id} approval has expired.`);
+    }
+    const authorizedCommandIds = uniqueStrings([
+      ...normalized.commandIds,
+      ...normalized.nestedCommandIds,
+    ]);
+    if (authorizedCommandIds.length > 0 && !authorizedCommandIds.includes(definition.id)) {
+      this.stats.approvalFailures += 1;
+      throw new Error(`Command ${definition.id} is not authorized by the provided approval.`);
+    }
+    const workspaceId = context.workspaceId || null;
+    if (normalized.workspaceId && workspaceId && normalized.workspaceId !== workspaceId) {
+      this.stats.approvalFailures += 1;
+      throw new Error(`Command ${definition.id} approval workspace does not match.`);
+    }
+    const proposalId = context.proposalId || null;
+    if (normalized.proposalId && proposalId && normalized.proposalId !== proposalId) {
+      this.stats.approvalFailures += 1;
+      throw new Error(`Command ${definition.id} approval proposal does not match.`);
+    }
     return true;
+  }
+
+  isCommandApprovalConsumed(approval, commandId) {
+    const root = commandApprovalRootKey(approval);
+    if (!root) return false;
+    return this.consumedCommandApprovals.has(`${root}:${commandId}`) || this.consumedCommandApprovals.has(`${root}:*`);
+  }
+
+  consumeCommandApproval(approval, commandId) {
+    const normalized = normalizeCommandApproval(approval);
+    const root = commandApprovalRootKey(normalized);
+    if (!root) {
+      approval.consumed = true;
+      return;
+    }
+    this.consumedCommandApprovals.add(`${root}:${commandId}`);
+    if (normalized.commandIds.length === 0 && normalized.nestedCommandIds.length === 0) {
+      this.consumedCommandApprovals.add(`${root}:*`);
+    }
   }
 
   async applyFileChange(workspace, file, options = {}) {
@@ -1007,6 +1155,59 @@ function normalizeApproval(input = {}) {
     decidedAt: input.decidedAt || new Date().toISOString(),
     reason: input.reason || null,
   };
+}
+
+function normalizeCommandApproval(input = {}) {
+  const commandIds = uniqueStrings([
+    ...safeArray(input.commandIds),
+    ...(input.commandId ? [input.commandId] : []),
+  ]);
+  const nestedCommandIds = uniqueStrings(safeArray(input.nestedCommandIds || input.allowedNestedCommandIds));
+  return {
+    id: input.id || input.approvalId || null,
+    status: String(input.status || input.decision || "").toUpperCase(),
+    commandId: input.commandId || null,
+    commandIds,
+    nestedCommandIds,
+    workspaceId: input.workspaceId || (input.workspace && input.workspace.id) || null,
+    proposalId: input.proposalId || null,
+    validationRequestId: input.validationRequestId || input.requestId || null,
+    expiresAt: input.expiresAt || null,
+    decidedBy: input.decidedBy || "external",
+    decidedAt: input.decidedAt || null,
+    parentCommandId: input.parentCommandId || null,
+    derivedFrom: input.derivedFrom || null,
+    reason: input.reason || null,
+    consumed: input.consumed === true,
+  };
+}
+
+function commandApprovalRootKey(approval) {
+  if (!approval) return null;
+  if (approval.derivedFrom) return `id:${approval.derivedFrom}`;
+  if (approval.id || approval.approvalId) return `id:${approval.id || approval.approvalId}`;
+  if (approval.validationRequestId) return `validation:${approval.validationRequestId}`;
+  return `ephemeral:${stableHash({
+    status: approval.status || null,
+    commandIds: uniqueStrings([...(approval.commandIds || []), approval.commandId].filter(Boolean)),
+    nestedCommandIds: uniqueStrings(approval.nestedCommandIds || []),
+    workspaceId: approval.workspaceId || null,
+    proposalId: approval.proposalId || null,
+    decidedBy: approval.decidedBy || null,
+    decidedAt: approval.decidedAt || null,
+    reason: approval.reason || null,
+  })}`;
+}
+
+function isApprovalExpired(approval, nowIso) {
+  if (!approval || !approval.expiresAt) return false;
+  const expiresAt = Date.parse(approval.expiresAt);
+  const now = Date.parse(nowIso);
+  return Number.isFinite(expiresAt) && Number.isFinite(now) && expiresAt <= now;
+}
+
+function uniqueStrings(values) {
+  return Array.from(new Set(safeArray(values).map((value) => String(value)).filter(Boolean)));
 }
 
 function normalizeCommandStatus(status) {
