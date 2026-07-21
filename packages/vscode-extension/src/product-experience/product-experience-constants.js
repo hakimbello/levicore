@@ -52,6 +52,38 @@ const COPILOT_WEBVIEW_COMMANDS = Object.freeze([
   "openOnboarding",
 ]);
 
+const HOME_WEBVIEW_COMMANDS = Object.freeze([
+  "testConnection",
+  "selectModel",
+  "openSetupGuide",
+  "openProjectFolder",
+  "analyzeProject",
+  "startBuilding",
+  "openComposer",
+  "setupOllama",
+]);
+
+const WIZARD_WEBVIEW_COMMANDS = Object.freeze([
+  "selectTemplate",
+  "updateAnswers",
+  "nextStep",
+  "previousStep",
+  "generatePlan",
+  "approvePlan",
+  "editPlan",
+  "cancelWizard",
+  "launchComposer",
+]);
+
+const WIZARD_TEMPLATE_IDS = Object.freeze([
+  "landing-page",
+  "web-app",
+  "mobile-app",
+  "rest-api",
+  "vscode-extension",
+  "existing-project",
+]);
+
 const ENVIRONMENT_SECTIONS = Object.freeze([
   "Workspace",
   "Git",
@@ -81,8 +113,11 @@ module.exports = {
   COPILOT_WEBVIEW_COMMANDS,
   ENVIRONMENT_SECTIONS,
   EXPERIENCE_BOUNDS,
+  HOME_WEBVIEW_COMMANDS,
   PRODUCT_COMMANDS,
   PRODUCT_EXPERIENCE_SCHEMA_VERSION,
   PRODUCT_MODES,
   PRODUCT_STAGES,
+  WIZARD_TEMPLATE_IDS,
+  WIZARD_WEBVIEW_COMMANDS,
 };
