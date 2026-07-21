@@ -161,6 +161,7 @@ test("surfaces Product Experience Copilot, Environment, onboarding, context, and
   panel.webview.__receive({ command: "workbench.action.terminal.sendSequence" });
 
   assert.equal(panel.viewType, "leviCopilot");
+  assert.equal(panel.title, "Levi Composer");
   assert.ok(panel.webview.html.includes("Content-Security-Policy"));
   assert.ok(panel.webview.html.includes("aria-label=\"Send message to Levi\""));
   assert.equal(panel.webview.html.includes("http://"), false);

@@ -329,7 +329,8 @@ class LeviVSCodeExtension {
   async presentFirstRunGuidance() {
     const experience = this.config().experience || {};
     if (experience.autoOpenOnFirstRun !== false && this.productExperience && !this.productExperience.onboarding.completed) {
-      await this.openOnboarding();
+      await this.refreshHomeConnectionState({ connectionChecked: true });
+      await this.openHome({ connectionChecked: true });
     }
     if (!this.runtime || !this.modelGateway || this.startupGuidanceDelivered) return;
     if (this.config().ui && this.config().ui.showNotifications === false) return;
@@ -349,7 +350,7 @@ class LeviVSCodeExtension {
       await this.vscode.window.showWarningMessage(
         "Levi could not connect to Ollama. Install Ollama from ollama.com if needed, start the Ollama app, then pull or select a supported model (for example qwen2.5-coder:7b). No remote AI service was used. Levi did not change any files or run commands.",
         "Open Setup Guide",
-      ).then((choice) => choice === "Open Setup Guide" ? this.openOnboarding() : null);
+      ).then((choice) => choice === "Open Setup Guide" ? this.openHome({ connectionChecked: true }) : null);
       return;
     }
 
@@ -357,6 +358,7 @@ class LeviVSCodeExtension {
       this.startupGuidanceDelivered = true;
       await this.vscode.window.showInformationMessage("Levi is ready. Open the composer to start working with your local AI model.");
     }
+    if (this.productExperience) this.productExperience.postHomeState();
   }
 
   async openWorkspace(options = {}) {
@@ -573,7 +575,7 @@ class LeviVSCodeExtension {
         "Open Setup Guide",
         "Select AI Model",
       );
-      if (choice === "Open Setup Guide") await this.openOnboarding();
+      if (choice === "Open Setup Guide") await this.openHome({ connectionChecked: true });
       else if (choice === "Select AI Model") await this.showModelHealth(true);
       return null;
     }
@@ -644,7 +646,103 @@ class LeviVSCodeExtension {
   }
 
   async openOnboarding() {
-    return this.productExperience.openOnboarding();
+    return this.openHome({ connectionChecked: true });
+  }
+
+  async openHome(options = {}) {
+    return this.productExperience.openHome(options);
+  }
+
+  async showOnboardingDiagnostics() {
+    if (!this.config().diagnostics || this.config().diagnostics.enabled !== true) {
+      await this.vscode.window.showInformationMessage("Enable `levi.diagnostics.enabled` to view raw onboarding state.");
+      return null;
+    }
+    return this.productExperience.showOnboardingDiagnostics();
+  }
+
+  homePresentationInput(options = {}) {
+    const folders = this.vscode.workspace.workspaceFolders || [];
+    const homeConnection = this.presentationCache.homeConnection || null;
+    const providers = homeConnection && homeConnection.providers && homeConnection.providers.length
+      ? homeConnection.providers
+      : (this.presentationCache.modelProviders && this.presentationCache.modelProviders.length)
+        ? this.presentationCache.modelProviders
+        : (this.modelGateway && typeof this.modelGateway.listProviders === "function" ? this.modelGateway.listProviders() : []);
+    const ollamaProvider = providers.find((entry) => entry.id === "ollama-local" || /ollama/i.test(String(entry.id || entry.name || ""))) || null;
+    const models = homeConnection && homeConnection.models && homeConnection.models.length
+      ? homeConnection.models
+      : (this.presentationCache.models && this.presentationCache.models.length)
+        ? this.presentationCache.models
+        : (this.modelGateway && typeof this.modelGateway.listModels === "function" ? this.modelGateway.listModels() : []);
+    const selectedModel = this.presentationCache.selectedModel
+      || models.find((model) => model.id === (this.presentationCache.modelHealth && this.presentationCache.modelHealth.defaultModelId))
+      || models[0]
+      || null;
+    const runtimeState = this.runtime && this.runtime.getState ? this.runtime.getState().state : this.presentationCache.runtimeState;
+    const project = this.presentationCache.project || {};
+    return {
+      workspaceFolders: folders.map((folder) => ({
+        name: folder.name,
+        uri: {
+          fsPath: folder.uri && folder.uri.fsPath,
+          path: folder.uri && folder.uri.path,
+          toString: () => (folder.uri && typeof folder.uri.toString === "function" ? folder.uri.toString() : String(folder.uri || "")),
+        },
+      })),
+      leviWorkspace: this.presentationCache.workspace || {},
+      ollamaEnabled: this.config().ollama && this.config().ollama.enabled !== false,
+      ollamaProvider,
+      models,
+      selectedModel,
+      checkingConnection: options.connectionChecked !== true && !(homeConnection || this.presentationCache.modelHealth),
+      connectionChecked: options.connectionChecked === true || Boolean(homeConnection || this.presentationCache.modelHealth),
+      runtimeReady: ["READY", "DEGRADED"].includes(runtimeState),
+      runtimeFailed: runtimeState === "FAILED",
+      projectAnalysisRequired: Boolean(this.presentationCache.workspace && this.presentationCache.workspace.id && !project.summary && !project.id),
+    };
+  }
+
+  async refreshHomeConnectionState(options = {}) {
+    if (!this.runtime || !this.modelGateway) return null;
+    const result = await this.runtime.executeCommand("model.health", { check: options.check !== false }).catch(() => null);
+    if (result && result.data) {
+      const data = result.data;
+      this.presentationCache.modelHealth = data.summary || data;
+      if (Array.isArray(data.providers) && data.providers.length) this.presentationCache.modelProviders = data.providers;
+      if (Array.isArray(data.models) && data.models.length) this.presentationCache.models = data.models;
+      this.presentationCache.homeConnection = {
+        checkedAt: new Date().toISOString(),
+        providers: Array.isArray(data.providers) ? data.providers : [],
+        models: Array.isArray(data.models) ? data.models : [],
+        summary: data.summary || data,
+      };
+    } else if (typeof this.modelGateway.getGatewayHealth === "function") {
+      this.presentationCache.modelHealth = this.modelGateway.getGatewayHealth();
+    }
+    this.updateModelStatus();
+    if (this.productExperience) this.productExperience.postHomeState();
+    return this.presentationCache.modelHealth;
+  }
+
+  async openProjectFolder() {
+    if (typeof this.vscode.commands.executeCommand === "function") {
+      await this.vscode.commands.executeCommand("workbench.action.openFolder");
+    }
+    return null;
+  }
+
+  async testModelConnectionFromHome() {
+    await this.refreshHomeConnectionState({ check: true, connectionChecked: true });
+    if (this.productExperience) this.productExperience.postHomeState();
+    return this.showModelHealth(true);
+  }
+
+  async showHomeSetupGuide() {
+    await this.vscode.window.showInformationMessage(
+      "Install Ollama from ollama.com, start the Ollama app, pull a supported model (for example `ollama pull qwen2.5-coder:7b`), then use Test Connection or Select Model on Levi Home.",
+    );
+    return this.openHome({ connectionChecked: true });
   }
 
   async showContext() {
