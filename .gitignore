@@ -1,2 +1,6 @@
 .levi/
 .test-vscode-storage/
+
+# VS Code extension build artifacts
+packages/vscode-extension/vendor/
+packages/vscode-extension/*.vsix
