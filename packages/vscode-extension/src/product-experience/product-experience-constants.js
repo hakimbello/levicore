@@ -50,6 +50,9 @@ const COPILOT_WEBVIEW_COMMANDS = Object.freeze([
   "showEnvironment",
   "showTechnicalDetails",
   "openOnboarding",
+  "toggleTimelineDetails",
+  "openChangeReview",
+  "openValidationDetails",
 ]);
 
 const HOME_WEBVIEW_COMMANDS = Object.freeze([

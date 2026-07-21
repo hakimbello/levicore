@@ -1876,6 +1876,9 @@ class LeviVSCodeExtension {
       this.recordExtensionEvent(EXTENSION_EVENTS.APPROVAL_PRESENTED, { operationId: event.operationId });
     }
     this.updateStatusFromRuntimeEvent(event);
+    if (this.productExperience && typeof this.productExperience.handleRuntimeEvent === "function") {
+      this.productExperience.handleRuntimeEvent(event);
+    }
     if (TERMINAL_RUNTIME_EVENTS.includes(event.type)) this.refreshViewsNow();
     else this.refreshViews();
   }
@@ -1885,6 +1888,9 @@ class LeviVSCodeExtension {
     this.outputLine(`Agent event: ${event.type}`);
     this.refreshAgentPresentationCache();
     this.postAgentWebviewState();
+    if (this.productExperience && typeof this.productExperience.handleAgentEvent === "function") {
+      this.productExperience.handleAgentEvent(event);
+    }
     this.refreshViews();
   }
 
