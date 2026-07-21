@@ -13,6 +13,13 @@ const {
 const { renderBuildWizardHtml } = require("./build-wizard-view-provider");
 const { presentHomeState } = require("./home-readiness");
 const { renderHomeHtml } = require("./home-view-provider");
+const {
+  createBuildTimeline,
+  mapAgentEventToTimeline,
+  mapRuntimeEventToTimeline,
+  presentBuildTimeline,
+  transitionBuildStage,
+} = require("./build-timeline-state");
 const { normalizeProductExperienceState } = require("./product-experience-state");
 const { serializeProductExperience, validateCopilotMessage, validateHomeMessage, validateWizardMessage } = require("./product-experience-serializer");
 
@@ -26,6 +33,7 @@ class ProductExperienceController {
     this.wizardPanel = null;
     this.buildWizard = createWizardSession();
     this.pendingComposerPrompt = null;
+    this.buildTimeline = null;
     this.mode = PRODUCT_MODES.ASK;
     this.preferences = {
       showAdvancedDetails: false,
@@ -169,13 +177,66 @@ class ProductExperienceController {
 
   async newChat(input = {}) {
     this.mode = normalizeMode(input.mode || this.mode);
+    this.buildTimeline = null;
+    this.postBuildTimeline();
     return this.extension.newConversation({ objective: input.content || "" });
+  }
+
+  startBuildTimeline(input = {}) {
+    this.buildTimeline = createBuildTimeline({
+      buildId: input.buildId,
+      operationId: input.operationId || null,
+      startedAt: new Date().toISOString(),
+    });
+    const started = transitionBuildStage(this.buildTimeline, "requirements", "active", {
+      currentTask: input.currentTask || "Reviewing request",
+    });
+    if (started.applied) this.buildTimeline = started.timeline;
+    this.buildTimeline.latestActivity = input.message || "Build request submitted";
+    this.postBuildTimeline();
+    return this.buildTimeline;
+  }
+
+  handleRuntimeEvent(event = {}) {
+    if (!this.buildTimeline) return null;
+    const diagnosticsEnabled = this.extension && this.extension.config && this.extension.config().diagnostics && this.extension.config().diagnostics.enabled === true;
+    const result = mapRuntimeEventToTimeline(this.buildTimeline, event, { diagnosticsEnabled });
+    if (result.applied) {
+      this.buildTimeline = result.timeline;
+      this.postBuildTimeline();
+    }
+    return result;
+  }
+
+  handleAgentEvent(event = {}) {
+    if (!this.buildTimeline) return null;
+    const diagnosticsEnabled = this.extension && this.extension.config && this.extension.config().diagnostics && this.extension.config().diagnostics.enabled === true;
+    const result = mapAgentEventToTimeline(this.buildTimeline, event, { diagnosticsEnabled });
+    if (result.applied) {
+      this.buildTimeline = result.timeline;
+      this.postBuildTimeline();
+    }
+    return result;
+  }
+
+  buildTimelineState(options = {}) {
+    if (!this.buildTimeline) return null;
+    const diagnosticsEnabled = options.diagnosticsEnabled === true
+      || (this.extension && this.extension.config && this.extension.config().diagnostics && this.extension.config().diagnostics.enabled === true);
+    return presentBuildTimeline(this.buildTimeline, { nowMs: Date.now(), diagnosticsEnabled });
+  }
+
+  toggleTimelineDetails() {
+    if (!this.buildTimeline) return null;
+    this.buildTimeline.detailsExpanded = !this.buildTimeline.detailsExpanded;
+    return this.postBuildTimeline();
   }
 
   async submit(input = {}) {
     this.mode = normalizeMode(input.mode || this.mode);
     const content = String(input.content || "").slice(0, EXPERIENCE_BOUNDS.maximumInputBytes);
     if (!content.trim()) return null;
+    this.startBuildTimeline({ message: "Build request submitted", currentTask: "Reviewing request" });
     const modePrefix = this.mode === PRODUCT_MODES.ASK ? "" : `[${this.mode}] `;
     return this.extension.sendAgentMessage({ content: `${modePrefix}${content}`, privacyClassification: input.privacyClassification });
   }
@@ -401,6 +462,9 @@ class ProductExperienceController {
       showEnvironment: () => this.showEnvironment(),
       showTechnicalDetails: () => this.showTechnicalDetails(),
       openOnboarding: () => this.openOnboarding(),
+      toggleTimelineDetails: () => this.toggleTimelineDetails(),
+      openChangeReview: () => this.showActiveChange(),
+      openValidationDetails: () => this.extension.showValidationResult(),
     };
     return handlers[parsed.message.command]();
   }
@@ -408,11 +472,17 @@ class ProductExperienceController {
   postState(state = null) {
     if (!this.panel || !this.panel.webview || typeof this.panel.webview.postMessage !== "function") return;
     const payload = state || this.state();
+    payload.buildTimeline = this.buildTimelineState();
     if (this.pendingComposerPrompt) {
       payload.pendingComposerPrompt = this.pendingComposerPrompt;
       this.pendingComposerPrompt = null;
     }
     this.panel.webview.postMessage({ type: "productState", state: payload });
+  }
+
+  postBuildTimeline() {
+    if (!this.panel || !this.panel.webview || typeof this.panel.webview.postMessage !== "function") return;
+    this.panel.webview.postMessage({ type: "buildTimeline", state: this.buildTimelineState() });
   }
 
   postWizardState(options = {}) {
@@ -456,6 +526,7 @@ class ProductExperienceController {
     this.panel = null;
     this.homePanel = null;
     this.wizardPanel = null;
+    this.buildTimeline = null;
   }
 }
 
