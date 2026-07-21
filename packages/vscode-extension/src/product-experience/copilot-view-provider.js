@@ -103,6 +103,7 @@ function renderCopilotHtml(state = {}, options = {}) {
       const turn = state.agent && state.agent.activeTurn || {};
       const response = turn.assistantResponse || state.agent && state.agent.lastResponse || {};
       setText("response", typeof response.content === "string" ? response.content : state.status || "Ready when you are.");
+      if (state.pendingComposerPrompt) byId("message").value = text(state.pendingComposerPrompt);
     }
     byId("newChat").addEventListener("click", () => send("newChat", { content: byId("message").value, mode: byId("mode").value }));
     byId("send").addEventListener("click", () => send("submit", { content: byId("message").value, mode: byId("mode").value, scope: byId("scope").value }));
