@@ -1,4 +1,4 @@
-const { COPILOT_WEBVIEW_COMMANDS, EXPERIENCE_BOUNDS } = require("./product-experience-constants");
+const { COPILOT_WEBVIEW_COMMANDS, EXPERIENCE_BOUNDS, HOME_WEBVIEW_COMMANDS, WIZARD_TEMPLATE_IDS, WIZARD_WEBVIEW_COMMANDS } = require("./product-experience-constants");
 
 function serializeProductExperience(value, options = {}) {
   const maximumSize = options.maximumSize || EXPERIENCE_BOUNDS.maximumSerializedStateBytes;
@@ -31,6 +31,40 @@ function sanitizeProductValue(value, seen = new WeakSet()) {
     if (next !== undefined) output[key] = next;
   }
   return output;
+}
+
+function validateHomeMessage(message, options = {}) {
+  const maximumSize = options.maximumSize || EXPERIENCE_BOUNDS.maximumSerializedStateBytes;
+  if (!message || typeof message !== "object" || Array.isArray(message)) return { valid: false, reason: "Message must be an object." };
+  let size = 0;
+  try {
+    size = JSON.stringify(message).length;
+  } catch (error) {
+    return { valid: false, reason: "Message must be serializable." };
+  }
+  if (size > maximumSize) return { valid: false, reason: "Message exceeds UI bounds." };
+  if (!HOME_WEBVIEW_COMMANDS.includes(message.command)) return { valid: false, reason: "Command is not allowlisted." };
+  if (message.prompt && Buffer.byteLength(String(message.prompt), "utf8") > EXPERIENCE_BOUNDS.maximumInputBytes) return { valid: false, reason: "Build prompt exceeds bounds." };
+  if (message.template && !["landing-page", "web-app", "mobile-app", "rest-api", "api", "vscode-extension", "existing-project"].includes(String(message.template))) {
+    return { valid: false, reason: "Template is not supported." };
+  }
+  return { valid: true, message: sanitizeProductValue(message) };
+}
+
+function validateWizardMessage(message, options = {}) {
+  const maximumSize = options.maximumSize || EXPERIENCE_BOUNDS.maximumSerializedStateBytes;
+  if (!message || typeof message !== "object" || Array.isArray(message)) return { valid: false, reason: "Message must be an object." };
+  let size = 0;
+  try {
+    size = JSON.stringify(message).length;
+  } catch (error) {
+    return { valid: false, reason: "Message must be serializable." };
+  }
+  if (size > maximumSize) return { valid: false, reason: "Message exceeds UI bounds." };
+  if (!WIZARD_WEBVIEW_COMMANDS.includes(message.command)) return { valid: false, reason: "Command is not allowlisted." };
+  if (message.templateId && !WIZARD_TEMPLATE_IDS.includes(String(message.templateId))) return { valid: false, reason: "Template is not supported." };
+  if (message.answers && typeof message.answers !== "object") return { valid: false, reason: "Answers must be an object." };
+  return { valid: true, message: sanitizeProductValue(message) };
 }
 
 function validateCopilotMessage(message, options = {}) {
@@ -78,4 +112,6 @@ module.exports = {
   sanitizeProductValue,
   serializeProductExperience,
   validateCopilotMessage,
+  validateHomeMessage,
+  validateWizardMessage,
 };
