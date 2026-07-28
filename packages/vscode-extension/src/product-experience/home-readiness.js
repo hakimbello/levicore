@@ -3,22 +3,22 @@ const { serializeProductExperience } = require("./product-experience-serializer"
 const CONSUMER_READINESS = Object.freeze({
   READY: "Ready",
   OPEN_PROJECT: "Open a project",
-  OLLAMA_NOT_RUNNING: "Ollama is not running",
-  SELECT_MODEL: "Select or install a model",
-  CHECKING: "Checking AI connection",
+  OLLAMA_NOT_RUNNING: "Ollama is installed but not currently reachable",
+  SELECT_MODEL: "Ollama found · Select a model",
+  CHECKING: "Checking local AI...",
   PROJECT_ANALYSIS: "Project analysis required",
   ERROR: "Something went wrong",
 });
 
 const AI_CONNECTION = Object.freeze({
-  CONNECTED: "Connected",
+  CONNECTED: "Ready",
   NOT_CONNECTED: "Not connected",
-  NEEDS_MODEL: "Needs model",
+  NEEDS_MODEL: "Select a model",
 });
 
 const PRIMARY_ACTIONS = Object.freeze({
   OPEN_PROJECT: "openProjectFolder",
-  SETUP_OLLAMA: "setupOllama",
+  SETUP_OLLAMA: "testConnection",
   SELECT_MODEL: "selectModel",
   START_BUILDING: "startBuilding",
   ANALYZE_PROJECT: "analyzeProject",
@@ -48,29 +48,41 @@ function presentHomeState(input = {}, options = {}) {
   const ollama = assessOllama(input);
   const model = assessModel(input, ollama);
   const readiness = resolveReadiness(input, workspaceFolder, ollama, model);
-  const primaryAction = resolvePrimaryAction(readiness, workspaceFolder, ollama, model, input);
+  const primaryAction = resolvePrimaryAction(readiness, ollama, model, input);
   const aiCardStatus = resolveAiCardStatus(ollama, model);
 
   return serializeProductExperience({
     title: "Levi",
-    tagline: "Build software with local AI.",
+    tagline: "What do you want to build?",
     readiness: readiness.label,
     ready: readiness.label === CONSUMER_READINESS.READY,
+    prompt: {
+      value: input.pendingPrompt || "",
+      placeholder: [
+        "Build a website for my restaurant",
+        "Create a budgeting web app",
+        "Add authentication to this project",
+        "Fix the errors in this codebase",
+      ].join("\n"),
+    },
     ai: {
       status: aiCardStatus,
       ollama: ollama.summary,
       ollamaConfigured: ollama.configured,
       ollamaReachable: ollama.reachable,
+      readinessLine: ollama.readinessLine,
+      endpoint: ollama.endpoint,
       modelInstalled: model.installed,
       modelSelected: model.selected,
       selectedModel: model.selectedName,
       availableModelCount: model.availableCount,
-      showSelectModel: !model.usable,
-      showSetupGuide: !ollama.reachable || !model.installed,
+      showSelectModel: ollama.reachable && !model.usable,
+      showRetry: ollama.failure === true,
+      showSetupGuide: ollama.notFound === true,
     },
     project: {
       open: workspaceFolder.open,
-      name: workspaceFolder.name,
+      name: workspaceFolder.name || "No project open",
       path: workspaceFolder.path,
       emptyMessage: workspaceFolder.open ? null : "No project folder open",
       canAnalyze: workspaceFolder.open && Boolean(input.runtimeReady),
@@ -109,21 +121,60 @@ function resolveWorkspaceFolder(input) {
 }
 
 function assessOllama(input) {
+  if (input.ollamaReadiness) return normalizeOllamaReadiness(input.ollamaReadiness, input);
   const enabled = input.ollamaEnabled !== false;
   const provider = input.ollamaProvider || null;
-  const state = String(provider && provider.state || "").toUpperCase();
+  const state = String(provider && (provider.state || provider.status) || "").toUpperCase();
   const configured = enabled && Boolean(provider);
   const reachable = configured && REACHABLE_PROVIDER_STATES.has(state);
   const unreachable = configured && (UNREACHABLE_PROVIDER_STATES.has(state) || (!reachable && state === "CONFIGURED" && input.connectionChecked === true));
-  let summary = "Ollama is not configured";
-  if (!enabled) summary = "Local Ollama is disabled in settings";
-  else if (!provider) summary = "Ollama provider is not registered";
-  else if (reachable) summary = "Ollama is running";
-  else if (UNREACHABLE_PROVIDER_STATES.has(state)) summary = "Ollama is not running";
-  else if (state === "CONFIGURED") summary = input.connectionChecked ? "Ollama is configured but not reachable" : "Checking Ollama connection";
-  else if (input.checkingConnection) summary = "Checking Ollama connection";
-  else summary = "Ollama status is unknown";
-  return { enabled, configured, reachable, unreachable, summary, state };
+  let summary = "Ollama was not found";
+  if (!enabled) summary = "Local Ollama is disabled";
+  else if (reachable) summary = "Ollama found · Select a model";
+  else if (unreachable) summary = "Ollama is installed but not currently reachable";
+  else if (input.checkingConnection) summary = "Checking local AI...";
+  return {
+    enabled,
+    configured,
+    reachable,
+    unreachable,
+    failure: unreachable,
+    notFound: enabled && !provider && input.connectionChecked === true,
+    summary,
+    readinessLine: summary,
+    state,
+    endpoint: input.ollamaEndpoint || "http://127.0.0.1:11434",
+  };
+}
+
+function normalizeOllamaReadiness(readiness = {}, input = {}) {
+  const enabled = input.ollamaEnabled !== false;
+  const status = String(readiness.status || "").toUpperCase();
+  const reachable = status === "READY" || status === "NEEDS_MODEL";
+  const failure = status === "UNREACHABLE";
+  const notFound = status === "NOT_FOUND";
+  const selectedModel = readiness.selectedModelName || readiness.selectedModel || null;
+  const line = status === "READY" && selectedModel
+    ? `Ready · ${selectedModel}`
+    : status === "NEEDS_MODEL"
+      ? "Ollama found · Select a model"
+      : failure
+        ? "Ollama is installed but not currently reachable"
+        : notFound
+          ? "Ollama was not found"
+          : "Checking local AI...";
+  return {
+    enabled,
+    configured: enabled && !notFound,
+    reachable,
+    unreachable: failure,
+    failure,
+    notFound,
+    summary: line,
+    readinessLine: line,
+    state: status,
+    endpoint: readiness.endpoint || input.ollamaEndpoint || "http://127.0.0.1:11434",
+  };
 }
 
 function assessModel(input, ollama) {
@@ -131,7 +182,12 @@ function assessModel(input, ollama) {
   const availableCount = models.length;
   const selected = input.selectedModel || null;
   const selectedId = selected && selected.id ? String(selected.id) : null;
-  const selectedMatches = selectedId ? models.some((model) => model.id === selectedId) : false;
+  const selectedName = selected && selected.name ? String(selected.name) : null;
+  const selectedMatches = selectedId
+    ? models.some((model) => model.id === selectedId || model.name === selectedId || `ollama:${model.name}` === selectedId)
+    : selectedName
+      ? models.some((model) => model.name === selectedName)
+      : false;
   const installed = availableCount > 0;
   const selectedUsable = Boolean(selectedMatches && selected);
   const usable = ollama.reachable && installed && selectedUsable;
@@ -149,32 +205,29 @@ function resolveReadiness(input, workspaceFolder, ollama, model) {
     return readiness(CONSUMER_READINESS.ERROR, "Levi could not finish starting. Check the output log and try again.");
   }
   if (input.checkingConnection && !input.connectionChecked) {
-    return readiness(CONSUMER_READINESS.CHECKING, "Levi is checking your local AI connection.");
-  }
-  if (!workspaceFolder.open) {
-    return readiness(CONSUMER_READINESS.OPEN_PROJECT, "Open a project folder so Levi knows what to build.");
+    return readiness(CONSUMER_READINESS.CHECKING, null);
   }
   if (ollama.enabled && (!ollama.reachable || ollama.unreachable)) {
-    return readiness(CONSUMER_READINESS.OLLAMA_NOT_RUNNING, "Start Ollama and make sure it is reachable on your machine.");
+    return readiness(ollama.readinessLine || CONSUMER_READINESS.OLLAMA_NOT_RUNNING, null);
   }
   if (!model.installed || !model.selected) {
-    return readiness(CONSUMER_READINESS.SELECT_MODEL, "Install a local model in Ollama, then select it in Levi.");
+    return readiness(CONSUMER_READINESS.SELECT_MODEL, null);
   }
   if (input.projectAnalysisRequired) {
-    return readiness(CONSUMER_READINESS.PROJECT_ANALYSIS, "Analyze this project so Levi can understand the codebase.");
+    return readiness(CONSUMER_READINESS.PROJECT_ANALYSIS, null);
   }
-  if (model.usable && workspaceFolder.open) {
+  if (model.usable) {
     return readiness(CONSUMER_READINESS.READY, null);
   }
-  return readiness(CONSUMER_READINESS.ERROR, "Levi is not ready yet. Review the AI and project sections above.");
+  return readiness(CONSUMER_READINESS.CHECKING, null);
 }
 
-function resolvePrimaryAction(readiness, workspaceFolder, ollama, model, input) {
-  if (!workspaceFolder.open) return action(PRIMARY_ACTIONS.OPEN_PROJECT, "Open Project Folder");
-  if (ollama.enabled && !ollama.reachable) return action(PRIMARY_ACTIONS.SETUP_OLLAMA, "Set Up Ollama");
-  if (!model.installed || !model.selected) return action(PRIMARY_ACTIONS.SELECT_MODEL, "Install or Select Model");
+function resolvePrimaryAction(readiness, ollama, model, input) {
+  if (input.runtimeFailed) return action(PRIMARY_ACTIONS.START_BUILDING, "Build");
+  if (ollama.enabled && !ollama.reachable) return action(PRIMARY_ACTIONS.SETUP_OLLAMA, "Retry");
+  if (!model.installed || !model.selected) return action(PRIMARY_ACTIONS.SELECT_MODEL, "Select Model");
   if (input.projectAnalysisRequired) return action(PRIMARY_ACTIONS.ANALYZE_PROJECT, "Analyze Project");
-  return action(PRIMARY_ACTIONS.START_BUILDING, "Start Building");
+  return action(PRIMARY_ACTIONS.START_BUILDING, "Build");
 }
 
 function resolveAiCardStatus(ollama, model) {
@@ -185,11 +238,10 @@ function resolveAiCardStatus(ollama, model) {
 
 function buildSecondaryActions(primaryId, workspaceFolder, ollama, model) {
   const actions = [];
-  if (primaryId !== PRIMARY_ACTIONS.OPEN_PROJECT) actions.push({ id: "openProjectFolder", label: "Open Project Folder" });
-  if (workspaceFolder.open && primaryId !== PRIMARY_ACTIONS.ANALYZE_PROJECT) actions.push({ id: "analyzeProject", label: "Analyze Project" });
-  actions.push({ id: "testConnection", label: "Test Connection" });
-  if (!model.usable) actions.push({ id: ollama.reachable ? "selectModel" : "openSetupGuide", label: ollama.reachable ? "Select Model" : "Open Setup Guide" });
-  return actions;
+  if (!workspaceFolder.open) actions.push({ id: "openProjectFolder", label: "Open Project" });
+  if (model.installed && !model.selected) actions.push({ id: "selectModel", label: "Change Model" });
+  if (ollama.failure) actions.push({ id: "testConnection", label: "Retry" });
+  return actions.filter((entry) => entry.id !== primaryId);
 }
 
 function readiness(label, startBlockedReason) {

@@ -10,6 +10,10 @@ const { EXTENSION_COMMANDS, EXTENSION_EVENTS, TERMINAL_RUNTIME_EVENTS, UI_BOUNDS
 const { presentRuntimeError } = require("./errors");
 const { renderDocument } = require("./presentation");
 const { ProductExperienceController } = require("./product-experience/product-experience-controller");
+const {
+  LEVI_BUILD_VIEW_ID,
+  LEVI_OPEN_CONTAINER_COMMAND_ID,
+} = require("./product-experience/product-experience-constants");
 const { safeText, serializeForExtension } = require("./safe-json");
 const { createViewProviders } = require("./view-providers");
 const { LeviVirtualDocumentProvider } = require("./virtual-documents");
@@ -561,6 +565,8 @@ class LeviVSCodeExtension {
     const data = result.data || result;
     this.presentationCache.modelHealth = data.summary || data;
     if (Array.isArray(data.providers) && data.providers.length) this.presentationCache.modelProviders = data.providers;
+    if (Array.isArray(data.models)) this.presentationCache.models = data.models;
+    this.presentationCache.homeConnection = this.homeConnectionFromHealth(data, { success: result && result.success !== false });
     this.updateModelStatus();
     this.refreshViewsNow();
     return this.showDocument("model-health", "Levi Model Provider Health", data);
@@ -568,7 +574,7 @@ class LeviVSCodeExtension {
 
   async selectModel() {
     const result = await this.runtime.executeCommand("model.models", { availableOnly: false });
-    const models = result.data && result.data.models || [];
+    const models = result.data && result.data.models || this.presentationCache.models || [];
     if (!models.length) {
       const choice = await this.vscode.window.showInformationMessage(
         "Levi needs a local AI model. Install Ollama, run `ollama pull <model>`, then set `levi.ollama.defaultModel` or choose **Select AI Model**.",
@@ -618,11 +624,15 @@ class LeviVSCodeExtension {
   }
 
   async openProductExperience() {
-    return this.productExperience.openCopilot();
+    return this.productExperience.openBuildChat();
   }
 
   async focusComposer() {
     return this.productExperience.focusComposer();
+  }
+
+  async openSettings() {
+    return this.productExperience.openSettings();
   }
 
   async newProductChat() {
@@ -675,12 +685,10 @@ class LeviVSCodeExtension {
       : (this.presentationCache.models && this.presentationCache.models.length)
         ? this.presentationCache.models
         : (this.modelGateway && typeof this.modelGateway.listModels === "function" ? this.modelGateway.listModels() : []);
-    const selectedModel = this.presentationCache.selectedModel
-      || models.find((model) => model.id === (this.presentationCache.modelHealth && this.presentationCache.modelHealth.defaultModelId))
-      || models[0]
-      || null;
+    const selectedModel = this.resolveSelectedHomeModel(models, homeConnection);
     const runtimeState = this.runtime && this.runtime.getState ? this.runtime.getState().state : this.presentationCache.runtimeState;
     const project = this.presentationCache.project || {};
+    const connectionFresh = homeConnection && isFreshConnection(homeConnection);
     return {
       workspaceFolders: folders.map((folder) => ({
         name: folder.name,
@@ -692,11 +700,14 @@ class LeviVSCodeExtension {
       })),
       leviWorkspace: this.presentationCache.workspace || {},
       ollamaEnabled: this.config().ollama && this.config().ollama.enabled !== false,
+      ollamaEndpoint: this.config().ollama && this.config().ollama.baseUrl || "http://127.0.0.1:11434",
+      ollamaReadiness: connectionFresh ? homeConnection.ollamaReadiness : null,
       ollamaProvider,
       models,
       selectedModel,
-      checkingConnection: options.connectionChecked !== true && !(homeConnection || this.presentationCache.modelHealth),
-      connectionChecked: options.connectionChecked === true || Boolean(homeConnection || this.presentationCache.modelHealth),
+      pendingPrompt: this.productExperience && this.productExperience.pendingHomeBuildPrompt || null,
+      checkingConnection: options.connectionChecked !== true && !connectionFresh,
+      connectionChecked: options.connectionChecked === true || Boolean(connectionFresh),
       runtimeReady: ["READY", "DEGRADED"].includes(runtimeState),
       runtimeFailed: runtimeState === "FAILED",
       projectAnalysisRequired: Boolean(this.presentationCache.workspace && this.presentationCache.workspace.id && !project.summary && !project.id),
@@ -710,32 +721,141 @@ class LeviVSCodeExtension {
       const data = result.data;
       this.presentationCache.modelHealth = data.summary || data;
       if (Array.isArray(data.providers) && data.providers.length) this.presentationCache.modelProviders = data.providers;
-      if (Array.isArray(data.models) && data.models.length) this.presentationCache.models = data.models;
-      this.presentationCache.homeConnection = {
-        checkedAt: new Date().toISOString(),
-        providers: Array.isArray(data.providers) ? data.providers : [],
-        models: Array.isArray(data.models) ? data.models : [],
-        summary: data.summary || data,
-      };
+      if (Array.isArray(data.models)) this.presentationCache.models = data.models;
+      this.presentationCache.homeConnection = this.homeConnectionFromHealth(data, { success: result.success !== false });
     } else if (typeof this.modelGateway.getGatewayHealth === "function") {
       this.presentationCache.modelHealth = this.modelGateway.getGatewayHealth();
+      this.presentationCache.homeConnection = this.homeConnectionFromHealth({
+        summary: this.presentationCache.modelHealth,
+        providers: this.modelGateway.listProviders(),
+        models: this.modelGateway.listModels(),
+      }, { success: false });
     }
     this.updateModelStatus();
     if (this.productExperience) this.productExperience.postHomeState();
     return this.presentationCache.modelHealth;
   }
 
-  async openProjectFolder() {
+  async openProjectFolder(options = {}) {
+    if (options.prompt && this.productExperience) {
+      this.productExperience.pendingHomeBuildPrompt = String(options.prompt || "");
+      this.productExperience.persistPreference("pendingHomeBuildPrompt", this.productExperience.pendingHomeBuildPrompt);
+    }
     if (typeof this.vscode.commands.executeCommand === "function") {
-      await this.vscode.commands.executeCommand("workbench.action.openFolder");
+      const command = options.mode === "new" ? "workbench.action.files.openFolder" : "workbench.action.openFolder";
+      await this.vscode.commands.executeCommand(command);
     }
     return null;
+  }
+
+  async openProjects() {
+    if (typeof this.vscode.commands.executeCommand === "function") {
+      await this.vscode.commands.executeCommand(LEVI_OPEN_CONTAINER_COMMAND_ID);
+    }
+    return this.openProjectFolder({ mode: "existing" });
+  }
+
+  hasProjectFolder() {
+    const folders = this.vscode.workspace.workspaceFolders || [];
+    return folders.length > 0 || Boolean(this.presentationCache.workspace && this.presentationCache.workspace.id);
+  }
+
+  async chooseProjectFolderForPrompt(prompt) {
+    if (this.hasProjectFolder()) return "existing";
+    const choice = await this.vscode.window.showInformationMessage(
+      "Choose where Levi should build this.",
+      "Create New Project Folder",
+      "Open Existing Project",
+    );
+    if (choice === "Create New Project Folder") return "new";
+    if (choice === "Open Existing Project") return "existing";
+    return null;
+  }
+
+  homeConnectionFromHealth(data = {}, options = {}) {
+    const providers = Array.isArray(data.providers) ? data.providers : [];
+    const models = Array.isArray(data.models) ? data.models : [];
+    const summary = data.summary || data;
+    const selectedModel = this.resolveSelectedHomeModel(models, { summary });
+    return {
+      checkedAt: new Date().toISOString(),
+      success: options.success === true,
+      providers,
+      models,
+      summary,
+      ollamaReadiness: this.resolveOllamaReadiness({ providers, models, summary, selectedModel, success: options.success === true }),
+    };
+  }
+
+  resolveSelectedHomeModel(models = [], homeConnection = {}) {
+    homeConnection = homeConnection || {};
+    const config = this.config();
+    const defaultIds = [
+      config.models && config.models.defaultModel,
+      config.ollama && config.ollama.defaultModel ? `ollama-local:${config.ollama.defaultModel}` : null,
+      config.ollama && config.ollama.defaultModel ? `ollama:${config.ollama.defaultModel}` : null,
+      config.ollama && config.ollama.defaultModel,
+      homeConnection.summary && homeConnection.summary.defaultModelId,
+      this.presentationCache.modelHealth && this.presentationCache.modelHealth.defaultModelId,
+    ].filter(Boolean).map(String);
+    const cached = this.presentationCache.selectedModel;
+    if (cached && models.some((model) => model.id === cached.id || model.name === cached.name)) return cached;
+    for (const id of defaultIds) {
+      const match = models.find((model) => model.id === id || model.name === id || `ollama:${model.name}` === id || `ollama-local:${model.name}` === id);
+      if (match) return match;
+    }
+    return models[0] || null;
+  }
+
+  resolveOllamaReadiness(input = {}) {
+    const config = this.config();
+    const providers = input.providers || [];
+    const models = input.models || [];
+    const provider = providers.find((entry) => entry.id === "ollama-local" || /ollama/i.test(String(entry.id || entry.providerId || entry.name || ""))) || null;
+    const state = String(provider && (provider.state || provider.status) || "").toUpperCase();
+    const reachable = input.success === true && (["AVAILABLE", "DEGRADED"].includes(state) || models.some((model) => isOllamaModel(model)));
+    const installedModels = models.filter((model) => isOllamaModel(model));
+    const selected = input.selectedModel && isOllamaModel(input.selectedModel) ? input.selectedModel : this.resolveSelectedHomeModel(installedModels, { summary: input.summary });
+    if (reachable && selected) {
+      return { status: "READY", endpoint: config.ollama.baseUrl, selectedModel: selected.id, selectedModelName: selected.name || selected.id };
+    }
+    if (reachable && installedModels.length) {
+      return { status: "READY", endpoint: config.ollama.baseUrl, selectedModel: installedModels[0].id, selectedModelName: installedModels[0].name || installedModels[0].id };
+    }
+    if (reachable) return { status: "NEEDS_MODEL", endpoint: config.ollama.baseUrl };
+    if (input.success === false || ["FAILED", "UNAVAILABLE", "AUTHENTICATION_FAILED"].includes(state)) {
+      return { status: provider ? "UNREACHABLE" : "NOT_FOUND", endpoint: config.ollama.baseUrl };
+    }
+    return { status: "CHECKING", endpoint: config.ollama.baseUrl };
+  }
+
+  settingsPresentationInput() {
+    const home = this.homePresentationInput({ connectionChecked: true });
+    const readiness = home.ollamaReadiness || {};
+    const config = this.config();
+    return {
+      connection: readiness.status === "READY" || readiness.status === "NEEDS_MODEL" ? "Ready" : "Not connected",
+      endpoint: config.ollama && config.ollama.baseUrl || "http://127.0.0.1:11434",
+      selectedModel: home.selectedModel && (home.selectedModel.name || home.selectedModel.id) || "Not selected",
+      askBeforeEdits: config.workspaceTools && config.workspaceTools.requireApproval !== false,
+      askBeforeCommands: config.workspaceTools && config.workspaceTools.requireApproval !== false,
+      showBuildWizard: config.experience && config.experience.showBuildWizard !== false,
+      developerTools: config.diagnostics && config.diagnostics.enabled === true,
+    };
+  }
+
+  async setDeveloperToolsEnabled(enabled) {
+    const config = this.vscode.workspace.getConfiguration ? this.vscode.workspace.getConfiguration("levi") : null;
+    if (config && typeof config.update === "function") {
+      await config.update("diagnostics.enabled", enabled === true, true);
+    }
+    return enabled === true;
   }
 
   async testModelConnectionFromHome() {
     await this.refreshHomeConnectionState({ check: true, connectionChecked: true });
     if (this.productExperience) this.productExperience.postHomeState();
-    return this.showModelHealth(true);
+    return this.presentationCache.homeConnection || this.presentationCache.modelHealth;
   }
 
   async showHomeSetupGuide() {
@@ -809,6 +929,7 @@ class LeviVSCodeExtension {
     this.presentationCache.agent.lastResponse = data.response || data;
     this.refreshAgentPresentationCache();
     this.postAgentWebviewState();
+    if (this.productExperience && typeof this.productExperience.postState === "function") this.productExperience.postState();
     return data;
   }
 
@@ -1637,9 +1758,15 @@ class LeviVSCodeExtension {
 
   registerCommands() {
     const bindings = {
-      "levi.openDashboard": () => this.vscode.commands.executeCommand("workbench.view.extension.levi"),
-      "levi.open": () => this.openProductExperience(),
+      "levi.openDashboard": async () => {
+        await this.vscode.commands.executeCommand(LEVI_OPEN_CONTAINER_COMMAND_ID);
+        return this.openHome({ connectionChecked: true });
+      },
+      "levi.open": () => this.openHome({ connectionChecked: true }),
       "levi.focusComposer": () => this.focusComposer(),
+      "levi.openBuildChat": () => this.focusComposer(),
+      "levi.openProjects": () => this.openProjects(),
+      "levi.openSettings": () => this.openSettings(),
       "levi.newChat": () => this.newProductChat(),
       "levi.showEnvironment": () => this.showEnvironment(),
       "levi.showActiveWorkflow": () => this.showActiveWorkflow(),
@@ -1819,10 +1946,10 @@ class LeviVSCodeExtension {
       "levi.overview": this.viewProviders.overview,
       "levi.environment": this.viewProviders.environment,
       "levi.project": this.viewProviders.project,
+      "levi.settings": this.viewProviders.settings,
       "levi.operations": this.viewProviders.operations,
       "levi.approvals": this.viewProviders.approvals,
       "levi.models": this.viewProviders.models,
-      "levi.agent": this.viewProviders.agent,
       "levi.changes": this.viewProviders.changes,
       "levi.multiAgent": this.viewProviders.multiAgent,
       "levi.workflows": this.viewProviders.workflows,
@@ -1836,6 +1963,11 @@ class LeviVSCodeExtension {
     for (const [id, provider] of Object.entries(viewMap)) {
       this.track(this.vscode.window.registerTreeDataProvider(id, provider));
       this.track(provider);
+    }
+    if (this.vscode.window.registerWebviewViewProvider) {
+      this.track(this.vscode.window.registerWebviewViewProvider(LEVI_BUILD_VIEW_ID, this.productExperience, {
+        webviewOptions: { retainContextWhenHidden: true },
+      }));
     }
   }
 
@@ -3044,6 +3176,7 @@ class LeviVSCodeExtension {
         compactEnvironment: raw.get ? raw.get("experience.compactEnvironment", true) : !raw.experience || raw.experience.compactEnvironment !== false,
         autoOpenOnFirstRun: raw.get ? raw.get("experience.autoOpenOnFirstRun", false) : raw.experience && raw.experience.autoOpenOnFirstRun === true,
         showCompletionNotifications: raw.get ? raw.get("experience.showCompletionNotifications", true) : !raw.experience || raw.experience.showCompletionNotifications !== false,
+        showBuildWizard: raw.get ? raw.get("experience.showBuildWizard", true) : !raw.experience || raw.experience.showBuildWizard !== false,
         timelineExpanded: raw.get ? raw.get("experience.timelineExpanded", false) : raw.experience && raw.experience.timelineExpanded === true,
         preferredPanelLocation: raw.get ? raw.get("experience.preferredPanelLocation", "beside") : raw.experience && raw.experience.preferredPanelLocation || "beside",
       },
@@ -3345,6 +3478,21 @@ function validateAgentWebviewMessage(message, maximumSize) {
   if (message.content !== undefined && typeof message.content !== "string") return { valid: false, reason: "Content must be text." };
   if (message.objective !== undefined && typeof message.objective !== "string") return { valid: false, reason: "Objective must be text." };
   return { valid: true, message };
+}
+
+function isFreshConnection(connection) {
+  if (!connection || !connection.checkedAt) return false;
+  const checked = Date.parse(connection.checkedAt);
+  if (!Number.isFinite(checked)) return false;
+  return Date.now() - checked < 120000;
+}
+
+function isOllamaModel(model) {
+  if (!model) return false;
+  return model.providerId === "ollama-local"
+    || String(model.id || "").startsWith("ollama:")
+    || String(model.id || "").startsWith("ollama-local:")
+    || model.local === true;
 }
 
 module.exports = {

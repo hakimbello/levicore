@@ -1,4 +1,8 @@
 const PRODUCT_EXPERIENCE_SCHEMA_VERSION = 1;
+const LEVI_ACTIVITY_CONTAINER_ID = "levi";
+const LEVI_BUILD_VIEW_ID = "levi.build";
+const LEVI_BUILD_FOCUS_COMMAND_ID = "levi.build.focus";
+const LEVI_OPEN_CONTAINER_COMMAND_ID = "workbench.view.extension.levi";
 
 const PRODUCT_MODES = Object.freeze({
   ASK: "Ask",
@@ -49,6 +53,7 @@ const COPILOT_WEBVIEW_COMMANDS = Object.freeze([
   "showContext",
   "showEnvironment",
   "showTechnicalDetails",
+  "openSettings",
   "openOnboarding",
   "toggleTimelineDetails",
   "openChangeReview",
@@ -64,6 +69,7 @@ const HOME_WEBVIEW_COMMANDS = Object.freeze([
   "startBuilding",
   "openComposer",
   "setupOllama",
+  "openSettings",
 ]);
 
 const WIZARD_WEBVIEW_COMMANDS = Object.freeze([
@@ -116,6 +122,10 @@ module.exports = {
   COPILOT_WEBVIEW_COMMANDS,
   ENVIRONMENT_SECTIONS,
   EXPERIENCE_BOUNDS,
+  LEVI_ACTIVITY_CONTAINER_ID,
+  LEVI_BUILD_FOCUS_COMMAND_ID,
+  LEVI_BUILD_VIEW_ID,
+  LEVI_OPEN_CONTAINER_COMMAND_ID,
   HOME_WEBVIEW_COMMANDS,
   PRODUCT_COMMANDS,
   PRODUCT_EXPERIENCE_SCHEMA_VERSION,

@@ -68,8 +68,8 @@ function field(id, label, type, options = {}) {
   return { id, label, type, required: options.required === true, options: options.options || [] };
 }
 
-function createWizardSession() {
-  return { step: WIZARD_STEPS.TEMPLATE, templateId: null, answers: {}, plan: null, approved: false };
+function createWizardSession(options = {}) {
+  return { step: WIZARD_STEPS.TEMPLATE, templateId: null, goal: String(options.goal || "").slice(0, 1000), answers: {}, plan: null, approved: false };
 }
 
 function presentWizardState(session = {}, options = {}) {
@@ -86,6 +86,7 @@ function presentWizardState(session = {}, options = {}) {
     stepTitle: stepTitle(step),
     templates,
     templateId,
+    goal: session.goal || "",
     questions,
     answers: sanitizeAnswers(session.answers || {}, questions),
     plan,
@@ -186,6 +187,7 @@ function generateImplementationPlan(templateId, answers = {}) {
   };
   const generator = generators[templateId] || planGeneric;
   const plan = generator(label, answers);
+  if (answers.projectGoal) plan.summary = `${plan.summary || ""} Goal: ${String(answers.projectGoal).slice(0, 1000)}`.trim();
   return serializeProductExperience(plan);
 }
 

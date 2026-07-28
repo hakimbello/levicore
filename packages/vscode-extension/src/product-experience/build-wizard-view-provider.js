@@ -18,6 +18,7 @@ function renderBuildWizardHtml(state = {}, options = {}) {
     .progress-bar { height: 4px; background: var(--vscode-panel-border); border-radius: 999px; overflow: hidden; margin-top: 6px; }
     .progress-fill { height: 100%; background: var(--vscode-button-background); transition: width 0.2s ease; }
     .subtitle { margin: 6px 0 0; color: var(--vscode-descriptionForeground); font-size: 14px; }
+    .goal { margin-top: 14px; padding: 10px 12px; border: 1px solid var(--vscode-panel-border); background: var(--vscode-sideBar-background); color: var(--vscode-descriptionForeground); font-size: 13px; }
     .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 16px; }
     .card { border: 1px solid var(--vscode-panel-border); border-radius: 10px; padding: 18px 16px; background: var(--vscode-sideBar-background); cursor: pointer; min-height: 88px; display: flex; flex-direction: column; gap: 8px; }
     .card:hover { border-color: var(--vscode-focusBorder); }
@@ -53,6 +54,7 @@ function renderBuildWizardHtml(state = {}, options = {}) {
       <div class="progress" id="progressLabel" aria-live="polite"></div>
       <div class="progress-bar" aria-hidden="true"><div class="progress-fill" id="progressFill"></div></div>
       <p class="subtitle" id="stepTitle"></p>
+      <div class="goal hidden" id="projectGoal"></div>
     </header>
     <div id="blocked" class="blocked hidden"></div>
 
@@ -208,6 +210,9 @@ function renderBuildWizardHtml(state = {}, options = {}) {
       byId("progressLabel").textContent = state.progressLabel || ("Step " + step + " of 5");
       byId("progressFill").style.width = ((step / 5) * 100) + "%";
       byId("stepTitle").textContent = state.stepTitle || "";
+      const goal = text(state.goal);
+      show("projectGoal", Boolean(goal));
+      byId("projectGoal").textContent = goal ? ("Goal: " + goal) : "";
       const blocked = text(state.blockedReason);
       show("blocked", Boolean(blocked));
       byId("blocked").textContent = blocked;

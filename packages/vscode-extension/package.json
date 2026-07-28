@@ -21,7 +21,7 @@
     "privacy",
     "offline",
     "code review",
-    "copilot"
+    "local ai"
   ],
   "categories": [
     "Other"
@@ -33,6 +33,8 @@
     "onStartupFinished",
     "onCommand:levi.open",
     "onCommand:levi.focusComposer",
+    "onCommand:levi.openBuildChat",
+    "onCommand:levi.openSettings",
     "onCommand:levi.newChat",
     "onCommand:levi.showEnvironment",
     "onCommand:levi.openDashboard",
@@ -69,7 +71,8 @@
     "onCommand:levi.runStressReleaseCandidate",
     "onCommand:levi.showQualification",
     "onCommand:levi.runQualificationSmoke",
-    "onCommand:levi.runQualificationReleaseCandidate"
+    "onCommand:levi.runQualificationReleaseCandidate",
+    "onCommand:levi.openProjects"
   ],
   "main": "./src/extension.js",
   "scripts": {
@@ -77,7 +80,7 @@
     "apply-marketplace-manifest": "node scripts/apply-marketplace-manifest.js",
     "prepack": "npm run bundle-runtime",
     "vscode:prepublish": "npm run bundle-runtime",
-    "check": "node --check src/extension.js && node --check src/levi-extension.js && node --check src/runtime-loader.js && node --check src/vscode-workspace-adapter.js && node --check src/vscode-workspace-mutation-adapter.js && node --check src/view-providers.js && node --check src/presentation.js && node --check src/virtual-documents.js && node --check src/vscode-credential-resolver.js && node --check src/product-experience/product-experience-controller.js && node --check src/product-experience/copilot-view-provider.js && node --check src/product-experience/home-view-provider.js && node --check src/product-experience/home-readiness.js && node --check src/product-experience/build-wizard-state.js && node --check src/product-experience/build-wizard-view-provider.js && node --check src/product-experience/build-timeline-state.js && node --check src/product-experience/environment-view-provider.js && node --check src/product-experience/timeline-presentation.js && node --check src/product-experience/approval-card-presentation.js && node --check src/product-experience/change-review-presentation.js && node --check src/product-experience/model-picker-controller.js && node --check src/product-experience/onboarding-controller.js && node --check src/product-experience/git-presentation.js && node --check src/product-experience/context-presentation.js && node --check src/product-experience/product-experience-state.js && node --check src/product-experience/product-experience-serializer.js && node --check src/product-experience/product-experience-constants.js",
+    "check": "node --check src/extension.js && node --check src/command-metadata.js && node --check src/levi-extension.js && node --check src/runtime-loader.js && node --check src/vscode-workspace-adapter.js && node --check src/vscode-workspace-mutation-adapter.js && node --check src/view-providers.js && node --check src/presentation.js && node --check src/virtual-documents.js && node --check src/vscode-credential-resolver.js && node --check src/product-experience/product-experience-controller.js && node --check src/product-experience/copilot-view-provider.js && node --check src/product-experience/home-view-provider.js && node --check src/product-experience/home-readiness.js && node --check src/product-experience/settings-view-provider.js && node --check src/product-experience/build-wizard-state.js && node --check src/product-experience/build-wizard-view-provider.js && node --check src/product-experience/build-timeline-state.js && node --check src/product-experience/environment-view-provider.js && node --check src/product-experience/timeline-presentation.js && node --check src/product-experience/approval-card-presentation.js && node --check src/product-experience/change-review-presentation.js && node --check src/product-experience/model-picker-controller.js && node --check src/product-experience/onboarding-controller.js && node --check src/product-experience/git-presentation.js && node --check src/product-experience/context-presentation.js && node --check src/product-experience/product-experience-state.js && node --check src/product-experience/product-experience-serializer.js && node --check src/product-experience/product-experience-constants.js",
     "test": "node --test test/*.test.js",
     "validate": "node test/validate-manifest.js",
     "compile": "npm run check",
@@ -88,842 +91,935 @@
     "commands": [
       {
         "command": "levi.openDashboard",
-        "title": "Levi: Open Dashboard",
-        "category": "Levi"
+        "title": "Open Home",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.open",
-        "title": "Levi: Open",
+        "title": "Open Home",
         "category": "Levi"
       },
       {
         "command": "levi.focusComposer",
-        "title": "Levi: Focus Composer",
+        "title": "Open Build Chat",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
+      },
+      {
+        "command": "levi.openBuildChat",
+        "title": "Open Build Chat",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.openProjects",
+        "title": "Open Projects",
+        "category": "Levi"
+      },
+      {
+        "command": "levi.openSettings",
+        "title": "Open Settings",
         "category": "Levi"
       },
       {
         "command": "levi.newChat",
-        "title": "Levi: New Chat",
+        "title": "New Chat",
         "category": "Levi"
       },
       {
         "command": "levi.showEnvironment",
-        "title": "Levi: Show Environment",
-        "category": "Levi"
+        "title": "Show Environment",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showActiveWorkflow",
-        "title": "Levi: Show Active Workflow",
-        "category": "Levi"
+        "title": "Show Active Workflow",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showActiveApproval",
-        "title": "Levi: Show Active Approval",
-        "category": "Levi"
+        "title": "Show Active Approval",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showActiveChange",
-        "title": "Levi: Show Active Change",
-        "category": "Levi"
+        "title": "Show Active Change",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.initialize",
-        "title": "Levi: Initialize",
-        "category": "Levi"
+        "title": "Initialize",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.openWorkspace",
-        "title": "Levi: Open Workspace",
-        "category": "Levi"
+        "title": "Open Workspace",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.refreshWorkspace",
-        "title": "Levi: Refresh Workspace",
-        "category": "Levi"
+        "title": "Refresh Workspace",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.analyzeProject",
-        "title": "Levi: Analyze Project",
+        "title": "Analyze Current Project",
         "category": "Levi"
       },
       {
         "command": "levi.showProjectSummary",
-        "title": "Levi: Show Project Summary",
-        "category": "Levi"
+        "title": "Show Project Summary",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showArchitecture",
-        "title": "Levi: Show Project Architecture",
-        "category": "Levi"
+        "title": "Show Project Architecture",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showAssessment",
-        "title": "Levi: Show Project Assessment",
-        "category": "Levi"
+        "title": "Show Project Assessment",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showBlockers",
-        "title": "Levi: Show Blockers",
-        "category": "Levi"
+        "title": "Show Blockers",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showRisks",
-        "title": "Levi: Show Risks",
-        "category": "Levi"
+        "title": "Show Risks",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showNextActions",
-        "title": "Levi: Show Next Actions",
-        "category": "Levi"
+        "title": "Show Next Actions",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showReleaseReadiness",
-        "title": "Levi: Show Release Readiness",
-        "category": "Levi"
+        "title": "Show Release Readiness",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.searchWorkspace",
-        "title": "Levi: Search Workspace",
-        "category": "Levi"
+        "title": "Search Workspace",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showCapabilities",
-        "title": "Levi: Show Capabilities",
+        "title": "Show Capabilities",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showRuntimeHealth",
-        "title": "Levi: Show Runtime Health",
+        "title": "Show Runtime Health",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showCertification",
-        "title": "Levi: Show Certification",
+        "title": "Show Certification",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.runCertification",
-        "title": "Levi: Run Certification",
+        "title": "Run Certification",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showOperations",
-        "title": "Levi: Show Operations",
-        "category": "Levi"
+        "title": "Show Operations",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.cancelOperation",
-        "title": "Levi: Cancel Operation",
-        "category": "Levi"
+        "title": "Cancel Operation",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showApprovals",
-        "title": "Levi: Review Approvals",
-        "category": "Levi"
+        "title": "Review Approvals",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.respondToApproval",
-        "title": "Levi: Respond To Approval",
-        "category": "Levi"
+        "title": "Respond To Approval",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.saveState",
-        "title": "Levi: Save State",
-        "category": "Levi"
+        "title": "Save State",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.restoreState",
-        "title": "Levi: Restore State",
-        "category": "Levi"
+        "title": "Restore State",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.understandCurrentFile",
-        "title": "Levi: Understand This File",
-        "category": "Levi"
+        "title": "Understand This File",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showModelProviders",
-        "title": "Levi: Show AI Models",
+        "title": "Show AI Models",
         "category": "Levi Advanced",
         "enablement": "config.levi.experience.showAdvancedDetails || config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showModels",
-        "title": "Levi: Show AI Models",
-        "category": "Levi"
+        "title": "Show AI Models",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showModelHealth",
-        "title": "Levi: Check AI Model Connection",
+        "title": "Check Local AI Connection",
         "category": "Levi"
       },
       {
         "command": "levi.selectModel",
-        "title": "Levi: Select AI Model",
+        "title": "Select AI Model",
         "category": "Levi"
       },
       {
         "command": "levi.testModelConnection",
-        "title": "Levi: Test AI Model Connection",
-        "category": "Levi"
+        "title": "Check Local AI Connection",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showModelUsage",
-        "title": "Levi: Show Model Usage",
+        "title": "Show Model Usage",
         "category": "Levi Advanced",
         "enablement": "config.levi.experience.showAdvancedDetails || config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.configureProviderCredential",
-        "title": "Levi: Configure Provider Credential",
+        "title": "Configure Provider Credential",
         "category": "Levi Advanced",
         "enablement": "config.levi.experience.showAdvancedDetails || config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.clearProviderCredential",
-        "title": "Levi: Clear Provider Credential",
+        "title": "Clear Provider Credential",
         "category": "Levi Advanced",
         "enablement": "config.levi.experience.showAdvancedDetails || config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.openOnboarding",
-        "title": "Levi: Open Setup Guide",
-        "category": "Levi"
+        "title": "Open Setup Guide",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showContext",
-        "title": "Levi: Show Context",
-        "category": "Levi"
+        "title": "Show Context",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showTechnicalDetails",
-        "title": "Levi: Show Technical Details",
+        "title": "Show Technical Details",
         "category": "Levi Advanced",
         "enablement": "config.levi.experience.showAdvancedDetails || config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.openAgent",
-        "title": "Levi: Open Agent",
-        "category": "Levi"
+        "title": "Open Agent",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.newConversation",
-        "title": "Levi: New Conversation",
-        "category": "Levi"
+        "title": "New Conversation",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.sendAgentMessage",
-        "title": "Levi: Send Agent Message",
-        "category": "Levi"
+        "title": "Send Agent Message",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.cancelAgentTurn",
-        "title": "Levi: Cancel Agent Turn",
-        "category": "Levi"
+        "title": "Cancel Agent Turn",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.retryAgentTurn",
-        "title": "Levi: Retry Agent Turn",
-        "category": "Levi"
+        "title": "Retry Agent Turn",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showAgentContext",
-        "title": "Levi: Show Agent Context",
-        "category": "Levi"
+        "title": "Show Agent Context",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showAgentPlan",
-        "title": "Levi: Show Agent Plan",
-        "category": "Levi"
+        "title": "Show Agent Plan",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showAgentTools",
-        "title": "Levi: Show Agent Tools",
-        "category": "Levi"
+        "title": "Show Agent Tools",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.clearConversation",
-        "title": "Levi: Clear Conversation",
-        "category": "Levi"
+        "title": "Clear Conversation",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.createChangeProposal",
-        "title": "Levi: Create Change Proposal",
-        "category": "Levi"
+        "title": "Create Change Proposal",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.previewChange",
-        "title": "Levi: Preview Change",
-        "category": "Levi"
+        "title": "Preview Change",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.previewFileDiff",
-        "title": "Levi: Preview File Diff",
-        "category": "Levi"
+        "title": "Preview File Diff",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.validateChangeProposal",
-        "title": "Levi: Validate Change Proposal",
-        "category": "Levi"
+        "title": "Validate Change Proposal",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.applyApprovedChange",
-        "title": "Levi: Apply Approved Change",
-        "category": "Levi"
+        "title": "Apply Approved Change",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.rejectChange",
-        "title": "Levi: Reject Change",
-        "category": "Levi"
+        "title": "Reject Change",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.revertChange",
-        "title": "Levi: Revert Change",
-        "category": "Levi"
+        "title": "Revert Change",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showChangeHistory",
-        "title": "Levi: Show Change History",
-        "category": "Levi"
+        "title": "Show Change History",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.runChangeValidation",
-        "title": "Levi: Run Change Validation",
-        "category": "Levi"
+        "title": "Run Change Validation",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showValidationResult",
-        "title": "Levi: Show Validation Result",
-        "category": "Levi"
+        "title": "Show Validation Result",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showAllowedCommands",
-        "title": "Levi: Show Allowed Commands",
-        "category": "Levi"
+        "title": "Show Allowed Commands",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showSourceControlStatus",
-        "title": "Levi: Show Source Control Status",
-        "category": "Levi"
+        "title": "Show Source Control Status",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showSourceControlDiff",
-        "title": "Levi: Show Source Control Diff",
-        "category": "Levi"
+        "title": "Show Source Control Diff",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showMultiAgentTeam",
-        "title": "Levi: Show Team Review",
-        "category": "Levi"
+        "title": "Show Team Review",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.previewDelegation",
-        "title": "Levi: Preview Delegation",
-        "category": "Levi"
+        "title": "Preview Delegation",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.startDelegatedTask",
-        "title": "Levi: Start Delegated Task",
-        "category": "Levi"
+        "title": "Start Delegated Task",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.cancelDelegatedTask",
-        "title": "Levi: Cancel Delegated Task",
-        "category": "Levi"
+        "title": "Cancel Delegated Task",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showAssignment",
-        "title": "Levi: Show Assignment",
-        "category": "Levi"
+        "title": "Show Assignment",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.retryAssignment",
-        "title": "Levi: Retry Assignment",
-        "category": "Levi"
+        "title": "Retry Assignment",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.requestAssignmentRevision",
-        "title": "Levi: Request Assignment Revision",
-        "category": "Levi"
+        "title": "Request Assignment Revision",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showAgentConflicts",
-        "title": "Levi: Show Agent Conflicts",
-        "category": "Levi"
+        "title": "Show Agent Conflicts",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.resolveAgentConflict",
-        "title": "Levi: Resolve Agent Conflict",
-        "category": "Levi"
+        "title": "Resolve Agent Conflict",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.reconcileAgentResults",
-        "title": "Levi: Reconcile Agent Results",
-        "category": "Levi"
+        "title": "Reconcile Agent Results",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showWorkflows",
-        "title": "Levi: Show Project Rules",
-        "category": "Levi"
+        "title": "Show Project Rules",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.createWorkflow",
-        "title": "Levi: Create Project Rule",
-        "category": "Levi"
+        "title": "Create Project Rule",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.startWorkflow",
-        "title": "Levi: Start Workflow",
-        "category": "Levi"
+        "title": "Start Workflow",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.pauseWorkflow",
-        "title": "Levi: Pause Workflow",
-        "category": "Levi"
+        "title": "Pause Workflow",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.resumeWorkflow",
-        "title": "Levi: Resume Workflow",
-        "category": "Levi"
+        "title": "Resume Workflow",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.cancelWorkflow",
-        "title": "Levi: Cancel Workflow",
-        "category": "Levi"
+        "title": "Cancel Workflow",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.retryWorkflow",
-        "title": "Levi: Retry Workflow",
-        "category": "Levi"
+        "title": "Retry Workflow",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showWorkflow",
-        "title": "Levi: Show Workflow",
-        "category": "Levi"
+        "title": "Show Workflow",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showWorkflowResult",
-        "title": "Levi: Show Workflow Result",
-        "category": "Levi"
+        "title": "Show Workflow Result",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showWorkflowSteps",
-        "title": "Levi: Show Workflow Steps",
-        "category": "Levi"
+        "title": "Show Workflow Steps",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.retryWorkflowStep",
-        "title": "Levi: Retry Workflow Step",
-        "category": "Levi"
+        "title": "Retry Workflow Step",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.skipWorkflowStep",
-        "title": "Levi: Skip Workflow Step",
-        "category": "Levi"
+        "title": "Skip Workflow Step",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showWorkflowCheckpoints",
-        "title": "Levi: Show Workflow Checkpoints",
-        "category": "Levi"
+        "title": "Show Workflow Checkpoints",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.createWorkflowCheckpoint",
-        "title": "Levi: Create Workflow Checkpoint",
-        "category": "Levi"
+        "title": "Create Workflow Checkpoint",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.restoreWorkflowCheckpoint",
-        "title": "Levi: Restore Workflow Checkpoint",
-        "category": "Levi"
+        "title": "Restore Workflow Checkpoint",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.resolveWorkflowDecision",
-        "title": "Levi: Resolve Workflow Decision",
-        "category": "Levi"
+        "title": "Resolve Workflow Decision",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showPerformance",
-        "title": "Levi: Show Performance",
-        "category": "Levi"
+        "title": "Show Performance",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.clearCache",
-        "title": "Levi: Clear Performance Cache",
-        "category": "Levi"
+        "title": "Clear Performance Cache",
+        "category": "Levi Developer",
+        "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.runBenchmark",
-        "title": "Levi: Run Performance Benchmark",
+        "title": "Run Performance Benchmark",
         "category": "Levi Advanced",
         "enablement": "config.levi.experience.showAdvancedDetails || config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.rebuildRepositoryGraph",
-        "title": "Levi: Rebuild Repository Graph",
+        "title": "Rebuild Repository Graph",
         "category": "Levi Advanced",
         "enablement": "config.levi.experience.showAdvancedDetails || config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showMemoryUsage",
-        "title": "Levi: Show Memory Usage",
+        "title": "Show Memory Usage",
         "category": "Levi Advanced",
         "enablement": "config.levi.experience.showAdvancedDetails || config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showReliability",
-        "title": "Levi: Show Reliability",
+        "title": "Show Reliability",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.runReliabilitySmoke",
-        "title": "Levi: Run Reliability Smoke",
+        "title": "Run Reliability Smoke",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.runReliabilityStandard",
-        "title": "Levi: Run Reliability Standard",
+        "title": "Run Reliability Standard",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.runReliabilityStrict",
-        "title": "Levi: Run Reliability Strict",
+        "title": "Run Reliability Strict",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.runReliabilityReleaseCandidate",
-        "title": "Levi: Run Reliability Release Candidate",
+        "title": "Run Reliability Release Candidate",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.cancelReliabilityRun",
-        "title": "Levi: Cancel Reliability Run",
+        "title": "Cancel Reliability Run",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showReliabilityReport",
-        "title": "Levi: Show Reliability Report",
+        "title": "Show Reliability Report",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showReliabilityBlockers",
-        "title": "Levi: Show Reliability Blockers",
+        "title": "Show Reliability Blockers",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showReliabilityConsistency",
-        "title": "Levi: Show Reliability Consistency",
+        "title": "Show Reliability Consistency",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showReliabilityRecovery",
-        "title": "Levi: Show Reliability Recovery",
+        "title": "Show Reliability Recovery",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showReliabilityResources",
-        "title": "Levi: Show Reliability Resources",
+        "title": "Show Reliability Resources",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showSecurityAssurance",
-        "title": "Levi: Show Security Assurance",
+        "title": "Show Security Assurance",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.runSecuritySmoke",
-        "title": "Levi: Run Security Smoke",
+        "title": "Run Security Smoke",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.runSecurityStandard",
-        "title": "Levi: Run Security Standard",
+        "title": "Run Security Standard",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.runSecurityStrict",
-        "title": "Levi: Run Security Strict",
+        "title": "Run Security Strict",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.runSecurityReleaseCandidate",
-        "title": "Levi: Run Security Release Candidate",
+        "title": "Run Security Release Candidate",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.cancelSecurityAudit",
-        "title": "Levi: Cancel Security Audit",
+        "title": "Cancel Security Audit",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showSecurityReport",
-        "title": "Levi: Show Security Report",
+        "title": "Show Security Report",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showSecurityBlockers",
-        "title": "Levi: Show Security Blockers",
+        "title": "Show Security Blockers",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showSecurityFindings",
-        "title": "Levi: Show Security Findings",
+        "title": "Show Security Findings",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showSecurityChecks",
-        "title": "Levi: Show Security Checks",
+        "title": "Show Security Checks",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showThreatModel",
-        "title": "Levi: Show Threat Model",
+        "title": "Show Threat Model",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showApprovalSecurity",
-        "title": "Levi: Show Approval Security",
+        "title": "Show Approval Security",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showWorkspaceIsolation",
-        "title": "Levi: Show Workspace Isolation",
+        "title": "Show Workspace Isolation",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showPromptInjectionReport",
-        "title": "Levi: Show Prompt Injection Report",
+        "title": "Show Prompt Injection Report",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showSecretHandlingReport",
-        "title": "Levi: Show Secret Handling Report",
+        "title": "Show Secret Handling Report",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showDependencySecurity",
-        "title": "Levi: Show Dependency Security",
+        "title": "Show Dependency Security",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showSupplyChainSecurity",
-        "title": "Levi: Show Supply Chain Security",
+        "title": "Show Supply Chain Security",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showStressScalability",
-        "title": "Levi: Show Stress & Scalability",
+        "title": "Show Stress & Scalability",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.runStressSmoke",
-        "title": "Levi: Run Stress Smoke",
+        "title": "Run Stress Smoke",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.runStressStandard",
-        "title": "Levi: Run Stress Standard",
+        "title": "Run Stress Standard",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.runStressStrict",
-        "title": "Levi: Run Stress Strict",
+        "title": "Run Stress Strict",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.runStressReleaseCandidate",
-        "title": "Levi: Run Stress Release Candidate",
+        "title": "Run Stress Release Candidate",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.cancelStressRun",
-        "title": "Levi: Cancel Stress Run",
+        "title": "Cancel Stress Run",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showStressReport",
-        "title": "Levi: Show Stress Report",
+        "title": "Show Stress Report",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showStressBlockers",
-        "title": "Levi: Show Stress Blockers",
+        "title": "Show Stress Blockers",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showStressFindings",
-        "title": "Levi: Show Stress Findings",
+        "title": "Show Stress Findings",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showStressRepositoryMetrics",
-        "title": "Levi: Show Repository Stress Metrics",
+        "title": "Show Repository Stress Metrics",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showStressConcurrency",
-        "title": "Levi: Show Concurrency Stress",
+        "title": "Show Concurrency Stress",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showStressMemory",
-        "title": "Levi: Show Memory Stress",
+        "title": "Show Memory Stress",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showStressQueue",
-        "title": "Levi: Show Queue Stress",
+        "title": "Show Queue Stress",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showStressProvider",
-        "title": "Levi: Show Provider Stress",
+        "title": "Show Provider Stress",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showStressWorkflow",
-        "title": "Levi: Show Workflow Stress",
+        "title": "Show Workflow Stress",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showStressCancellation",
-        "title": "Levi: Show Cancellation Stress",
+        "title": "Show Cancellation Stress",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showStressPresentationPressure",
-        "title": "Levi: Show Presentation Pressure",
+        "title": "Show Presentation Pressure",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showQualification",
-        "title": "Levi: Show Release Qualification",
+        "title": "Show Release Qualification",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.runQualificationSmoke",
-        "title": "Levi: Run Qualification Smoke",
+        "title": "Run Qualification Smoke",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.runQualificationStandard",
-        "title": "Levi: Run Qualification Standard",
+        "title": "Run Qualification Standard",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.runQualificationStrict",
-        "title": "Levi: Run Qualification Strict",
+        "title": "Run Qualification Strict",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.runQualificationReleaseCandidate",
-        "title": "Levi: Run Qualification Release Candidate",
+        "title": "Run Qualification Release Candidate",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.cancelQualificationRun",
-        "title": "Levi: Cancel Qualification Run",
+        "title": "Cancel Qualification Run",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showQualificationReport",
-        "title": "Levi: Show Qualification Report",
+        "title": "Show Qualification Report",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showQualificationBlockers",
-        "title": "Levi: Show Qualification Blockers",
+        "title": "Show Qualification Blockers",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showQualificationManualChecks",
-        "title": "Levi: Show Manual Qualification Checks",
+        "title": "Show Manual Qualification Checks",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showQualificationDefects",
-        "title": "Levi: Show Qualification Defects",
+        "title": "Show Qualification Defects",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showQualificationFixtures",
-        "title": "Levi: Show Qualification Fixtures",
+        "title": "Show Qualification Fixtures",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showQualificationJourneys",
-        "title": "Levi: Show Qualification Journeys",
+        "title": "Show Qualification Journeys",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showExtensionHostQualification",
-        "title": "Levi: Show Extension Host Qualification",
+        "title": "Show Extension Host Qualification",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       },
       {
         "command": "levi.showLocalOllamaQualification",
-        "title": "Levi: Show Local Ollama Qualification",
+        "title": "Show Local Ollama Qualification",
         "category": "Levi Developer",
         "enablement": "config.levi.diagnostics.enabled"
       }
@@ -941,47 +1037,60 @@
       "levi": [
         {
           "id": "levi.overview",
-          "name": "Overview"
+          "name": "Home"
         },
         {
           "id": "levi.environment",
-          "name": "Environment"
+          "name": "Environment",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "id": "levi.build",
+          "name": "Build",
+          "type": "webview"
         },
         {
           "id": "levi.project",
-          "name": "Project"
+          "name": "Projects"
+        },
+        {
+          "id": "levi.settings",
+          "name": "Settings"
         },
         {
           "id": "levi.operations",
-          "name": "Operations"
+          "name": "Operations",
+          "when": "config.levi.diagnostics.enabled"
         },
         {
           "id": "levi.approvals",
-          "name": "Approvals"
+          "name": "Approvals",
+          "when": "config.levi.diagnostics.enabled"
         },
         {
           "id": "levi.models",
-          "name": "AI Models"
-        },
-        {
-          "id": "levi.agent",
-          "name": "Agent"
+          "name": "AI Models",
+          "when": "config.levi.diagnostics.enabled"
         },
         {
           "id": "levi.changes",
-          "name": "Change Review"
+          "name": "Change Review",
+          "when": "config.levi.diagnostics.enabled"
         },
         {
           "id": "levi.multiAgent",
-          "name": "Team Review"
+          "name": "Team Review",
+          "when": "config.levi.diagnostics.enabled"
         },
         {
           "id": "levi.workflows",
-          "name": "Project Rules"
+          "name": "Project Rules",
+          "when": "config.levi.diagnostics.enabled"
         },
         {
           "id": "levi.performance",
-          "name": "Performance"
+          "name": "Performance",
+          "when": "config.levi.diagnostics.enabled"
         },
         {
           "id": "levi.reliability",
@@ -1005,7 +1114,7 @@
         },
         {
           "id": "levi.diagnostics",
-          "name": "Diagnostics",
+          "name": "Developer Tools",
           "when": "config.levi.diagnostics.enabled"
         }
       ]
@@ -1110,7 +1219,7 @@
             "Review",
             "Teach"
           ],
-          "description": "Default Copilot composer mode."
+          "description": "Default Levi Build Chat mode."
         },
         "levi.experience.showAdvancedDetails": {
           "type": "boolean",
@@ -1133,6 +1242,11 @@
           "default": true,
           "description": "Show product-level completion notifications."
         },
+        "levi.experience.showBuildWizard": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the guided Build Wizard for broad build requests from Levi Home."
+        },
         "levi.experience.timelineExpanded": {
           "type": "boolean",
           "default": false,
@@ -1145,7 +1259,7 @@
             "beside",
             "active"
           ],
-          "description": "Preferred Copilot panel placement."
+          "description": "Preferred Levi panel placement."
         },
         "levi.models.enabled": {
           "type": "boolean",
@@ -2306,17 +2420,17 @@
         },
         {
           "command": "levi.openAgent",
-          "when": "view == levi.agent",
+          "when": "view == levi.build",
           "group": "navigation@1"
         },
         {
           "command": "levi.newConversation",
-          "when": "view == levi.agent",
+          "when": "view == levi.build",
           "group": "navigation@2"
         },
         {
           "command": "levi.cancelAgentTurn",
-          "when": "view == levi.agent",
+          "when": "view == levi.build",
           "group": "navigation@3"
         },
         {
@@ -2608,6 +2722,628 @@
           "command": "levi.respondToApproval",
           "when": "view == levi.approvals",
           "group": "navigation@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "levi.openDashboard",
+          "when": "false"
+        },
+        {
+          "command": "levi.open"
+        },
+        {
+          "command": "levi.focusComposer",
+          "when": "false"
+        },
+        {
+          "command": "levi.openBuildChat"
+        },
+        {
+          "command": "levi.openProjects"
+        },
+        {
+          "command": "levi.openSettings"
+        },
+        {
+          "command": "levi.newChat"
+        },
+        {
+          "command": "levi.showEnvironment",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showActiveWorkflow",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showActiveApproval",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showActiveChange",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.initialize",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.openWorkspace",
+          "when": "false"
+        },
+        {
+          "command": "levi.refreshWorkspace",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.analyzeProject"
+        },
+        {
+          "command": "levi.showProjectSummary",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showArchitecture",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showAssessment",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showBlockers",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showRisks",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showNextActions",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showReleaseReadiness",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.searchWorkspace",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showCapabilities",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showRuntimeHealth",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showCertification",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.runCertification",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showOperations",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.cancelOperation",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showApprovals",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.respondToApproval",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.saveState",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.restoreState",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.understandCurrentFile",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showModelProviders",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showModels",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showModelHealth"
+        },
+        {
+          "command": "levi.selectModel"
+        },
+        {
+          "command": "levi.testModelConnection",
+          "when": "false"
+        },
+        {
+          "command": "levi.showModelUsage",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.configureProviderCredential",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.clearProviderCredential",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.openOnboarding",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showContext",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showTechnicalDetails",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.openAgent",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.newConversation",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.sendAgentMessage",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.cancelAgentTurn",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.retryAgentTurn",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showAgentContext",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showAgentPlan",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showAgentTools",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.clearConversation",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.createChangeProposal",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.previewChange",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.previewFileDiff",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.validateChangeProposal",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.applyApprovedChange",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.rejectChange",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.revertChange",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showChangeHistory",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.runChangeValidation",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showValidationResult",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showAllowedCommands",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showSourceControlStatus",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showSourceControlDiff",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showMultiAgentTeam",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.previewDelegation",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.startDelegatedTask",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.cancelDelegatedTask",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showAssignment",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.retryAssignment",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.requestAssignmentRevision",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showAgentConflicts",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.resolveAgentConflict",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.reconcileAgentResults",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showWorkflows",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.createWorkflow",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.startWorkflow",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.pauseWorkflow",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.resumeWorkflow",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.cancelWorkflow",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.retryWorkflow",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showWorkflow",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showWorkflowResult",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showWorkflowSteps",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.retryWorkflowStep",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.skipWorkflowStep",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showWorkflowCheckpoints",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.createWorkflowCheckpoint",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.restoreWorkflowCheckpoint",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.resolveWorkflowDecision",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showPerformance",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.clearCache",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.runBenchmark",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.rebuildRepositoryGraph",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showMemoryUsage",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showReliability",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.runReliabilitySmoke",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.runReliabilityStandard",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.runReliabilityStrict",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.runReliabilityReleaseCandidate",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.cancelReliabilityRun",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showReliabilityReport",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showReliabilityBlockers",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showReliabilityConsistency",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showReliabilityRecovery",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showReliabilityResources",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showSecurityAssurance",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.runSecuritySmoke",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.runSecurityStandard",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.runSecurityStrict",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.runSecurityReleaseCandidate",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.cancelSecurityAudit",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showSecurityReport",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showSecurityBlockers",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showSecurityFindings",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showSecurityChecks",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showThreatModel",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showApprovalSecurity",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showWorkspaceIsolation",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showPromptInjectionReport",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showSecretHandlingReport",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showDependencySecurity",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showSupplyChainSecurity",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showStressScalability",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.runStressSmoke",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.runStressStandard",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.runStressStrict",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.runStressReleaseCandidate",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.cancelStressRun",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showStressReport",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showStressBlockers",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showStressFindings",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showStressRepositoryMetrics",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showStressConcurrency",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showStressMemory",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showStressQueue",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showStressProvider",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showStressWorkflow",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showStressCancellation",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showStressPresentationPressure",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showQualification",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.runQualificationSmoke",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.runQualificationStandard",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.runQualificationStrict",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.runQualificationReleaseCandidate",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.cancelQualificationRun",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showQualificationReport",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showQualificationBlockers",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showQualificationManualChecks",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showQualificationDefects",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showQualificationFixtures",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showQualificationJourneys",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showExtensionHostQualification",
+          "when": "config.levi.diagnostics.enabled"
+        },
+        {
+          "command": "levi.showLocalOllamaQualification",
+          "when": "config.levi.diagnostics.enabled"
         }
       ]
     }

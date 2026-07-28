@@ -1,5 +1,5 @@
 const { EXPERIENCE_BOUNDS } = require("./product-experience-constants");
-const { escapeHtml, serializeProductExperience } = require("./product-experience-serializer");
+const { serializeProductExperience } = require("./product-experience-serializer");
 
 function renderHomeHtml(state = {}, options = {}) {
   const nonce = options.nonce || createNonce();
@@ -12,77 +12,70 @@ function renderHomeHtml(state = {}, options = {}) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style nonce="${nonce}">
     body { margin: 0; padding: 0; color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); }
-    main { max-width: 760px; margin: 0 auto; padding: 20px 16px 28px; display: grid; gap: 16px; }
-    h1 { margin: 0; font-size: 28px; font-weight: 600; }
-    .tagline { margin: 4px 0 0; color: var(--vscode-descriptionForeground); }
-    .card { border: 1px solid var(--vscode-panel-border); border-radius: 8px; padding: 14px; background: var(--vscode-sideBar-background); }
-    .card h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--vscode-descriptionForeground); }
-    .status-pill { display: inline-block; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 600; border: 1px solid var(--vscode-panel-border); margin-bottom: 10px; }
-    .status-ready { color: var(--vscode-testing-iconPassed); }
-    .status-blocked { color: var(--vscode-errorForeground); }
-    .status-pending { color: var(--vscode-descriptionForeground); }
+    main { max-width: 820px; margin: 0 auto; padding: 24px 18px 32px; display: grid; gap: 14px; }
+    h1 { margin: 0; font-size: 32px; font-weight: 650; letter-spacing: 0; }
+    h2 { margin: 2px 0 0; font-size: 20px; font-weight: 600; letter-spacing: 0; }
+    .prompt-shell { display: grid; gap: 12px; }
+    textarea { width: 100%; min-height: 180px; box-sizing: border-box; resize: vertical; padding: 12px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); font-family: var(--vscode-font-family); font-size: 14px; line-height: 1.5; }
+    textarea:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: 0; }
     .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-    .meta { color: var(--vscode-descriptionForeground); font-size: 12px; }
-    .detail { margin: 6px 0; font-size: 13px; }
-    button { min-height: 28px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 0; border-radius: 2px; padding: 4px 10px; cursor: pointer; }
+    .top-actions { justify-content: space-between; }
+    button { min-height: 30px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 0; border-radius: 2px; padding: 5px 11px; cursor: pointer; font-family: var(--vscode-font-family); }
+    button.primary { font-weight: 700; min-height: 40px; padding: 9px 22px; font-size: 14px; }
     button.secondary { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); }
-    button.primary { font-weight: 600; min-height: 32px; padding: 6px 14px; }
     button:disabled { opacity: 0.55; cursor: not-allowed; }
-    .template-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-top: 8px; }
-    .template { text-align: left; }
-    .template.selected { outline: 1px solid var(--vscode-focusBorder); }
-    textarea { width: 100%; min-height: 88px; box-sizing: border-box; resize: vertical; padding: 8px; margin-top: 8px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); font-family: var(--vscode-font-family); }
-    .composer-note { margin-top: 8px; font-size: 12px; color: var(--vscode-descriptionForeground); }
-    .blocked { border-left: 3px solid var(--vscode-inputValidation-warningBorder); padding-left: 10px; margin-top: 8px; color: var(--vscode-descriptionForeground); font-size: 12px; }
+    .meta { color: var(--vscode-descriptionForeground); font-size: 12px; }
+    .readiness { min-height: 18px; color: var(--vscode-descriptionForeground); font-size: 13px; }
+    .readiness.ready { color: var(--vscode-testing-iconPassed); }
+    .readiness.failed { color: var(--vscode-errorForeground); }
+    .summary { display: flex; flex-wrap: wrap; gap: 10px; color: var(--vscode-descriptionForeground); font-size: 12px; }
+    .summary span { white-space: nowrap; }
+    .folder-choice { border: 1px solid var(--vscode-panel-border); padding: 12px; display: grid; gap: 10px; background: var(--vscode-sideBar-background); }
     .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+    @media (max-width: 520px) {
+      main { padding: 18px 12px 24px; }
+      h1 { font-size: 28px; }
+      h2 { font-size: 18px; }
+      textarea { min-height: 156px; }
+      .top-actions { align-items: stretch; }
+      button.primary { width: 100%; }
+    }
     @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
   </style>
 </head>
 <body>
   <main>
-    <header>
-      <h1 id="title">Levi</h1>
-      <p id="tagline" class="tagline">Build software with local AI.</p>
-    </header>
-
-    <section class="card" aria-labelledby="readinessLabel">
-      <h2 id="readinessLabel">Levi status</h2>
-      <div id="readinessPill" class="status-pill status-pending" aria-live="polite"></div>
-      <div id="startBlocked" class="blocked" hidden></div>
-    </section>
-
-    <section class="card" aria-labelledby="aiLabel">
-      <h2 id="aiLabel">AI status</h2>
-      <div id="aiStatus" class="detail"></div>
-      <div id="ollamaStatus" class="detail meta"></div>
-      <div id="selectedModel" class="detail"></div>
-      <div id="modelCount" class="detail meta"></div>
-      <div class="row" style="margin-top: 10px;">
-        <button id="testConnection" class="secondary" aria-label="Test AI connection">Test Connection</button>
-        <button id="selectModel" class="secondary" aria-label="Select AI model" hidden>Select Model</button>
-        <button id="openSetupGuide" class="secondary" aria-label="Open Levi setup guide" hidden>Open Setup Guide</button>
+    <section class="prompt-shell" aria-labelledby="homeQuestion">
+      <div>
+        <h1 id="title">Levi</h1>
+        <h2 id="homeQuestion">What do you want to build?</h2>
       </div>
-    </section>
-
-    <section class="card" aria-labelledby="projectLabel">
-      <h2 id="projectLabel">Project</h2>
-      <div id="projectName" class="detail"></div>
-      <div id="projectPath" class="detail meta"></div>
-      <div id="projectEmpty" class="detail meta" hidden></div>
-      <div class="row" style="margin-top: 10px;">
-        <button id="openProjectFolder" class="secondary" aria-label="Open project folder">Open Project Folder</button>
-        <button id="analyzeProject" class="secondary" aria-label="Analyze project" hidden>Analyze Project</button>
+      <label class="sr-only" for="buildPrompt">Describe what you want to build</label>
+      <textarea id="buildPrompt" maxlength="${EXPERIENCE_BOUNDS.maximumInputBytes}" aria-label="What do you want to build?"></textarea>
+      <div class="row top-actions">
+        <button id="buildButton" class="primary" aria-label="Build">Build</button>
+        <div class="row">
+          <button id="openProjectFolder" class="secondary" aria-label="Open project">Open Project</button>
+          <button id="settings" class="secondary" aria-label="Open Levi settings">Settings</button>
+        </div>
       </div>
-    </section>
-
-    <section class="card" aria-labelledby="buildLabel">
-      <h2 id="buildLabel">Start building with Levi</h2>
-      <p class="meta">The Build Wizard guides you through planning before Levi writes any code.</p>
-      <div class="row" style="margin-top: 10px;">
-        <button id="primaryAction" class="primary" aria-label="Primary next action"></button>
-        <button id="openComposer" class="secondary" aria-label="Open Levi composer">Open Levi Composer</button>
+      <div id="readinessLine" class="readiness" aria-live="polite"></div>
+      <div class="summary" aria-label="Current Levi context">
+        <span id="projectName"></span>
+        <span id="selectedModel"></span>
       </div>
-      <div id="composerNote" class="composer-note">Use the Build Wizard for a guided plan, or open the composer directly.</div>
+      <div class="row" id="connectionActions">
+        <button id="retryConnection" class="secondary" aria-label="Retry local AI connection" hidden>Retry</button>
+        <button id="selectModel" class="secondary" aria-label="Change model" hidden>Change Model</button>
+      </div>
+      <div id="folderChoice" class="folder-choice" hidden>
+        <strong>No project folder is open.</strong>
+        <div class="meta">Choose where Levi should work. Your prompt will stay here.</div>
+        <div class="row">
+          <button id="createProjectFolder" class="secondary" aria-label="Create a new project folder">Create New Project Folder</button>
+          <button id="openExistingProject" class="secondary" aria-label="Open an existing project">Open Existing Project</button>
+        </div>
+      </div>
     </section>
   </main>
   <script nonce="${nonce}">
@@ -91,64 +84,51 @@ function renderHomeHtml(state = {}, options = {}) {
     const byId = (id) => document.getElementById(id);
     function send(command, extra) { vscode.postMessage(Object.assign({ command }, extra || {})); }
     function text(value) { return value === undefined || value === null ? "" : String(value); }
-    function setText(id, value) { byId(id).textContent = text(value); }
+    function placeholder(value) { return text(value).replace(/\\\\n/g, "\\n"); }
+    function promptValue() { return byId("buildPrompt").value; }
     function setVisible(id, visible) { byId(id).hidden = !visible; }
-    function statusClass(label) {
-      if (label === "Ready") return "status-ready";
-      if (label === "Checking AI connection") return "status-pending";
-      return "status-blocked";
+    function readinessClass(line) {
+      if (/^Ready\\b/.test(line)) return "readiness ready";
+      if (/not currently reachable|not found|Not connected/i.test(line)) return "readiness failed";
+      return "readiness";
     }
+    function build(extra) { send("startBuilding", Object.assign({ prompt: promptValue() }, extra || {})); }
     function render(next) {
       state = next || state || {};
-      setText("title", state.title || "Levi");
-      setText("tagline", state.tagline || "Build software with local AI.");
-      const readiness = state.readiness || "Checking AI connection";
-      const pill = byId("readinessPill");
-      pill.textContent = readiness;
-      pill.className = "status-pill " + statusClass(readiness);
-      const blocked = text(state.startBlockedReason);
-      setVisible("startBlocked", Boolean(blocked));
-      setText("startBlocked", blocked);
-      setText("aiStatus", "Connection: " + text(state.ai && state.ai.status));
-      setText("ollamaStatus", "Ollama: " + text(state.ai && state.ai.ollama));
-      setText("selectedModel", "Selected model: " + text(state.ai && state.ai.selectedModel));
-      setText("modelCount", "Available models: " + text(state.ai && state.ai.availableModelCount));
-      setVisible("selectModel", Boolean(state.ai && state.ai.showSelectModel && state.ai.ollamaReachable));
-      setVisible("openSetupGuide", Boolean(state.ai && state.ai.showSetupGuide));
+      const prompt = state.prompt || {};
+      byId("buildPrompt").placeholder = placeholder(prompt.placeholder || state.promptPlaceholder || "Describe what you want to build");
+      if (prompt.value && !byId("buildPrompt").value) byId("buildPrompt").value = text(prompt.value);
+      const ai = state.ai || {};
+      const line = text(ai.readinessLine || state.readiness || "Checking local AI...");
+      byId("readinessLine").textContent = line;
+      byId("readinessLine").className = readinessClass(line);
       const project = state.project || {};
-      if (project.open) {
-        setVisible("projectEmpty", false);
-        setText("projectName", project.name || "Project folder");
-        setText("projectPath", project.path || "");
-        setVisible("analyzeProject", Boolean(project.canAnalyze));
-      } else {
-        setText("projectName", "");
-        setText("projectPath", "");
-        setVisible("projectEmpty", true);
-        setText("projectEmpty", project.emptyMessage || "No project folder open");
-        setVisible("analyzeProject", false);
-      }
-      const primary = state.primaryAction || {};
-      byId("primaryAction").textContent = primary.label || "Start Building";
-      byId("primaryAction").dataset.action = primary.id || "startBuilding";
-      byId("primaryAction").disabled = primary.id === "startBuilding" && !state.ready;
-      setText("composerNote", state.ready
-        ? "The Build Wizard creates a plan before any code is written."
-        : "Complete the steps above before Levi can start building.");
+      byId("projectName").textContent = project.open ? ("Project: " + text(project.name || "Project folder")) : "Project: none";
+      byId("selectedModel").textContent = ai.selectedModel && ai.selectedModel !== "None installed" ? ("Model: " + text(ai.selectedModel)) : "";
+      setVisible("retryConnection", Boolean(ai.showRetry));
+      setVisible("selectModel", Boolean(ai.showSelectModel));
+      setVisible("folderChoice", false);
+      byId("buildButton").disabled = false;
     }
-    byId("testConnection").addEventListener("click", () => send("testConnection"));
-    byId("selectModel").addEventListener("click", () => send("selectModel"));
-    byId("openSetupGuide").addEventListener("click", () => send("openSetupGuide"));
-    byId("openProjectFolder").addEventListener("click", () => send("openProjectFolder"));
-    byId("analyzeProject").addEventListener("click", () => send("analyzeProject"));
-    byId("openComposer").addEventListener("click", () => send("openComposer"));
-    byId("primaryAction").addEventListener("click", (event) => {
-      const action = event.currentTarget.dataset.action || "startBuilding";
-      if (action === "startBuilding") send("startBuilding");
-      else send(action);
+    byId("buildButton").addEventListener("click", () => build());
+    byId("buildPrompt").addEventListener("keydown", (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        event.preventDefault();
+        build();
+      }
     });
-    window.addEventListener("message", (event) => { if (event.data && event.data.type === "homeState") render(event.data.state); });
+    byId("openProjectFolder").addEventListener("click", () => send("openProjectFolder", { prompt: promptValue(), mode: "existing" }));
+    byId("createProjectFolder").addEventListener("click", () => send("openProjectFolder", { prompt: promptValue(), mode: "new" }));
+    byId("openExistingProject").addEventListener("click", () => send("openProjectFolder", { prompt: promptValue(), mode: "existing" }));
+    byId("retryConnection").addEventListener("click", () => send("testConnection", { prompt: promptValue() }));
+    byId("selectModel").addEventListener("click", () => send("selectModel", { prompt: promptValue() }));
+    byId("settings").addEventListener("click", () => send("openSettings", { prompt: promptValue() }));
+    window.addEventListener("message", (event) => {
+      if (event.data && event.data.type === "homeState") render(event.data.state);
+      if (event.data && event.data.type === "folderChoice") setVisible("folderChoice", true);
+    });
     render(state);
+    byId("buildPrompt").focus();
   </script>
 </body>
 </html>`;

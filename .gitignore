@@ -1,6 +1,22 @@
 .levi/
 .test-vscode-storage/
+node_modules/
+.env
+.env.*
+!.env.example
 
 # VS Code extension build artifacts
 packages/vscode-extension/vendor/
 packages/vscode-extension/*.vsix
+
+# Levi desktop build artifacts
+packages/levi-desktop/dist/
+packages/levi-desktop/dist-electron/
+packages/levi-desktop/release/
+packages/levi-desktop/node_modules/
+packages/levi-desktop/.vite/
+packages/levi-desktop/coverage/
+packages/levi-desktop/.cache/
+packages/levi-desktop/.turbo/
+packages/levi-desktop/test-results/
+packages/levi-desktop/playwright-report/

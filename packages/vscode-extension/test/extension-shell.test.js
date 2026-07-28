@@ -17,7 +17,8 @@ test("activates, initializes runtime, registers commands and views, opens worksp
   assert.equal(vscode.__treeProviders.has("levi.overview"), true);
   assert.equal(vscode.__treeProviders.has("levi.environment"), true);
   assert.equal(vscode.__treeProviders.has("levi.models"), true);
-  assert.equal(vscode.__treeProviders.has("levi.agent"), true);
+  assert.equal(vscode.__treeProviders.has("levi.build"), false);
+  assert.equal(vscode.__webviewViewProviders.has("levi.build"), true);
   assert.equal(vscode.__treeProviders.has("levi.changes"), true);
   assert.equal(vscode.__treeProviders.has("levi.multiAgent"), true);
   assert.equal(vscode.__treeProviders.has("levi.workflows"), true);
@@ -125,13 +126,15 @@ test("configured Ollama default model is eligible for streaming tool-aware agent
     privacyClassification: "USER_CONTENT",
   });
 
-  assert.equal(models.length, 1);
-  assert.ok(models[0].capabilities.includes("TOOL_CALLING"));
+  const configured = models.find((model) => model.id === "ollama:qwen2.5-coder:7b");
+  assert.ok(models.length >= 1);
+  assert.ok(configured);
+  assert.ok(configured.capabilities.includes("TOOL_CALLING"));
   assert.equal(routed.selectedProvider.id, "ollama-local");
   assert.equal(routed.selectedModel.id, "ollama:qwen2.5-coder:7b");
 });
 
-test("surfaces Product Experience Copilot, Environment, onboarding, context, and technical details", async () => {
+test("surfaces Levi-owned Build webview, Environment, onboarding, context, and technical details", async () => {
   const vscode = createFakeVSCode({
     nextInput: "Explain this project",
     config: {
@@ -147,7 +150,8 @@ test("surfaces Product Experience Copilot, Environment, onboarding, context, and
   });
   await extension.activate();
 
-  const panel = await vscode.commands.executeCommand("levi.open");
+  const homePanel = await vscode.commands.executeCommand("levi.open");
+  const view = await vscode.commands.executeCommand("levi.openBuildChat");
   await vscode.commands.executeCommand("levi.focusComposer");
   await vscode.commands.executeCommand("levi.newChat");
   await vscode.commands.executeCommand("levi.showEnvironment");
@@ -156,21 +160,29 @@ test("surfaces Product Experience Copilot, Environment, onboarding, context, and
   await vscode.commands.executeCommand("levi.openOnboarding");
   await vscode.commands.executeCommand("levi.showContext");
   const details = await vscode.commands.executeCommand("levi.showTechnicalDetails");
-  panel.webview.__receive({ command: "setMode", mode: "Review" });
-  panel.webview.__receive({ command: "submit", content: "What changed?", mode: "Review", scope: "Workspace" });
-  panel.webview.__receive({ command: "workbench.action.terminal.sendSequence" });
+  await view.webview.__receive({ command: "setMode", mode: "Review" });
+  await view.webview.__receive({ command: "submit", content: "What changed?", mode: "Review", scope: "Workspace" });
+  await view.webview.__receive({ command: "workbench.action.terminal.sendSequence" });
 
-  assert.equal(panel.viewType, "leviCopilot");
-  assert.equal(panel.title, "Levi Composer");
-  assert.ok(panel.webview.html.includes("Content-Security-Policy"));
-  assert.ok(panel.webview.html.includes("aria-label=\"Send message to Levi\""));
-  assert.equal(panel.webview.html.includes("http://"), false);
+  assert.equal(homePanel.viewType, "leviHome");
+  assert.equal(view.viewType, "levi.build");
+  assert.equal(vscode.__lastWebviewView, view);
+  assert.ok(view.webview.html.includes("Content-Security-Policy"));
+  assert.ok(view.webview.html.includes("aria-label=\"Send message to Levi\""));
+  assert.ok(view.webview.html.includes("<strong>Levi</strong>"));
+  assert.equal(view.webview.html.includes("workbench.action.chat.open"), false);
+  assert.equal(view.webview.html.includes("http://"), false);
   assert.equal(vscode.__treeProviders.has("levi.environment"), true);
   assert.ok(details.toString().startsWith("levi:/"));
   assert.equal(extension.presentationCache.productExperience.mode, "Review");
   assert.ok(extension.presentationCache.productExperience.workflowTimeline);
+  assert.ok(vscode.__webviewMessages.some((message) => message.type === "productState"
+    && message.state
+    && message.state.agent
+    && message.state.agent.lastResponse
+    && typeof message.state.agent.lastResponse.content === "string"));
   assert.ok(vscode.__webviewMessages.some((message) => message.type === "productState"));
-  assert.ok(vscode.__outputLines.some((line) => line.includes("Rejected Levi Copilot webview message")));
+  assert.ok(vscode.__outputLines.some((line) => line.includes("Rejected Levi Build Chat webview message")));
 });
 
 test("surfaces agent view, secure webview, conversations, turns, context, plan, tools, cancellation, and retry", async () => {

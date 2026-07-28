@@ -2470,9 +2470,20 @@ LeviApplicationRuntime.prototype.modelGatewayCommand = async function modelGatew
     return { status: "AVAILABLE", gatewayAvailable: true, models };
   }
   if (kind === "health") {
+    if (input.check === true && typeof gateway.healthCheckAll === "function") {
+      await gateway.healthCheckAll(input.options || {});
+      if (typeof gateway.listProviders === "function" && typeof gateway.discoverModels === "function") {
+        for (const provider of gateway.listProviders()) {
+          if (provider && provider.enabled !== false && ["AVAILABLE", "DEGRADED"].includes(String(provider.state || "").toUpperCase())) {
+            await gateway.discoverModels(provider.id, input.options || {}).catch(() => []);
+          }
+        }
+      }
+    }
     const summary = typeof gateway.getGatewayHealth === "function" ? gateway.getGatewayHealth() : { gatewayState: "UNKNOWN" };
-    const providers = input.check === true && typeof gateway.healthCheckAll === "function" ? await gateway.healthCheckAll(input.options || {}) : [];
-    return { status: "AVAILABLE", gatewayAvailable: true, summary, providers };
+    const providers = typeof gateway.listProviders === "function" ? gateway.listProviders() : [];
+    const models = typeof gateway.listModels === "function" ? gateway.listModels({}) : [];
+    return { status: "AVAILABLE", gatewayAvailable: true, summary, providers, models };
   }
   if (kind === "routingPreview") return { status: "AVAILABLE", gatewayAvailable: true, routing: gateway.route(input.request || input, input.options || {}) };
   if (kind === "complete") return gateway.complete(input.request || input, input.options || {});

@@ -1,5 +1,4 @@
 const {
-  agentModel,
   approvalsModel,
   changesModel,
   diagnosticsModel,
@@ -60,10 +59,10 @@ function createViewProviders(vscode) {
     overview: new LeviTreeProvider(vscode, "levi.overview", (state) => overviewModel(state)),
     environment: new LeviTreeProvider(vscode, "levi.environment", (state) => environmentModel(state)),
     project: new LeviTreeProvider(vscode, "levi.project", (state) => projectModel(state.project || {})),
+    settings: new LeviTreeProvider(vscode, "levi.settings", (state) => settingsModel(state)),
     operations: new LeviTreeProvider(vscode, "levi.operations", (state) => operationsModel(state.operations || [])),
     approvals: new LeviTreeProvider(vscode, "levi.approvals", (state) => approvalsModel(state.approvals || [])),
     models: new LeviTreeProvider(vscode, "levi.models", (state) => modelsModel(state)),
-    agent: new LeviTreeProvider(vscode, "levi.agent", (state) => agentModel(state)),
     changes: new LeviTreeProvider(vscode, "levi.changes", (state) => changesModel(state)),
     multiAgent: new LeviTreeProvider(vscode, "levi.multiAgent", (state) => multiAgentModel(state)),
     workflows: new LeviTreeProvider(vscode, "levi.workflows", (state) => workflowsModel(state)),
@@ -73,6 +72,20 @@ function createViewProviders(vscode) {
     stressScalability: new LeviTreeProvider(vscode, "levi.stressScalability", (state) => stressScalabilityModel(state)),
     qualification: new LeviTreeProvider(vscode, "levi.qualification", (state) => qualificationModel(state)),
     diagnostics: new LeviTreeProvider(vscode, "levi.diagnostics", (state) => diagnosticsModel(state)),
+  };
+}
+
+function settingsModel(state = {}) {
+  const config = state.configuration || {};
+  const homeConnection = state.homeConnection || {};
+  const readiness = homeConnection.ollamaReadiness || {};
+  return {
+    label: "Settings",
+    children: [
+      { label: "Local AI", description: readiness.status === "READY" || readiness.status === "NEEDS_MODEL" ? "Ready" : "Not connected", kind: "settings" },
+      { label: "Behavior", description: config.requireApproval === false ? "Manual approvals off" : "Ask before edits and commands", kind: "settings" },
+      { label: "Advanced", description: "Developer Tools", kind: "settings" },
+    ],
   };
 }
 

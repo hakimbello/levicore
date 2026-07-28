@@ -2,12 +2,15 @@
   "name": "levi-core",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "bin": {
     "levi": "bin/levi.js"
   },
   "scripts": {
     "levi": "node bin/levi.js",
-    "test": "node --test",
+    "test": "node --test test/*.test.js",
     "extension:check": "npm.cmd --prefix packages/vscode-extension run check",
     "extension:test": "npm.cmd --prefix packages/vscode-extension test",
     "extension:validate": "npm.cmd --prefix packages/vscode-extension run validate"

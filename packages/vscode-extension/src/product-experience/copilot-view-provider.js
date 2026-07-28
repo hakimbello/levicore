@@ -52,13 +52,13 @@ function renderCopilotHtml(state = {}, options = {}) {
       <div id="headerMeta" class="meta"></div>
     </div>
     <div class="row">
-      <button id="newChat" class="secondary" aria-label="Start a new Levi conversation">New</button>
+      <button id="newChat" class="secondary" aria-label="Start a new Levi conversation">New Chat</button>
       <button id="environment" class="secondary" aria-label="Open Levi Environment">Environment</button>
-      <button id="settings" class="secondary" aria-label="Show technical details">Details</button>
+      <button id="settings" class="secondary" aria-label="Open Levi settings">Settings</button>
     </div>
   </header>
   <main>
-    <section class="card" aria-labelledby="buildTimelineLabel">
+    <section id="buildTimelineSection" class="card" aria-labelledby="buildTimelineLabel" hidden>
       <div class="row" style="justify-content: space-between;">
         <h2 id="buildTimelineLabel">Live Build Timeline</h2>
         <button id="toggleTimelineDetails" class="secondary" aria-expanded="false" aria-controls="buildTimelineDetails">Details</button>
@@ -90,13 +90,14 @@ function renderCopilotHtml(state = {}, options = {}) {
       <textarea id="message" maxlength="${EXPERIENCE_BOUNDS.maximumInputBytes}" placeholder="Ask, plan, build, fix, review, or learn about this workspace."></textarea>
       <div class="row">
         <button id="send" aria-label="Send message to Levi">Send</button>
-        <button id="cancel" class="secondary" aria-label="Cancel active Levi turn">Cancel</button>
+        <button id="cancel" class="secondary" aria-label="Stop active Levi turn">Stop</button>
         <button id="retry" class="secondary" aria-label="Retry last Levi turn">Retry</button>
         <button id="currentFile" class="secondary" aria-label="Attach current file">Current file</button>
         <button id="selection" class="secondary" aria-label="Attach selected code">Selection</button>
       </div>
       <div id="routing" class="meta" aria-live="polite"></div>
     </section>
+    <section class="card" aria-labelledby="historyLabel"><h2 id="historyLabel">Conversation History</h2><div id="history" class="list"></div></section>
     <section class="card" aria-labelledby="activityLabel"><h2 id="activityLabel">Now</h2><div id="activity" class="list"></div></section>
     <section class="card" aria-labelledby="approvalLabel"><h2 id="approvalLabel">Approval</h2><div id="approval" class="list"></div></section>
     <section class="card" aria-labelledby="responseLabel"><h2 id="responseLabel">Response</h2><pre id="response"></pre></section>
@@ -147,11 +148,13 @@ function renderCopilotHtml(state = {}, options = {}) {
       completionNode.hidden = true;
       detailsNode.hidden = true;
       if (!buildTimeline) {
-        summary.append(row("No active build", "Send a request to start the live build timeline."));
+        byId("buildTimelineSection").hidden = true;
+        summary.append(row("No active build", ""));
         liveNode.textContent = "No active build.";
         toggle.setAttribute("aria-expanded", "false");
         return;
       }
+      byId("buildTimelineSection").hidden = false;
       const current = buildTimeline.currentStage || {};
       const headline = document.createElement("div");
       headline.className = "row";
@@ -252,6 +255,7 @@ function renderCopilotHtml(state = {}, options = {}) {
       setText("stage", state.stage || "Starting");
       setText("headerMeta", [state.workspace && state.workspace.name, state.model && state.model.selected && state.model.selected.name || "No model", state.model && state.model.privacy || "Privacy enforced", state.mode].filter(Boolean).join(" / "));
       setText("routing", [state.model && state.model.selected && (state.model.selected.remote ? "Remote routing requires privacy policy" : "Local/private routing"), state.context && state.context.scope].filter(Boolean).join(" / "));
+      fillList("history", state.agent && state.agent.conversations || [], "No messages yet");
       fillList("activity", state.activity || [], "Nothing active");
       fillList("approval", state.activeApproval ? [state.activeApproval] : [], "No approval waiting");
       const turn = state.agent && state.agent.activeTurn || {};
@@ -269,7 +273,7 @@ function renderCopilotHtml(state = {}, options = {}) {
     byId("currentFile").addEventListener("click", () => send("attachCurrentFile"));
     byId("selection").addEventListener("click", () => send("attachSelectedCode"));
     byId("environment").addEventListener("click", () => send("showEnvironment"));
-    byId("settings").addEventListener("click", () => send("showTechnicalDetails"));
+    byId("settings").addEventListener("click", () => send("openSettings"));
     byId("toggleTimelineDetails").addEventListener("click", () => send("toggleTimelineDetails"));
     byId("openChangeReview").addEventListener("click", () => send("openChangeReview"));
     byId("openValidationDetails").addEventListener("click", () => send("openValidationDetails"));

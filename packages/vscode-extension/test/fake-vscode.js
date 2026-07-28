@@ -1,4 +1,9 @@
 const path = require("node:path");
+const {
+  LEVI_BUILD_FOCUS_COMMAND_ID,
+  LEVI_BUILD_VIEW_ID,
+  LEVI_OPEN_CONTAINER_COMMAND_ID,
+} = require("../src/product-experience/product-experience-constants");
 
 class FakeEventEmitter {
   constructor() {
@@ -10,7 +15,9 @@ class FakeEventEmitter {
   }
 
   fire(value) {
-    for (const listener of this.listeners.slice()) listener(value);
+    const results = [];
+    for (const listener of this.listeners.slice()) results.push(listener(value));
+    return Promise.all(results);
   }
 
   dispose() {
@@ -49,8 +56,10 @@ class FakeUri {
 function createFakeVSCode(options = {}) {
   const commandHandlers = new Map();
   const treeProviders = new Map();
+  const webviewViewProviders = new Map();
   const documentProviders = new Map();
   const outputLines = [];
+  const executedCommands = [];
   const progressCalls = [];
   const webviewMessages = [];
   const watcherEmitter = new FakeEventEmitter();
@@ -181,6 +190,10 @@ function createFakeVSCode(options = {}) {
         treeProviders.set(id, provider);
         return { dispose: () => treeProviders.delete(id) };
       },
+      registerWebviewViewProvider(id, provider, providerOptions) {
+        webviewViewProviders.set(id, { provider, options: providerOptions || {} });
+        return { dispose: () => webviewViewProviders.delete(id) };
+      },
       async withProgress(options, task) {
         progressCalls.push(options);
         const cancellationListeners = [];
@@ -230,7 +243,7 @@ function createFakeVSCode(options = {}) {
             html: "",
             postMessage(message) { webviewMessages.push(message); return Promise.resolve(true); },
             onDidReceiveMessage: receiveEmitter.event,
-            __receive(message) { receiveEmitter.fire(message); },
+            __receive(message) { return receiveEmitter.fire(message); },
           },
           onDidDispose: disposeEmitter.event,
           dispose() { panel.disposed = true; disposeEmitter.fire(undefined); },
@@ -245,8 +258,18 @@ function createFakeVSCode(options = {}) {
         return { dispose: () => commandHandlers.delete(id) };
       },
       async executeCommand(id, ...args) {
-        if (id === "workbench.view.extension.levi") {
+        executedCommands.push({ id, args });
+        if (/chat/i.test(String(id)) && !String(id).startsWith("levi.")) vscode.__nativeChatInvoked = true;
+        if (id === LEVI_OPEN_CONTAINER_COMMAND_ID) {
           vscode.__dashboardOpened = true;
+          return true;
+        }
+        if (id === LEVI_BUILD_FOCUS_COMMAND_ID) {
+          return vscode.__resolveWebviewView(LEVI_BUILD_VIEW_ID);
+        }
+        if (id === "workbench.action.openFolder" || id === "workbench.action.files.openFolder") {
+          vscode.__folderCommands = vscode.__folderCommands || [];
+          vscode.__folderCommands.push({ id, args });
           return true;
         }
         const handler = commandHandlers.get(id);
@@ -255,12 +278,47 @@ function createFakeVSCode(options = {}) {
       },
     },
     __commandHandlers: commandHandlers,
+    __executedCommands: executedCommands,
+    __nativeChatInvoked: false,
     __treeProviders: treeProviders,
+    __webviewViewProviders: webviewViewProviders,
     __documentProviders: documentProviders,
     __outputLines: outputLines,
     __progressCalls: progressCalls,
     __webviewMessages: webviewMessages,
     __files: files,
+    async __resolveWebviewView(id) {
+      const entry = webviewViewProviders.get(id);
+      if (!entry) throw new Error(`Unknown webview view ${id}.`);
+      if (vscode.__lastWebviewView && vscode.__lastWebviewView.viewType === id && !vscode.__lastWebviewView.disposed) {
+        return vscode.__lastWebviewView;
+      }
+      const receiveEmitter = new FakeEventEmitter();
+      const disposeEmitter = new FakeEventEmitter();
+      const view = {
+        viewType: id,
+        visible: true,
+        webview: {
+          html: "",
+          options: {},
+          postMessage(message) { webviewMessages.push(message); return Promise.resolve(true); },
+          onDidReceiveMessage: receiveEmitter.event,
+          __receive(message) { return receiveEmitter.fire(message); },
+        },
+        show() {
+          view.visible = true;
+          vscode.__lastWebviewView = view;
+        },
+        onDidDispose: disposeEmitter.event,
+        dispose() {
+          view.disposed = true;
+          disposeEmitter.fire(undefined);
+        },
+      };
+      vscode.__lastWebviewView = view;
+      await entry.provider.resolveWebviewView(view, {}, {});
+      return view;
+    },
   };
 
   return vscode;

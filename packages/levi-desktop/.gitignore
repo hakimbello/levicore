@@ -1,0 +1,53 @@
+# Generated dependencies and build output
+node_modules/
+dist/
+dist-electron/
+release/
+releases/
+out/
+artifacts/
+installers/
+
+# Vite and test caches
+.vite/
+node_modules/.vite/
+coverage/
+.cache/
+.turbo/
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Logs and local env
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.env
+.env.*
+!.env.example
+
+# Packaging outputs
+*.AppImage
+*.dmg
+*.exe
+*.msi
+*.deb
+*.rpm
+*.snap
+*.blockmap
+latest*.yml
+
+# OS and editor metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+.idea/
+*.code-workspace
+
+# Temporary Electron/runtime files
+*.tmp
+*.temp

@@ -157,7 +157,7 @@ test("composer prefill uses approved plan without auto submit", async () => {
   const result = await extension.productExperience.launchComposerFromWizard();
 
   assert.equal(result.autoSubmit, false);
-  assert.equal(extension.productExperience.panel.viewType, "leviCopilot");
+  assert.equal(extension.productExperience.buildView.viewType, "levi.build");
   assert.ok(vscode.__webviewMessages.some((message) => message.type === "productState"
     && message.state.pendingComposerPrompt
     && message.state.pendingComposerPrompt.includes("Build Plan")));
