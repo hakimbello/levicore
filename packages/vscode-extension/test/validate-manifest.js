@@ -9,6 +9,9 @@ const requiredCommands = [
   "levi.openDashboard",
   "levi.open",
   "levi.focusComposer",
+  "levi.openBuildChat",
+  "levi.openProjects",
+  "levi.openSettings",
   "levi.newChat",
   "levi.showEnvironment",
   "levi.showActiveWorkflow",
@@ -174,7 +177,7 @@ assert.deepEqual(new Set(commandIds).size, commandIds.length);
 for (const command of requiredCommands) assert.ok(commandIds.includes(command), `Missing command ${command}`);
 
 const views = manifest.contributes.views.levi.map((view) => view.id);
-for (const view of ["levi.overview", "levi.environment", "levi.project", "levi.operations", "levi.approvals", "levi.models", "levi.agent", "levi.changes", "levi.multiAgent", "levi.workflows", "levi.performance", "levi.reliability", "levi.securityAssurance", "levi.stressScalability", "levi.qualification"]) assert.ok(views.includes(view), `Missing view ${view}`);
+for (const view of ["levi.overview", "levi.environment", "levi.project", "levi.settings", "levi.operations", "levi.approvals", "levi.models", "levi.build", "levi.changes", "levi.multiAgent", "levi.workflows", "levi.performance", "levi.reliability", "levi.securityAssurance", "levi.stressScalability", "levi.qualification"]) assert.ok(views.includes(view), `Missing view ${view}`);
 
 const properties = manifest.contributes.configuration.properties;
 for (const setting of [
@@ -196,6 +199,7 @@ for (const setting of [
   "levi.experience.compactEnvironment",
   "levi.experience.autoOpenOnFirstRun",
   "levi.experience.showCompletionNotifications",
+  "levi.experience.showBuildWizard",
   "levi.experience.timelineExpanded",
   "levi.experience.preferredPanelLocation",
   "levi.models.enabled",

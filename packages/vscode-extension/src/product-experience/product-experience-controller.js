@@ -1,4 +1,10 @@
-const { EXPERIENCE_BOUNDS, PRODUCT_MODES } = require("./product-experience-constants");
+const {
+  EXPERIENCE_BOUNDS,
+  LEVI_BUILD_FOCUS_COMMAND_ID,
+  LEVI_BUILD_VIEW_ID,
+  LEVI_OPEN_CONTAINER_COMMAND_ID,
+  PRODUCT_MODES,
+} = require("./product-experience-constants");
 const { renderCopilotHtml } = require("./copilot-view-provider");
 const {
   WIZARD_STEPS,
@@ -13,6 +19,7 @@ const {
 const { renderBuildWizardHtml } = require("./build-wizard-view-provider");
 const { presentHomeState } = require("./home-readiness");
 const { renderHomeHtml } = require("./home-view-provider");
+const { renderSettingsHtml } = require("./settings-view-provider");
 const {
   createBuildTimeline,
   mapAgentEventToTimeline,
@@ -29,10 +36,13 @@ class ProductExperienceController {
     this.context = options.context || {};
     this.extension = options.extension;
     this.panel = null;
+    this.buildView = null;
     this.homePanel = null;
     this.wizardPanel = null;
+    this.settingsPanel = null;
     this.buildWizard = createWizardSession();
     this.pendingComposerPrompt = null;
+    this.pendingHomeBuildPrompt = null;
     this.buildTimeline = null;
     this.mode = PRODUCT_MODES.ASK;
     this.preferences = {
@@ -85,12 +95,13 @@ class ProductExperienceController {
 
   async openBuildWizard(options = {}) {
     const home = this.homeState({ connectionChecked: options.connectionChecked !== false });
-    if (!home.ready) {
+    if (!home.ready && options.allowBlocked !== true) {
       await this.extension.vscode.window.showInformationMessage(home.startBlockedReason || "Complete the setup steps on Levi Home before building.");
       this.postHomeState(home);
       return null;
     }
-    this.buildWizard = createWizardSession();
+    this.buildWizard = createWizardSession({ goal: options.prompt || "" });
+    this.seedWizardFromPrompt(options.prompt || "");
     this.refresh();
     const state = this.wizardState();
     if (!this.vscode.window.createWebviewPanel) {
@@ -151,28 +162,92 @@ class ProductExperienceController {
     return this.extension.showDocument("onboarding", "Levi Onboarding", state.onboarding);
   }
 
-  async openCopilot() {
+  async openBuildChat(options = {}) {
+    const entryPoint = options.entryPoint || "levi.openBuildChat";
     this.refresh();
-    if (!this.vscode.window.createWebviewPanel) return this.extension.showDocument("product-copilot", "Levi", this.state());
-    if (!this.panel) {
-      this.panel = this.vscode.window.createWebviewPanel("leviCopilot", "Levi Composer", this.vscode.ViewColumn ? this.vscode.ViewColumn.One : 1, {
+    if (!this.vscode.window.registerWebviewViewProvider) {
+      this.logBuildRoute({
+        entryPoint,
+        resolvedCommand: "showDocument:build-chat",
+        nativeChatInvoked: false,
+      });
+      return this.extension.showDocument("build-chat", "Levi Build", this.state());
+    }
+    if (this.vscode.commands && typeof this.vscode.commands.executeCommand === "function") {
+      await this.vscode.commands.executeCommand(LEVI_OPEN_CONTAINER_COMMAND_ID);
+      await this.vscode.commands.executeCommand(LEVI_BUILD_FOCUS_COMMAND_ID).catch(() => null);
+    }
+    if (this.buildView && typeof this.buildView.show === "function") this.buildView.show(true);
+    this.logBuildRoute({
+      entryPoint,
+      resolvedCommand: `${LEVI_OPEN_CONTAINER_COMMAND_ID} -> ${LEVI_BUILD_FOCUS_COMMAND_ID}`,
+      nativeChatInvoked: false,
+    });
+    this.postState();
+    return this.buildView;
+  }
+
+  resolveWebviewView(webviewView) {
+    this.buildView = webviewView;
+    if (webviewView.webview) {
+      webviewView.webview.options = {
+        ...(webviewView.webview.options || {}),
+        enableScripts: true,
+      };
+      webviewView.webview.html = renderCopilotHtml(this.state());
+      if (webviewView.webview.onDidReceiveMessage) {
+        this.extension.track(webviewView.webview.onDidReceiveMessage((message) => this.handleMessage(message)));
+      }
+    }
+    if (webviewView.onDidDispose) webviewView.onDidDispose(() => { this.buildView = null; });
+    this.logBuildRoute({
+      entryPoint: "activitybar-build-view",
+      resolvedCommand: LEVI_BUILD_FOCUS_COMMAND_ID,
+      nativeChatInvoked: false,
+    });
+    this.postState();
+    return webviewView;
+  }
+
+  async openSettings() {
+    const state = this.settingsState();
+    if (!this.vscode.window.createWebviewPanel) return this.extension.showDocument("settings", "Levi Settings", state);
+    if (!this.settingsPanel) {
+      this.settingsPanel = this.vscode.window.createWebviewPanel("leviSettings", "Levi Settings", this.vscode.ViewColumn ? this.vscode.ViewColumn.One : 1, {
         enableScripts: true,
         retainContextWhenHidden: true,
       });
-      this.panel.webview.html = renderCopilotHtml(this.state());
-      if (this.panel.webview.onDidReceiveMessage) {
-        this.extension.track(this.panel.webview.onDidReceiveMessage((message) => this.handleMessage(message)));
+      this.settingsPanel.webview.html = renderSettingsHtml(state);
+      if (this.settingsPanel.webview.onDidReceiveMessage) {
+        this.extension.track(this.settingsPanel.webview.onDidReceiveMessage((message) => this.handleSettingsMessage(message)));
       }
-      if (this.panel.onDidDispose) this.panel.onDidDispose(() => { this.panel = null; });
+      if (this.settingsPanel.onDidDispose) this.settingsPanel.onDidDispose(() => { this.settingsPanel = null; });
+    } else {
+      this.settingsPanel.webview.html = renderSettingsHtml(state);
     }
-    this.postState();
-    return this.panel;
+    this.postSettingsState(state);
+    return this.settingsPanel;
+  }
+
+  settingsState() {
+    return this.extension && typeof this.extension.settingsPresentationInput === "function" ? this.extension.settingsPresentationInput() : {};
   }
 
   focusComposer() {
-    if (!this.panel) return this.openCopilot();
-    this.postState();
-    return this.panel;
+    return this.openBuildChat({ entryPoint: "levi.focusComposer" });
+  }
+
+  logBuildRoute(details = {}) {
+    if (!this.extension || typeof this.extension.outputLine !== "function") return;
+    const providerClassName = this.constructor && this.constructor.name || "ProductExperienceController";
+    this.extension.outputLine([
+      "Levi Build route:",
+      `requested entry point=${details.entryPoint || "unknown"}`,
+      `resolved command=${details.resolvedCommand || LEVI_BUILD_FOCUS_COMMAND_ID}`,
+      `resolved view ID=${LEVI_BUILD_VIEW_ID}`,
+      `provider class name=${providerClassName}`,
+      `native Chat invoked: ${details.nativeChatInvoked === true ? "true" : "false"}`,
+    ].join(" "));
   }
 
   async newChat(input = {}) {
@@ -319,8 +394,9 @@ class ProductExperienceController {
       openProjectFolder: () => this.extension.openProjectFolder().then(() => this.refreshHomeAfterAction()),
       analyzeProject: () => this.extension.analyzeProject().then(() => this.refreshHomeAfterAction()),
       setupOllama: () => this.extension.showHomeSetupGuide(),
-      openComposer: () => this.extension.openProductExperience(),
-      startBuilding: () => this.openBuildWizard({ connectionChecked: true }),
+      openComposer: () => this.prefillComposerFromHome(parsed.message.prompt || ""),
+      openSettings: () => this.openSettings(),
+      startBuilding: () => this.startBuildingFromHome({ prompt: parsed.message.prompt || "" }),
     };
     const handler = handlers[parsed.message.command];
     return handler ? handler() : null;
@@ -355,6 +431,15 @@ class ProductExperienceController {
     return this.postWizardState();
   }
 
+  seedWizardFromPrompt(prompt) {
+    const goal = String(prompt || "").trim();
+    if (!goal) return;
+    const templateId = inferTemplateFromPrompt(goal);
+    this.buildWizard.templateId = templateId;
+    this.buildWizard.answers = answersFromPrompt(templateId, goal);
+    this.buildWizard.step = WIZARD_STEPS.QUESTIONS;
+  }
+
   updateWizardAnswers(answers = {}) {
     const questions = TEMPLATE_QUESTIONS[this.buildWizard.templateId] || [];
     this.buildWizard.answers = mergeAnswers(this.buildWizard, answers, questions);
@@ -386,7 +471,10 @@ class ProductExperienceController {
       this.postWizardState({ blockedReason: validation.reason });
       return null;
     }
-    this.buildWizard.plan = generateImplementationPlan(this.buildWizard.templateId, this.buildWizard.answers);
+    this.buildWizard.plan = generateImplementationPlan(this.buildWizard.templateId, {
+      ...(this.buildWizard.answers || {}),
+      projectGoal: this.buildWizard.goal || "",
+    });
     this.buildWizard.step = WIZARD_STEPS.PLAN;
     this.buildWizard.approved = false;
     return this.postWizardState();
@@ -431,8 +519,55 @@ class ProductExperienceController {
     return { routed: "composer", autoSubmit: false };
   }
 
-  async startBuildingFromHome() {
-    return this.openBuildWizard({ connectionChecked: true });
+  async startBuildingFromHome(input = {}) {
+    return this.handleHomeBuild(input);
+  }
+
+  async handleHomeBuild(input = {}) {
+    const prompt = String(input.prompt || "").slice(0, EXPERIENCE_BOUNDS.maximumInputBytes);
+    this.pendingHomeBuildPrompt = prompt;
+    this.persistPreference("pendingHomeBuildPrompt", prompt);
+    if (!this.extension.hasProjectFolder()) {
+      const choice = await this.extension.chooseProjectFolderForPrompt(prompt);
+      if (!choice) {
+        this.postFolderChoice();
+        return null;
+      }
+      await this.extension.openProjectFolder({ mode: choice, prompt });
+      return this.resumePendingHomeBuildIfReady();
+    }
+    if (this.shouldUseBuildWizard(prompt)) {
+      return this.openBuildWizard({ connectionChecked: true, allowBlocked: true, prompt });
+    }
+    return this.prefillComposerFromHome(prompt);
+  }
+
+  async resumePendingHomeBuildIfReady() {
+    if (!this.pendingHomeBuildPrompt || !this.extension.hasProjectFolder()) {
+      this.postHomeState();
+      return null;
+    }
+    return this.handleHomeBuild({ prompt: this.pendingHomeBuildPrompt });
+  }
+
+  shouldUseBuildWizard(prompt) {
+    const config = this.extension && this.extension.config ? this.extension.config().experience || {} : {};
+    if (config.showBuildWizard === false) return false;
+    const text = String(prompt || "").toLowerCase();
+    if (/\b(fix|error|bug|auth|authentication|codebase|this project|existing project)\b/.test(text)) return false;
+    return true;
+  }
+
+  async prefillComposerFromHome(prompt) {
+    const text = String(prompt || "").slice(0, EXPERIENCE_BOUNDS.maximumInputBytes);
+    this.pendingComposerPrompt = text;
+    this.pendingHomeBuildPrompt = null;
+    this.persistPreference("pendingHomeBuildPrompt", null);
+    await this.extension.openProductExperience();
+    this.mode = PRODUCT_MODES.BUILD;
+    this.persistPreference("selectedMode", this.mode);
+    this.refresh();
+    return { routed: "composer", autoSubmit: false };
   }
 
   async refreshHomeAfterAction() {
@@ -446,7 +581,7 @@ class ProductExperienceController {
   handleMessage(message) {
     const parsed = validateCopilotMessage(message, { maximumSize: EXPERIENCE_BOUNDS.maximumSerializedStateBytes });
     if (!parsed.valid) {
-      this.extension.outputLine(`Rejected Levi Copilot webview message: ${parsed.reason}`);
+      this.extension.outputLine(`Rejected Levi Build Chat webview message: ${parsed.reason}`);
       return null;
     }
     const handlers = {
@@ -461,6 +596,7 @@ class ProductExperienceController {
       showContext: () => this.showContext(),
       showEnvironment: () => this.showEnvironment(),
       showTechnicalDetails: () => this.showTechnicalDetails(),
+      openSettings: () => this.openSettings(),
       openOnboarding: () => this.openOnboarding(),
       toggleTimelineDetails: () => this.toggleTimelineDetails(),
       openChangeReview: () => this.showActiveChange(),
@@ -470,19 +606,27 @@ class ProductExperienceController {
   }
 
   postState(state = null) {
-    if (!this.panel || !this.panel.webview || typeof this.panel.webview.postMessage !== "function") return;
+    const targets = this.webviewTargets();
+    if (!targets.length) return;
     const payload = state || this.state();
     payload.buildTimeline = this.buildTimelineState();
     if (this.pendingComposerPrompt) {
       payload.pendingComposerPrompt = this.pendingComposerPrompt;
       this.pendingComposerPrompt = null;
     }
-    this.panel.webview.postMessage({ type: "productState", state: payload });
+    for (const target of targets) {
+      target.webview.postMessage({ type: "productState", state: payload });
+    }
   }
 
   postBuildTimeline() {
-    if (!this.panel || !this.panel.webview || typeof this.panel.webview.postMessage !== "function") return;
-    this.panel.webview.postMessage({ type: "buildTimeline", state: this.buildTimelineState() });
+    for (const target of this.webviewTargets()) {
+      target.webview.postMessage({ type: "buildTimeline", state: this.buildTimelineState() });
+    }
+  }
+
+  webviewTargets() {
+    return [this.buildView, this.panel].filter((target) => target && target.webview && typeof target.webview.postMessage === "function");
   }
 
   postWizardState(options = {}) {
@@ -497,6 +641,27 @@ class ProductExperienceController {
     this.homePanel.webview.postMessage({ type: "homeState", state: state || this.homeState({ connectionChecked: true }) });
   }
 
+  postFolderChoice() {
+    if (!this.homePanel || !this.homePanel.webview || typeof this.homePanel.webview.postMessage !== "function") return;
+    this.homePanel.webview.postMessage({ type: "folderChoice" });
+  }
+
+  postSettingsState(state = null) {
+    if (!this.settingsPanel || !this.settingsPanel.webview || typeof this.settingsPanel.webview.postMessage !== "function") return;
+    this.settingsPanel.webview.postMessage({ type: "settingsState", state: state || this.settingsState() });
+  }
+
+  handleSettingsMessage(message) {
+    if (!message || typeof message !== "object") return null;
+    const handlers = {
+      testConnection: () => this.extension.testModelConnectionFromHome().then(() => this.postSettingsState()),
+      changeModel: () => this.extension.selectModel().then(() => this.postSettingsState()),
+      enableDeveloperTools: () => this.extension.setDeveloperToolsEnabled(message.enabled === true).then(() => this.postSettingsState()),
+    };
+    const handler = handlers[message.command];
+    return handler ? handler() : null;
+  }
+
   loadPreferences() {
     const globalState = this.context && this.context.globalState;
     if (!globalState || typeof globalState.get !== "function") return;
@@ -505,6 +670,7 @@ class ProductExperienceController {
       this.preferences = { ...this.preferences, ...(saved.preferences || {}) };
       this.mode = normalizeMode(saved.selectedMode || saved.mode || this.mode);
       this.onboarding = { ...this.onboarding, ...(saved.onboarding || {}) };
+      this.pendingHomeBuildPrompt = saved.pendingHomeBuildPrompt || null;
     }
   }
 
@@ -515,23 +681,55 @@ class ProductExperienceController {
       preferences: this.preferences,
       selectedMode: key === "selectedMode" ? value : this.mode,
       onboarding: this.onboarding,
+      pendingHomeBuildPrompt: key === "pendingHomeBuildPrompt" ? value : this.pendingHomeBuildPrompt,
     };
     globalState.update("levi.productExperience", next);
   }
 
   dispose() {
     if (this.panel && typeof this.panel.dispose === "function") this.panel.dispose();
+    if (this.buildView && typeof this.buildView.dispose === "function") this.buildView.dispose();
     if (this.homePanel && typeof this.homePanel.dispose === "function") this.homePanel.dispose();
     if (this.wizardPanel && typeof this.wizardPanel.dispose === "function") this.wizardPanel.dispose();
+    if (this.settingsPanel && typeof this.settingsPanel.dispose === "function") this.settingsPanel.dispose();
     this.panel = null;
+    this.buildView = null;
     this.homePanel = null;
     this.wizardPanel = null;
+    this.settingsPanel = null;
     this.buildTimeline = null;
   }
 }
 
 function normalizeMode(mode) {
   return Object.values(PRODUCT_MODES).includes(mode) ? mode : PRODUCT_MODES.ASK;
+}
+
+function inferTemplateFromPrompt(prompt) {
+  const text = String(prompt || "").toLowerCase();
+  if (/restaurant|website|site|landing|business/.test(text)) return "landing-page";
+  if (/api|endpoint|server/.test(text)) return "rest-api";
+  if (/mobile|ios|android/.test(text)) return "mobile-app";
+  if (/vs code|vscode|extension/.test(text)) return "vscode-extension";
+  if (/existing|codebase|fix|error|auth/.test(text)) return "existing-project";
+  return "web-app";
+}
+
+function answersFromPrompt(templateId, prompt) {
+  const goal = String(prompt || "").trim();
+  if (templateId === "landing-page") return { businessName: inferName(goal, "Business Website"), targetAudience: "Customers" };
+  if (templateId === "web-app") return { projectName: inferName(goal, "Web App") };
+  if (templateId === "mobile-app") return { appName: inferName(goal, "Mobile App") };
+  if (templateId === "rest-api") return { projectName: inferName(goal, "API") };
+  if (templateId === "vscode-extension") return { extensionName: inferName(goal, "VS Code Extension"), purpose: goal };
+  if (templateId === "existing-project") return { goals: goal };
+  return {};
+}
+
+function inferName(prompt, fallback) {
+  const text = String(prompt || "").replace(/[.?!]+$/g, "").trim();
+  if (!text) return fallback;
+  return text.length > 80 ? text.slice(0, 80) : text;
 }
 
 module.exports = {

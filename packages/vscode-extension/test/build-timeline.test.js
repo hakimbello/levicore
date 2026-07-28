@@ -235,7 +235,7 @@ test("terminal timelines reject unrelated late updates", () => {
 test("composer renders the live build timeline", async () => {
   const { extension } = await createReadyExtension();
   await extension.openProductExperience();
-  const html = extension.productExperience.panel.webview.html;
+  const html = extension.productExperience.buildView.webview.html;
   assert.match(html, /Live Build Timeline/);
   assert.match(html, /buildTimelineStages/);
   assert.match(html, /aria-live="polite"/);
@@ -330,4 +330,5 @@ test("extension activation and disposal remain clean", async () => {
   extension.productExperience.startBuildTimeline();
   await extension.deactivate();
   assert.equal(extension.productExperience.buildTimeline, null);
+  assert.equal(extension.productExperience.buildView, null);
 });

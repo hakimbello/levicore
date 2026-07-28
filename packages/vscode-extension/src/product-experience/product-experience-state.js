@@ -28,6 +28,7 @@ function normalizeProductExperienceState(input = {}, options = {}) {
     status,
     workspace: presentWorkspace(state),
     model: presentModelPickerState(state),
+    agent: presentAgent(state.agent || {}),
     git: presentGitState(state),
     context: presentContext(state),
     approvals: (state.approvals || []).slice(-EXPERIENCE_BOUNDS.maximumCards).map((approval) => presentApprovalCard(approval, state)),
@@ -64,6 +65,46 @@ function mapProductStage(input = {}) {
   if ([operationState, workflowState, turnState].some((state) => ["SUCCEEDED", "COMPLETED"].includes(state))) return PRODUCT_STAGES.COMPLETE;
   if (input.runtimeState === "READY") return PRODUCT_STAGES.UNDERSTANDING;
   return PRODUCT_STAGES.NEEDS_ATTENTION;
+}
+
+function presentAgent(agent) {
+  const activeTurn = agent.activeTurn || null;
+  const activeResponse = cloneResponse(activeTurn && activeTurn.assistantResponse);
+  return {
+    health: agent.health || null,
+    conversations: toList(agent.conversations || []).slice(-EXPERIENCE_BOUNDS.maximumCards).map((conversation) => ({
+      id: conversation.id,
+      title: conversation.title || conversation.objective || "Conversation",
+      description: conversation.objective || conversation.state || "",
+      state: conversation.state || "",
+    })),
+    activeConversation: agent.activeConversation ? {
+      id: agent.activeConversation.id,
+      title: agent.activeConversation.title || agent.activeConversation.objective || "Conversation",
+      state: agent.activeConversation.state || "",
+    } : null,
+    activeTurn: activeTurn ? {
+      id: activeTurn.id,
+      state: activeTurn.state || "",
+      assistantResponse: activeResponse,
+    } : null,
+    lastResponse: cloneResponse(agent.lastResponse) || activeResponse,
+    contextSummary: toList(agent.contextSummary || []).slice(0, EXPERIENCE_BOUNDS.maximumCards),
+    planSummary: toList(agent.planSummary || []).slice(0, EXPERIENCE_BOUNDS.maximumCards),
+    mode: agent.mode || "",
+  };
+}
+
+function cloneResponse(response) {
+  if (!response || typeof response !== "object") return response || null;
+  return {
+    content: response.content || "",
+    outcome: response.outcome || "",
+    modelId: response.modelId || "",
+    providerId: response.providerId || "",
+    warnings: toList(response.warnings || []).slice(0, EXPERIENCE_BOUNDS.maximumCards),
+    limitations: toList(response.limitations || []).slice(0, EXPERIENCE_BOUNDS.maximumCards),
+  };
 }
 
 function presentWorkspace(state) {

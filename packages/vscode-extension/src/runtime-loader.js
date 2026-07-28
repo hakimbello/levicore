@@ -9,8 +9,8 @@ const monorepoRoot = path.join(__dirname, "..", "..", "..", "src");
 function resolveRuntimeModule(modulePath) {
   const bundled = path.join(bundledRoot, modulePath);
   const monorepo = path.join(monorepoRoot, modulePath);
-  if (fs.existsSync(bundled)) return bundled;
   if (fs.existsSync(monorepo)) return monorepo;
+  if (fs.existsSync(bundled)) return bundled;
   throw new Error(`Levi runtime module not found: ${modulePath}`);
 }
 
