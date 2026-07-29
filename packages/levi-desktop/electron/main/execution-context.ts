@@ -790,6 +790,9 @@ export async function applyStep(
   if (!step) {
     throw new Error("Execution step was not found.");
   }
+  if (transaction.status === "applying") {
+    throw new Error("Execution step apply is already in progress.");
+  }
   if (!step.proposal) {
     throw new Error("Execution step has no proposal to apply.");
   }
