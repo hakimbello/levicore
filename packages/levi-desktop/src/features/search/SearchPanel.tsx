@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { WorkspaceTreeNode } from "../../types/workspace-tree-api";
 import "../../styles/search-panel.css";
+import { createSearchMatcher, searchFileContent } from "./search-engine";
 import { patternMatches } from "./search-patterns";
 
 type SearchMatch = {
@@ -30,11 +31,6 @@ function flattenFiles(nodes: WorkspaceTreeNode[]): string[] {
   };
   visit(nodes);
   return files;
-}
-
-function createMatcher(query: string, matchCase: boolean, wholeWord: boolean, regex: boolean): RegExp {
-  const source = regex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(wholeWord ? `\\b(?:${source})\\b` : source, matchCase ? "g" : "gi");
 }
 
 export function SearchPanel({ enabled, focusSignal, onOpenMatch }: SearchPanelProps) {
@@ -71,7 +67,7 @@ export function SearchPanel({ enabled, focusSignal, onOpenMatch }: SearchPanelPr
         setError(null);
         const started = performance.now();
         try {
-          const matcher = createMatcher(query, matchCase, wholeWord, regex);
+          const matcher = createSearchMatcher(query, { matchCase, wholeWord, regex });
           const tree = await window.levi.workspace.listTree();
           const files = flattenFiles(tree.nodes).filter((path) =>
             patternMatches(path, includePattern) && (!excludePattern || !patternMatches(path, excludePattern))
@@ -82,20 +78,13 @@ export function SearchPanel({ enabled, focusSignal, onOpenMatch }: SearchPanelPr
             if (generation !== generationRef.current || next.length >= MAX_RESULTS) return;
             try {
               const file = await window.levi.workspace.readPath({ relativePath });
-              const lines = file.content.split(/\r?\n/);
-              for (let index = 0; index < lines.length && next.length < MAX_RESULTS; index += 1) {
-                matcher.lastIndex = 0;
-                let hit: RegExpExecArray | null;
-                while ((hit = matcher.exec(lines[index] ?? "")) && next.length < MAX_RESULTS) {
-                  next.push({
-                    id: `${relativePath}:${index + 1}:${hit.index}`,
-                    relativePath,
-                    lineNumber: index + 1,
-                    columnStart: hit.index + 1,
-                    preview: (lines[index] ?? "").trim().slice(0, 240)
-                  });
-                  if (hit[0].length === 0) matcher.lastIndex += 1;
-                }
+              const fileMatches = searchFileContent(file.content, matcher, MAX_RESULTS - next.length);
+              for (const match of fileMatches) {
+                next.push({
+                  id: `${relativePath}:${match.lineNumber}:${match.columnStart}`,
+                  relativePath,
+                  ...match
+                });
               }
             } catch {
               // Skip binary, oversized, deleted, and unreadable files.
