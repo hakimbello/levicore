@@ -1,0 +1,102 @@
+.levi-shell {
+  grid-template-columns: 52px var(--levi-layout-sidebarWidth) minmax(0, 1fr);
+}
+
+.levi-activity-bar {
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column;
+  align-items: center;
+  background: color-mix(in srgb, var(--levi-color-surface) 96%, var(--levi-color-background));
+  border-right: 1px solid var(--levi-color-divider);
+}
+
+.levi-activity-brand {
+  display: grid;
+  width: 100%;
+  height: 52px;
+  place-items: center;
+  color: var(--levi-color-accent);
+  font-size: var(--levi-font-size-body);
+  font-weight: var(--levi-font-weight-bold);
+  border-bottom: 1px solid var(--levi-color-divider);
+  user-select: none;
+}
+
+.levi-activity-group {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+}
+
+.levi-activity-group-bottom {
+  margin-top: auto;
+  padding-bottom: var(--levi-space-8);
+}
+
+.levi-activity-item {
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: 48px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  color: var(--levi-color-mutedText);
+  background: transparent;
+  cursor: pointer;
+  transition:
+    color var(--levi-motion-fast) var(--levi-motion-easing),
+    background var(--levi-motion-fast) var(--levi-motion-easing);
+}
+
+.levi-activity-item:hover {
+  color: var(--levi-color-primaryText);
+  background: color-mix(in srgb, var(--levi-color-surfaceElevated) 72%, transparent);
+}
+
+.levi-activity-item-active {
+  color: var(--levi-color-primaryText);
+  background: color-mix(in srgb, var(--levi-color-accentSoft) 34%, transparent);
+}
+
+.levi-activity-item-active::before {
+  position: absolute;
+  inset: 7px auto 7px 0;
+  width: 2px;
+  border-radius: 0 var(--levi-radius-round) var(--levi-radius-round) 0;
+  background: var(--levi-color-accent);
+  content: "";
+}
+
+.levi-workspace-placeholder {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  padding: var(--levi-layout-windowPadding);
+}
+
+.levi-workspace-placeholder-card {
+  width: min(520px, 100%);
+  padding: var(--levi-space-24);
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-card);
+  background: var(--levi-color-surfaceElevated);
+  box-shadow: var(--levi-elevation-1);
+  text-align: center;
+}
+
+.levi-workspace-placeholder-card h1 {
+  margin: 0 0 var(--levi-space-12);
+  color: var(--levi-color-primaryText);
+  font-size: var(--levi-font-size-title);
+}
+
+.levi-workspace-placeholder-card p {
+  margin: 0;
+  color: var(--levi-color-secondaryText);
+  font-size: var(--levi-font-size-small);
+  line-height: var(--levi-line-height-body);
+}
