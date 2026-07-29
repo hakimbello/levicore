@@ -1,5 +1,6 @@
 import Editor from "@monaco-editor/react";
 import type { BeforeMount, OnMount } from "@monaco-editor/react";
+import { useEffect, useRef } from "react";
 import { colors, typography } from "../design";
 import "../monaco-setup";
 
@@ -12,6 +13,8 @@ type CodeEditorProps = {
   onSave?: () => void;
 };
 
+type MountedEditor = Parameters<OnMount>[0];
+
 export function CodeEditor({
   value,
   language = "typescript",
@@ -20,6 +23,8 @@ export function CodeEditor({
   onChange,
   onSave
 }: CodeEditorProps) {
+  const editorRef = useRef<MountedEditor | null>(null);
+
   const handleBeforeMount: BeforeMount = (monaco) => {
     monaco.editor.defineTheme("levi-light", {
       base: "vs",
@@ -39,11 +44,21 @@ export function CodeEditor({
   };
 
   const handleMount: OnMount = (editor, monaco) => {
+    editorRef.current = editor;
     editor.updateOptions({ readOnly, domReadOnly: readOnly });
     editor.revealLineInCenter(lineStart);
     editor.setPosition({ lineNumber: lineStart, column: 1 });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => onSave?.());
   };
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const lineNumber = Math.max(1, Math.min(lineStart, editor.getModel()?.getLineCount() ?? lineStart));
+    editor.revealLineInCenter(lineNumber);
+    editor.setPosition({ lineNumber, column: 1 });
+    editor.focus();
+  }, [lineStart]);
 
   return (
     <Editor
