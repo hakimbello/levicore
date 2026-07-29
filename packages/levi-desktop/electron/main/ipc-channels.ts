@@ -1,3 +1,5 @@
+import "./workspace-tree-ipc";
+
 export const IPC_CHANNELS = {
   ollamaGetStatus: "levi:ollama:get-status",
   projectsGetRecent: "levi:projects:get-recent",
@@ -5,6 +7,8 @@ export const IPC_CHANNELS = {
   workspaceGetStatus: "levi:workspace:get-status",
   workspaceRefresh: "levi:workspace:refresh",
   workspaceOpenFile: "levi:workspace:open-file",
+  workspaceListTree: "levi:workspace:list-tree",
+  workspaceReadPath: "levi:workspace:read-path",
   rulesGetStatus: "levi:rules:get-status",
   rulesList: "levi:rules:list",
   rulesRefresh: "levi:rules:refresh",
