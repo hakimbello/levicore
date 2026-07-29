@@ -4,6 +4,7 @@ import path from "node:path";
 
 export const WORKSPACE_TREE_CHANNEL = "levi:workspace:list-tree";
 export const WORKSPACE_READ_PATH_CHANNEL = "levi:workspace:read-path";
+export const WORKSPACE_WRITE_PATH_CHANNEL = "levi:workspace:write-path";
 
 const SETTINGS_FILE = "desktop-shell.json";
 const MAX_TREE_NODES = 50_000;
@@ -52,7 +53,18 @@ export type WorkspaceReadPathResult = {
   relativePath: string;
   content: string;
   language: string;
-  readOnly: true;
+  readOnly: false;
+};
+
+export type WorkspaceWritePathRequest = {
+  relativePath: string;
+  content: string;
+};
+
+export type WorkspaceWritePathResult = {
+  relativePath: string;
+  bytesWritten: number;
+  savedAt: string;
 };
 
 type RecentProjectSettings = {
@@ -73,6 +85,18 @@ function normalizeRelativePath(relativePath: string): string {
 function isPathInside(rootPath: string, candidatePath: string): boolean {
   const relative = path.relative(rootPath, candidatePath);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function validateRelativePath(relativePath: unknown): string {
+  if (typeof relativePath !== "string" || relativePath.length === 0) {
+    throw new Error("A relative file path is required.");
+  }
+
+  const normalized = normalizeRelativePath(relativePath);
+  if (path.isAbsolute(normalized) || normalized.split("/").includes("..")) {
+    throw new Error("Invalid workspace path.");
+  }
+  return normalized;
 }
 
 function languageForPath(filePath: string): string {
@@ -126,6 +150,25 @@ async function getRecentWorkspace(): Promise<{ rootPath: string; projectName: st
     rootPath,
     projectName: typeof projectName === "string" && projectName.length > 0 ? projectName : path.basename(rootPath)
   };
+}
+
+async function resolveExistingWorkspaceFile(rootPath: string, relativePath: unknown): Promise<string> {
+  const normalized = validateRelativePath(relativePath);
+  const candidatePath = path.resolve(rootPath, normalized);
+  if (!isPathInside(rootPath, candidatePath)) {
+    throw new Error("Workspace path escapes the selected project.");
+  }
+
+  const realPath = await fs.realpath(candidatePath);
+  if (!isPathInside(rootPath, realPath)) {
+    throw new Error("Workspace path resolves outside the selected project.");
+  }
+
+  const stats = await fs.stat(realPath);
+  if (!stats.isFile()) {
+    throw new Error("The requested workspace path is not a file.");
+  }
+  return realPath;
 }
 
 async function enumerateDirectory(
@@ -204,30 +247,9 @@ async function listWorkspaceTree(): Promise<WorkspaceTreeResult> {
 }
 
 async function readWorkspacePath(request: WorkspaceReadPathRequest): Promise<WorkspaceReadPathResult> {
-  if (!request || typeof request.relativePath !== "string" || request.relativePath.length === 0) {
-    throw new Error("A relative file path is required.");
-  }
-
   const workspace = await getRecentWorkspace();
-  const normalized = normalizeRelativePath(request.relativePath);
-  if (path.isAbsolute(normalized) || normalized.split("/").includes("..")) {
-    throw new Error("Invalid workspace path.");
-  }
-
-  const candidatePath = path.resolve(workspace.rootPath, normalized);
-  if (!isPathInside(workspace.rootPath, candidatePath)) {
-    throw new Error("Workspace path escapes the selected project.");
-  }
-
-  const realPath = await fs.realpath(candidatePath);
-  if (!isPathInside(workspace.rootPath, realPath)) {
-    throw new Error("Workspace path resolves outside the selected project.");
-  }
-
+  const realPath = await resolveExistingWorkspaceFile(workspace.rootPath, request?.relativePath);
   const stats = await fs.stat(realPath);
-  if (!stats.isFile()) {
-    throw new Error("The requested workspace path is not a file.");
-  }
   if (stats.size > MAX_TEXT_FILE_BYTES) {
     throw new Error("The requested file is too large to open in the editor.");
   }
@@ -241,7 +263,31 @@ async function readWorkspacePath(request: WorkspaceReadPathRequest): Promise<Wor
     relativePath: normalizeRelativePath(path.relative(workspace.rootPath, realPath)),
     content,
     language: languageForPath(realPath),
-    readOnly: true
+    readOnly: false
+  };
+}
+
+async function writeWorkspacePath(request: WorkspaceWritePathRequest): Promise<WorkspaceWritePathResult> {
+  if (!request || typeof request.content !== "string") {
+    throw new Error("Text content is required.");
+  }
+  if (request.content.includes("\u0000")) {
+    throw new Error("Binary content cannot be saved in the text editor.");
+  }
+
+  const bytesWritten = Buffer.byteLength(request.content, "utf8");
+  if (bytesWritten > MAX_TEXT_FILE_BYTES) {
+    throw new Error("The file is too large to save from the editor.");
+  }
+
+  const workspace = await getRecentWorkspace();
+  const realPath = await resolveExistingWorkspaceFile(workspace.rootPath, request.relativePath);
+  await fs.writeFile(realPath, request.content, { encoding: "utf8", flag: "w" });
+
+  return {
+    relativePath: normalizeRelativePath(path.relative(workspace.rootPath, realPath)),
+    bytesWritten,
+    savedAt: new Date().toISOString()
   };
 }
 
@@ -252,6 +298,7 @@ export function registerWorkspaceTreeIpc(): void {
   registered = true;
   ipcMain.handle(WORKSPACE_TREE_CHANNEL, () => listWorkspaceTree());
   ipcMain.handle(WORKSPACE_READ_PATH_CHANNEL, (_event, request: WorkspaceReadPathRequest) => readWorkspacePath(request));
+  ipcMain.handle(WORKSPACE_WRITE_PATH_CHANNEL, (_event, request: WorkspaceWritePathRequest) => writeWorkspacePath(request));
 }
 
 registerWorkspaceTreeIpc();
