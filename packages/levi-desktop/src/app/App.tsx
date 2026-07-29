@@ -23,6 +23,7 @@ const ProjectRulesPanel = lazy(async () => {
 
 const unknownStatus: OllamaStatus = { ready: false, modelCount: 0, models: [] };
 const idleWorkspaceStatus: WorkspaceStatus = { state: "idle" };
+const FILE_CONFLICT_CODE = "WORKSPACE_FILE_CONFLICT";
 
 const placeholderCopy: Partial<Record<ActivityView, { title: string; description: string }>> = {
   search: { title: "Search", description: "Workspace-wide search and replace will be added after the Explorer foundation." },
@@ -53,6 +54,7 @@ export function App() {
   const [activeView, setActiveView] = useState<ActivityView>("home");
   const [savingTabId, setSavingTabId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [conflictTabId, setConflictTabId] = useState<string | null>(null);
   const tabButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const {
     tabs,
@@ -60,7 +62,6 @@ export function App() {
     activeTab,
     openFile,
     closeTab,
-    closeActiveTab,
     activateTab,
     activateRelativeTab,
     updateContent,
@@ -69,6 +70,8 @@ export function App() {
   } = useEditorTabs(selectedProject?.path);
 
   const activeTabEditable = Boolean(activeTab?.sourceId.startsWith("WORKSPACE:"));
+  const hasDirtyTabs = tabs.some((tab) => tab.dirty);
+  const activeTabHasConflict = Boolean(activeTab && conflictTabId === activeTab.id);
 
   useEffect(() => {
     let disposed = false;
@@ -100,17 +103,69 @@ export function App() {
     if (!activeTabId) return;
     tabButtonRefs.current.get(activeTabId)?.scrollIntoView({ block: "nearest", inline: "nearest" });
     setSaveError(null);
+    setConflictTabId((current) => current === activeTabId ? current : null);
   }, [activeTabId]);
 
-  async function saveActiveTab() {
+  useEffect(() => {
+    function protectUnsavedChanges(event: BeforeUnloadEvent) {
+      if (!hasDirtyTabs) return;
+      event.preventDefault();
+      event.returnValue = "";
+    }
+    window.addEventListener("beforeunload", protectUnsavedChanges);
+    return () => window.removeEventListener("beforeunload", protectUnsavedChanges);
+  }, [hasDirtyTabs]);
+
+  function confirmDiscard(message: string): boolean {
+    return window.confirm(message);
+  }
+
+  function requestCloseTab(tabId: string) {
+    const tab = tabs.find((candidate) => candidate.id === tabId);
+    if (!tab) return;
+    if (tab.dirty && !confirmDiscard(`Close ${tab.relativePath} and discard its unsaved changes?`)) return;
+    closeTab(tabId);
+    if (conflictTabId === tabId) setConflictTabId(null);
+  }
+
+  async function saveActiveTab(force = false) {
     if (!activeTab || !activeTabEditable || !activeTab.dirty || savingTabId) return;
     setSavingTabId(activeTab.id);
     setSaveError(null);
+    if (!force) setConflictTabId(null);
     try {
-      await window.levi.workspace.writePath({ relativePath: activeTab.relativePath, content: activeTab.content });
+      await window.levi.workspace.writePath({
+        relativePath: activeTab.relativePath,
+        content: activeTab.content,
+        expectedContent: activeTab.savedContent,
+        force
+      });
       markSaved(activeTab.id, activeTab.content);
+      setConflictTabId(null);
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "The file could not be saved.");
+      const message = error instanceof Error ? error.message : "The file could not be saved.";
+      if (message.includes(FILE_CONFLICT_CODE)) {
+        setConflictTabId(activeTab.id);
+        setSaveError("This file changed on disk. Reload it or overwrite the external version.");
+      } else {
+        setSaveError(message);
+      }
+    } finally {
+      setSavingTabId(null);
+    }
+  }
+
+  async function reloadActiveTabFromDisk() {
+    if (!activeTab || !activeTabEditable || savingTabId) return;
+    if (activeTab.dirty && !confirmDiscard(`Reload ${activeTab.relativePath} and discard your unsaved changes?`)) return;
+    setSavingTabId(activeTab.id);
+    setSaveError(null);
+    try {
+      const file = await window.levi.workspace.readPath({ relativePath: activeTab.relativePath });
+      markSaved(activeTab.id, file.content);
+      setConflictTabId(null);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "The file could not be reloaded.");
     } finally {
       setSavingTabId(null);
     }
@@ -125,7 +180,7 @@ export function App() {
         activateRelativeTab(event.shiftKey ? -1 : 1);
       } else if (event.key.toLowerCase() === "w" && activeTabId) {
         event.preventDefault();
-        closeActiveTab();
+        requestCloseTab(activeTabId);
       } else if (event.key.toLowerCase() === "s" && activeTabEditable) {
         event.preventDefault();
         void saveActiveTab();
@@ -133,11 +188,14 @@ export function App() {
     }
     window.addEventListener("keydown", handleEditorShortcut);
     return () => window.removeEventListener("keydown", handleEditorShortcut);
-  }, [activeTabId, activeTabEditable, activateRelativeTab, closeActiveTab, tabs.length, activeTab, savingTabId]);
+  }, [activeTabId, activeTabEditable, activateRelativeTab, tabs, activeTab, savingTabId, conflictTabId]);
 
   async function openProjectFolder() {
+    if (hasDirtyTabs && !confirmDiscard("Open another project and discard all unsaved editor changes?")) return;
     setWorkspaceStatus({ state: "scanning" });
     setCanUndoEdit(false);
+    setSaveError(null);
+    setConflictTabId(null);
     const project = await window.levi.projects.openFolder();
     setSelectedProject(project ?? selectedProject);
     setWorkspaceStatus(await window.levi.workspace.getStatus());
@@ -161,7 +219,7 @@ export function App() {
       content: file.content,
       language: file.language,
       lineStart: 1,
-      readOnly: true
+      readOnly: false
     });
     setCanUndoEdit(false);
   }
@@ -218,7 +276,7 @@ export function App() {
       if (last) activateTab(last.id);
     } else if (event.key === "Delete") {
       event.preventDefault();
-      closeTab(tabId);
+      requestCloseTab(tabId);
     }
   }
 
@@ -286,7 +344,7 @@ export function App() {
                         {tab.dirty ? <span className="levi-editor-tab-state" aria-label="Unsaved changes">●</span> : null}
                         <span className="levi-editor-tab-name">{fileName}</span>
                       </button>
-                      <button type="button" className="levi-icon-button" onClick={() => closeTab(tab.id)} aria-label={`Close ${tab.relativePath}`} title="Close tab (Ctrl+W)">
+                      <button type="button" className="levi-icon-button" onClick={() => requestCloseTab(tab.id)} aria-label={`Close ${tab.relativePath}`} title="Close tab (Ctrl+W)">
                         <Icon name="close" />
                       </button>
                     </div>
@@ -296,7 +354,7 @@ export function App() {
               <div className="levi-editor-header">
                 <div>
                   <div className="levi-editor-path">{activeTab.relativePath}</div>
-                  <div className="levi-editor-mode">
+                  <div className="levi-editor-mode" role={saveError ? "alert" : undefined}>
                     {saveError
                       ? `Save failed: ${saveError}`
                       : savingTabId === activeTab.id
@@ -310,7 +368,16 @@ export function App() {
                               : "Read-only workspace view"}
                   </div>
                 </div>
-                {activeTabEditable ? (
+                {activeTabHasConflict ? (
+                  <>
+                    <button type="button" className="levi-button levi-button-secondary" onClick={() => void reloadActiveTabFromDisk()} disabled={savingTabId === activeTab.id}>
+                      <span>Reload</span>
+                    </button>
+                    <button type="button" className="levi-button levi-button-secondary" onClick={() => void saveActiveTab(true)} disabled={savingTabId === activeTab.id}>
+                      <span>Overwrite</span>
+                    </button>
+                  </>
+                ) : activeTabEditable ? (
                   <button
                     type="button"
                     className="levi-button levi-button-secondary"
