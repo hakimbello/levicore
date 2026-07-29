@@ -316,7 +316,7 @@ describe("Levi local conversation", () => {
     expect(window.levi.edits.propose).not.toHaveBeenCalled();
   });
 
-  it("renders a read-only plan panel and prepares execution only through explicit Approve", async () => {
+  it("renders a read-only plan panel and generates code only after explicit Generate Code", async () => {
     const user = userEvent.setup();
     render(<App />);
 
@@ -397,6 +397,9 @@ describe("Levi local conversation", () => {
     await user.click(screen.getByRole("button", { name: "Approve" }));
     expect(window.levi.edits.apply).not.toHaveBeenCalled();
     await waitFor(() => expect(window.levi.planning.approve).toHaveBeenCalledWith("plan-result-1"));
+    expect(window.levi.execution.proposeStep).not.toHaveBeenCalled();
+
+    await user.click(await screen.findByRole("button", { name: "Generate Code" }));
     expect(window.levi.execution.proposeStep).toHaveBeenCalled();
   });
 

@@ -101,11 +101,11 @@ export function ExecutionReviewPanel({
           <strong>Ready for step review</strong>
           <div>
             {transaction.totals.appliedCount === 0
-              ? "No file has been modified yet. Generate the first step proposal to continue."
-              : "Generate the next step proposal to continue."}
+              ? "No file has been modified yet. Generate code for the first planned step to continue."
+              : "Generate code for the next planned step to continue."}
           </div>
           <button type="button" className="levi-secondary-button" onClick={() => void onProposeStep()}>
-            Generate Step Proposal
+            Generate Code
           </button>
         </div>
       ) : null}
