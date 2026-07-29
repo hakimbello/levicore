@@ -10,6 +10,7 @@ const SETTINGS_FILE = "desktop-shell.json";
 const MAX_TREE_NODES = 50_000;
 const MAX_TREE_DEPTH = 64;
 const MAX_TEXT_FILE_BYTES = 5 * 1024 * 1024;
+const FILE_CONFLICT_CODE = "WORKSPACE_FILE_CONFLICT";
 
 const IGNORED_DIRECTORY_NAMES = new Set([
   ".git",
@@ -59,6 +60,8 @@ export type WorkspaceReadPathResult = {
 export type WorkspaceWritePathRequest = {
   relativePath: string;
   content: string;
+  expectedContent: string;
+  force?: boolean;
 };
 
 export type WorkspaceWritePathResult = {
@@ -268,10 +271,10 @@ async function readWorkspacePath(request: WorkspaceReadPathRequest): Promise<Wor
 }
 
 async function writeWorkspacePath(request: WorkspaceWritePathRequest): Promise<WorkspaceWritePathResult> {
-  if (!request || typeof request.content !== "string") {
-    throw new Error("Text content is required.");
+  if (!request || typeof request.content !== "string" || typeof request.expectedContent !== "string") {
+    throw new Error("Text content and the last known file content are required.");
   }
-  if (request.content.includes("\u0000")) {
+  if (request.content.includes("\u0000") || request.expectedContent.includes("\u0000")) {
     throw new Error("Binary content cannot be saved in the text editor.");
   }
 
@@ -282,6 +285,14 @@ async function writeWorkspacePath(request: WorkspaceWritePathRequest): Promise<W
 
   const workspace = await getRecentWorkspace();
   const realPath = await resolveExistingWorkspaceFile(workspace.rootPath, request.relativePath);
+  const diskContent = await fs.readFile(realPath, "utf8");
+  if (diskContent.includes("\u0000")) {
+    throw new Error("Binary files cannot be saved in the text editor.");
+  }
+  if (!request.force && diskContent !== request.expectedContent) {
+    throw new Error(`${FILE_CONFLICT_CODE}: The file changed on disk after it was opened.`);
+  }
+
   await fs.writeFile(realPath, request.content, { encoding: "utf8", flag: "w" });
 
   return {
