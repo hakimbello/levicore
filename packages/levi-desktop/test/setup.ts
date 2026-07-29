@@ -36,14 +36,23 @@ function mockExecutionTransaction(status: ExecutionTransactionStatus, overrides:
     workspaceRootPath: "C:\\Users\\developer\\Project",
     scanTimestamp: new Date().toISOString(),
     status,
-    steps: [],
+    steps: [
+      {
+        stepIndex: 0,
+        planStepId: "1:0",
+        planStepOrder: 1,
+        planStepTitle: "Update implementation",
+        relativePath: "src/main.ts",
+        status: "pending" as const
+      }
+    ],
     currentStepIndex: 0,
     appliedProjectRules: [],
     ruleConflicts: [],
     unsupportedOperations: { creates: [], deletes: [] },
     validationCommands: ["npm test"],
     createdAt: new Date().toISOString(),
-    totals: { stepCount: 0, appliedCount: 0, pendingCount: 0 },
+    totals: { stepCount: 1, appliedCount: 0, pendingCount: 1 },
     ...overrides
   };
 }

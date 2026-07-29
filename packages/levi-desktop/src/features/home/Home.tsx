@@ -636,7 +636,6 @@ export function Home({ selectedProject, workspaceStatus, newChatSignal, onOpenCi
       setPlanNotice({ planId: result.planId, message: result.message });
       setActiveTransaction(result.transaction);
       setExecutionError(null);
-      await window.levi.execution.proposeStep(result.transaction.transactionId);
     } catch (error) {
       setPlanNotice({
         planId: executionPlan.planId,
