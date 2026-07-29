@@ -33,14 +33,19 @@ describe("createSearchMatcher", () => {
 });
 
 describe("searchFileContent", () => {
-  it("returns one-based line and column positions", () => {
+  it("returns one-based positions and match lengths", () => {
     const matcher = createSearchMatcher("Levi", { matchCase: false, wholeWord: false, regex: false });
     const matches = searchFileContent("first line\n  Levi builds Levi", matcher, 10);
 
     expect(matches).toEqual([
-      { lineNumber: 2, columnStart: 3, preview: "Levi builds Levi" },
-      { lineNumber: 2, columnStart: 15, preview: "Levi builds Levi" }
+      { lineNumber: 2, columnStart: 3, matchLength: 4, preview: "Levi builds Levi" },
+      { lineNumber: 2, columnStart: 15, matchLength: 4, preview: "Levi builds Levi" }
     ]);
+  });
+
+  it("reports the complete regular-expression match length", () => {
+    const matcher = createSearchMatcher("foo\\d+", { matchCase: false, wholeWord: false, regex: true });
+    expect(searchFileContent("foo123", matcher, 10)[0]?.matchLength).toBe(6);
   });
 
   it("respects the remaining result limit", () => {
@@ -58,6 +63,7 @@ describe("searchFileContent", () => {
     const matcher = createSearchMatcher("(?=a)", { matchCase: false, wholeWord: false, regex: true });
     const matches = searchFileContent("aaa", matcher, 10);
     expect(matches).toHaveLength(3);
+    expect(matches.every((match) => match.matchLength === 1)).toBe(true);
   });
 
   it("truncates previews to 240 characters", () => {
