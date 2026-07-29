@@ -81,9 +81,8 @@ export function App() {
     closeActiveTab,
     activateTab,
     activateRelativeTab,
-    pinTab,
-    clearTabs
-  } = useEditorTabs();
+    pinTab
+  } = useEditorTabs(selectedProject?.path);
 
   useEffect(() => {
     let disposed = false;
@@ -140,7 +139,6 @@ export function App() {
 
   async function openProjectFolder() {
     setWorkspaceStatus({ state: "scanning" });
-    clearTabs();
     setCanUndoEdit(false);
     const project = await window.levi.projects.openFolder();
     setSelectedProject(project ?? selectedProject);
@@ -150,7 +148,6 @@ export function App() {
 
   async function refreshWorkspace() {
     setWorkspaceStatus({ state: "scanning", summary: workspaceStatus.summary });
-    clearTabs();
     setCanUndoEdit(false);
     setWorkspaceStatus(await window.levi.workspace.refresh());
   }
