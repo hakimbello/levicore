@@ -29,6 +29,8 @@ export type WorkspaceReadPathResult = {
 export type WorkspaceWritePathRequest = {
   relativePath: string;
   content: string;
+  expectedContent: string;
+  force?: boolean;
 };
 
 export type WorkspaceWritePathResult = {
