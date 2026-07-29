@@ -3,9 +3,11 @@ import { ActivityBar, type ActivityView } from "../components/ActivityBar";
 import { Icon } from "../components/Icon";
 import { LazySurface } from "../components/LazySurface";
 import { Sidebar } from "../components/Sidebar";
+import { ExplorerPanel } from "../features/explorer/ExplorerPanel";
 import { Home } from "../features/home/Home";
 import { TerminalPanel } from "../features/terminal/TerminalPanel";
 import type { EditApplyResult, EditUndoResult, OllamaStatus, SelectedProject, WorkspaceOpenFileResult, WorkspaceStatus } from "../types/levi-api";
+import type { WorkspaceReadPathResult } from "../types/workspace-tree-api";
 
 const CodeEditor = lazy(async () => {
   const module = await import("../components/CodeEditor");
@@ -28,10 +30,6 @@ const idleWorkspaceStatus: WorkspaceStatus = {
 };
 
 const placeholderCopy: Partial<Record<ActivityView, { title: string; description: string }>> = {
-  explorer: {
-    title: "Explorer",
-    description: "The workspace file tree will be implemented in the next milestone."
-  },
   search: {
     title: "Search",
     description: "Workspace-wide search and replace will be added after the Explorer foundation."
@@ -130,6 +128,18 @@ export function App() {
     setOpenFile(file);
   }
 
+  function openExplorerFile(file: WorkspaceReadPathResult) {
+    setOpenFile({
+      sourceId: `WORKSPACE:${file.relativePath}`,
+      relativePath: file.relativePath,
+      content: file.content,
+      language: file.language,
+      lineStart: 1,
+      readOnly: true
+    });
+    setCanUndoEdit(false);
+  }
+
   function openAppliedEdit(result: EditApplyResult) {
     setOpenFile({
       sourceId: "LEVIEDIT",
@@ -172,6 +182,16 @@ export function App() {
         <LazySurface label="Project Rules">
           <ProjectRulesPanel onOpenRuleSource={setOpenFile} />
         </LazySurface>
+      );
+    }
+
+    if (activeView === "explorer") {
+      return (
+        <ExplorerPanel
+          workspaceStatus={workspaceStatus}
+          selectedPath={openFile?.relativePath}
+          onOpenFile={openExplorerFile}
+        />
       );
     }
 
