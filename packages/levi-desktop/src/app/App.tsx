@@ -21,39 +21,19 @@ const ProjectRulesPanel = lazy(async () => {
   return { default: module.ProjectRulesPanel };
 });
 
-const unknownStatus: OllamaStatus = {
-  ready: false,
-  modelCount: 0,
-  models: []
-};
-
-const idleWorkspaceStatus: WorkspaceStatus = {
-  state: "idle"
-};
+const unknownStatus: OllamaStatus = { ready: false, modelCount: 0, models: [] };
+const idleWorkspaceStatus: WorkspaceStatus = { state: "idle" };
 
 const placeholderCopy: Partial<Record<ActivityView, { title: string; description: string }>> = {
-  search: {
-    title: "Search",
-    description: "Workspace-wide search and replace will be added after the Explorer foundation."
-  },
-  "source-control": {
-    title: "Source Control",
-    description: "Git status, staging, commits, and branch controls are scheduled for the IDE Core phase."
-  },
-  terminal: {
-    title: "Terminal",
-    description: "Use the terminal panel at the bottom of the workspace."
-  },
-  settings: {
-    title: "Settings",
-    description: "Desktop, model, workspace, and appearance settings will be consolidated here."
-  }
+  search: { title: "Search", description: "Workspace-wide search and replace will be added after the Explorer foundation." },
+  "source-control": { title: "Source Control", description: "Git status, staging, commits, and branch controls are scheduled for the IDE Core phase." },
+  terminal: { title: "Terminal", description: "Use the terminal panel at the bottom of the workspace." },
+  settings: { title: "Settings", description: "Desktop, model, workspace, and appearance settings will be consolidated here." }
 };
 
 function WorkspacePlaceholder({ view }: { view: ActivityView }) {
   const copy = placeholderCopy[view];
   if (!copy) return null;
-
   return (
     <section className="levi-workspace-placeholder" aria-labelledby={`levi-${view}-title`}>
       <div className="levi-workspace-placeholder-card">
@@ -71,6 +51,8 @@ export function App() {
   const [canUndoEdit, setCanUndoEdit] = useState(false);
   const [newChatSignal, setNewChatSignal] = useState(0);
   const [activeView, setActiveView] = useState<ActivityView>("home");
+  const [savingTabId, setSavingTabId] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const tabButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const {
     tabs,
@@ -81,12 +63,15 @@ export function App() {
     closeActiveTab,
     activateTab,
     activateRelativeTab,
+    updateContent,
+    markSaved,
     pinTab
   } = useEditorTabs(selectedProject?.path);
 
+  const activeTabEditable = Boolean(activeTab?.sourceId.startsWith("WORKSPACE:"));
+
   useEffect(() => {
     let disposed = false;
-
     async function loadShellState() {
       const [status, recentProject, workspace, editStatus] = await Promise.all([
         window.levi.ollama.getStatus(),
@@ -107,35 +92,48 @@ export function App() {
         }
       }
     }
-
     void loadShellState();
-    return () => {
-      disposed = true;
-    };
+    return () => { disposed = true; };
   }, []);
 
   useEffect(() => {
     if (!activeTabId) return;
     tabButtonRefs.current.get(activeTabId)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    setSaveError(null);
   }, [activeTabId]);
+
+  async function saveActiveTab() {
+    if (!activeTab || !activeTabEditable || !activeTab.dirty || savingTabId) return;
+    setSavingTabId(activeTab.id);
+    setSaveError(null);
+    try {
+      await window.levi.workspace.writePath({ relativePath: activeTab.relativePath, content: activeTab.content });
+      markSaved(activeTab.id, activeTab.content);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "The file could not be saved.");
+    } finally {
+      setSavingTabId(null);
+    }
+  }
 
   useEffect(() => {
     function handleEditorShortcut(event: KeyboardEvent) {
       const commandKey = event.ctrlKey || event.metaKey;
       if (!commandKey) return;
-
       if (event.key === "Tab" && tabs.length > 1) {
         event.preventDefault();
         activateRelativeTab(event.shiftKey ? -1 : 1);
       } else if (event.key.toLowerCase() === "w" && activeTabId) {
         event.preventDefault();
         closeActiveTab();
+      } else if (event.key.toLowerCase() === "s" && activeTabEditable) {
+        event.preventDefault();
+        void saveActiveTab();
       }
     }
-
     window.addEventListener("keydown", handleEditorShortcut);
     return () => window.removeEventListener("keydown", handleEditorShortcut);
-  }, [activeTabId, activateRelativeTab, closeActiveTab, tabs.length]);
+  }, [activeTabId, activeTabEditable, activateRelativeTab, closeActiveTab, tabs.length, activeTab, savingTabId]);
 
   async function openProjectFolder() {
     setWorkspaceStatus({ state: "scanning" });
@@ -226,23 +224,11 @@ export function App() {
 
   function renderActiveWorkspace() {
     if (activeView === "rules") {
-      return (
-        <LazySurface label="Project Rules">
-          <ProjectRulesPanel onOpenRuleSource={openFile} />
-        </LazySurface>
-      );
+      return <LazySurface label="Project Rules"><ProjectRulesPanel onOpenRuleSource={openFile} /></LazySurface>;
     }
-
     if (activeView === "explorer") {
-      return (
-        <ExplorerPanel
-          workspaceStatus={workspaceStatus}
-          selectedPath={activeTab?.relativePath}
-          onOpenFile={openExplorerFile}
-        />
-      );
+      return <ExplorerPanel workspaceStatus={workspaceStatus} selectedPath={activeTab?.relativePath} onOpenFile={openExplorerFile} />;
     }
-
     if (activeView === "home") {
       return (
         <Home
@@ -255,7 +241,6 @@ export function App() {
         />
       );
     }
-
     return <WorkspacePlaceholder view={activeView} />;
   }
 
@@ -301,13 +286,7 @@ export function App() {
                         {tab.dirty ? <span className="levi-editor-tab-state" aria-label="Unsaved changes">●</span> : null}
                         <span className="levi-editor-tab-name">{fileName}</span>
                       </button>
-                      <button
-                        type="button"
-                        className="levi-icon-button"
-                        onClick={() => closeTab(tab.id)}
-                        aria-label={`Close ${tab.relativePath}`}
-                        title="Close tab (Ctrl+W)"
-                      >
+                      <button type="button" className="levi-icon-button" onClick={() => closeTab(tab.id)} aria-label={`Close ${tab.relativePath}`} title="Close tab (Ctrl+W)">
                         <Icon name="close" />
                       </button>
                     </div>
@@ -318,13 +297,30 @@ export function App() {
                 <div>
                   <div className="levi-editor-path">{activeTab.relativePath}</div>
                   <div className="levi-editor-mode">
-                    {activeTab.appliedByLevi
-                      ? "Applied by Levi - read-only workspace view"
-                      : activeTab.undoneByLevi
-                        ? "Undo restored - read-only workspace view"
-                        : "Read-only workspace view"}
+                    {saveError
+                      ? `Save failed: ${saveError}`
+                      : savingTabId === activeTab.id
+                        ? "Saving…"
+                        : activeTabEditable
+                          ? activeTab.dirty ? "Unsaved changes — Ctrl+S to save" : "Workspace file — editable"
+                          : activeTab.appliedByLevi
+                            ? "Applied by Levi — read-only workspace view"
+                            : activeTab.undoneByLevi
+                              ? "Undo restored — read-only workspace view"
+                              : "Read-only workspace view"}
                   </div>
                 </div>
+                {activeTabEditable ? (
+                  <button
+                    type="button"
+                    className="levi-button levi-button-secondary"
+                    onClick={() => void saveActiveTab()}
+                    disabled={!activeTab.dirty || savingTabId === activeTab.id}
+                    aria-label="Save file"
+                  >
+                    <span>{savingTabId === activeTab.id ? "Saving…" : "Save"}</span>
+                  </button>
+                ) : null}
                 {canUndoEdit ? (
                   <button type="button" className="levi-button levi-button-secondary" onClick={() => void undoLastEdit()} aria-label="Undo Last Edit">
                     <Icon name="refresh" />
@@ -334,7 +330,14 @@ export function App() {
               </div>
               <div className="levi-editor-host">
                 <LazySurface label="Editor">
-                  <CodeEditor value={activeTab.content} language={activeTab.language} lineStart={activeTab.lineStart} />
+                  <CodeEditor
+                    value={activeTab.content}
+                    language={activeTab.language}
+                    lineStart={activeTab.lineStart}
+                    readOnly={!activeTabEditable}
+                    onChange={(content) => updateContent(activeTab.id, content)}
+                    onSave={() => void saveActiveTab()}
+                  />
                 </LazySurface>
               </div>
             </aside>
