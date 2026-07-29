@@ -90,7 +90,13 @@ export function useEditorTabs(workspacePath?: string) {
     const id = tabId(file);
     setTabs((current) => {
       const existing = current.find((tab) => tab.id === id);
-      if (existing) return existing.dirty ? current : current.map((tab) => tab.id === id ? { ...tab, ...file, savedContent: file.content, dirty: false } : tab);
+      if (existing) {
+        return current.map((tab) => tab.id === id
+          ? existing.dirty
+            ? { ...tab, lineStart: file.lineStart, language: file.language }
+            : { ...tab, ...file, savedContent: file.content, dirty: false }
+          : tab);
+      }
       return [...current, { ...file, id, dirty: false, pinned: false, savedContent: file.content }];
     });
     setActiveTabId(id);
