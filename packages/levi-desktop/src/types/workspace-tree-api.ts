@@ -23,12 +23,24 @@ export type WorkspaceReadPathResult = {
   relativePath: string;
   content: string;
   language: string;
-  readOnly: true;
+  readOnly: false;
+};
+
+export type WorkspaceWritePathRequest = {
+  relativePath: string;
+  content: string;
+};
+
+export type WorkspaceWritePathResult = {
+  relativePath: string;
+  bytesWritten: number;
+  savedAt: string;
 };
 
 export type LeviWorkspaceTreeApi = LeviApi["workspace"] & {
   listTree: () => Promise<WorkspaceTreeResult>;
   readPath: (request: WorkspaceReadPathRequest) => Promise<WorkspaceReadPathResult>;
+  writePath: (request: WorkspaceWritePathRequest) => Promise<WorkspaceWritePathResult>;
 };
 
 export type LeviApiWithWorkspaceTree = Omit<LeviApi, "workspace"> & {
