@@ -9,6 +9,7 @@ type SearchMatch = {
   relativePath: string;
   lineNumber: number;
   columnStart: number;
+  matchLength: number;
   preview: string;
 };
 
@@ -20,6 +21,7 @@ type SearchPanelProps = {
 
 const MAX_RESULTS = 2_000;
 const SEARCH_DELAY_MS = 180;
+const SEARCH_NAVIGATION_EVENT = "levi:search-navigation";
 
 function flattenFiles(nodes: WorkspaceTreeNode[]): string[] {
   const files: string[] = [];
@@ -108,6 +110,18 @@ export function SearchPanel({ enabled, focusSignal, onOpenMatch }: SearchPanelPr
     return () => window.clearTimeout(timeout);
   }, [enabled, excludePattern, includePattern, matchCase, query, regex, wholeWord]);
 
+  async function openMatch(match: SearchMatch) {
+    await onOpenMatch(match.relativePath, match.lineNumber);
+    window.dispatchEvent(new CustomEvent(SEARCH_NAVIGATION_EVENT, {
+      detail: {
+        relativePath: match.relativePath,
+        lineNumber: match.lineNumber,
+        columnStart: match.columnStart,
+        matchLength: match.matchLength
+      }
+    }));
+  }
+
   useEffect(() => {
     function handleKeys(event: KeyboardEvent) {
       if (!enabled) return;
@@ -118,7 +132,7 @@ export function SearchPanel({ enabled, focusSignal, onOpenMatch }: SearchPanelPr
         event.preventDefault();
         const next = (selectedIndex + (event.shiftKey ? -1 : 1) + matches.length) % matches.length;
         setSelectedIndex(next);
-        void onOpenMatch(matches[next]!.relativePath, matches[next]!.lineNumber);
+        void openMatch(matches[next]!);
       }
     }
     window.addEventListener("keydown", handleKeys);
@@ -159,7 +173,7 @@ export function SearchPanel({ enabled, focusSignal, onOpenMatch }: SearchPanelPr
                   key={match.id}
                   type="button"
                   className={index === selectedIndex ? "levi-search-match levi-search-match-selected" : "levi-search-match"}
-                  onClick={() => { setSelectedIndex(index); void onOpenMatch(match.relativePath, match.lineNumber); }}
+                  onClick={() => { setSelectedIndex(index); void openMatch(match); }}
                 >
                   <span className="levi-search-line">{match.lineNumber}:{match.columnStart}</span>
                   <span>{match.preview || "(empty line)"}</span>
