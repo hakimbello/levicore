@@ -7,6 +7,7 @@ export type SearchOptions = {
 export type FileSearchMatch = {
   lineNumber: number;
   columnStart: number;
+  matchLength: number;
   preview: string;
 };
 
@@ -41,6 +42,7 @@ export function searchFileContent(
       matches.push({
         lineNumber: index + 1,
         columnStart: hit.index + 1,
+        matchLength: Math.max(hit[0].length, 1),
         preview: line.trim().slice(0, 240)
       });
 
