@@ -1,4 +1,5 @@
 import { lazy, useEffect, useState } from "react";
+import { ActivityBar, type ActivityView } from "../components/ActivityBar";
 import { Icon } from "../components/Icon";
 import { LazySurface } from "../components/LazySurface";
 import { Sidebar } from "../components/Sidebar";
@@ -26,6 +27,43 @@ const idleWorkspaceStatus: WorkspaceStatus = {
   state: "idle"
 };
 
+const placeholderCopy: Partial<Record<ActivityView, { title: string; description: string }>> = {
+  explorer: {
+    title: "Explorer",
+    description: "The workspace file tree will be implemented in the next milestone."
+  },
+  search: {
+    title: "Search",
+    description: "Workspace-wide search and replace will be added after the Explorer foundation."
+  },
+  "source-control": {
+    title: "Source Control",
+    description: "Git status, staging, commits, and branch controls are scheduled for the IDE Core phase."
+  },
+  terminal: {
+    title: "Terminal",
+    description: "Use the terminal panel at the bottom of the workspace."
+  },
+  settings: {
+    title: "Settings",
+    description: "Desktop, model, workspace, and appearance settings will be consolidated here."
+  }
+};
+
+function WorkspacePlaceholder({ view }: { view: ActivityView }) {
+  const copy = placeholderCopy[view];
+  if (!copy) return null;
+
+  return (
+    <section className="levi-workspace-placeholder" aria-labelledby={`levi-${view}-title`}>
+      <div className="levi-workspace-placeholder-card">
+        <h1 id={`levi-${view}-title`}>{copy.title}</h1>
+        <p>{copy.description}</p>
+      </div>
+    </section>
+  );
+}
+
 export function App() {
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus>(unknownStatus);
   const [selectedProject, setSelectedProject] = useState<SelectedProject | null>(null);
@@ -33,7 +71,7 @@ export function App() {
   const [openFile, setOpenFile] = useState<WorkspaceOpenFileResult | null>(null);
   const [canUndoEdit, setCanUndoEdit] = useState(false);
   const [newChatSignal, setNewChatSignal] = useState(0);
-  const [activeView, setActiveView] = useState<"home" | "rules">("home");
+  const [activeView, setActiveView] = useState<ActivityView>("home");
 
   useEffect(() => {
     let disposed = false;
@@ -73,11 +111,10 @@ export function App() {
     setOpenFile(null);
     setCanUndoEdit(false);
     const project = await window.levi.projects.openFolder();
+    setSelectedProject(project ?? selectedProject);
+    setWorkspaceStatus(await window.levi.workspace.getStatus());
     if (project) {
-      setSelectedProject(project);
-      setWorkspaceStatus(await window.levi.workspace.getStatus());
-    } else {
-      setWorkspaceStatus(await window.levi.workspace.getStatus());
+      setActiveView("explorer");
     }
   }
 
@@ -124,43 +161,62 @@ export function App() {
     openUndoneEdit(result);
   }
 
+  function startNewChat() {
+    setActiveView("home");
+    setNewChatSignal((value) => value + 1);
+  }
+
+  function renderActiveWorkspace() {
+    if (activeView === "rules") {
+      return (
+        <LazySurface label="Project Rules">
+          <ProjectRulesPanel onOpenRuleSource={setOpenFile} />
+        </LazySurface>
+      );
+    }
+
+    if (activeView === "home") {
+      return (
+        <Home
+          selectedProject={selectedProject}
+          workspaceStatus={workspaceStatus}
+          newChatSignal={newChatSignal}
+          onOpenCitation={openWorkspaceCitation}
+          onEditApplied={openAppliedEdit}
+          onEditUndone={openUndoneEdit}
+        />
+      );
+    }
+
+    return <WorkspacePlaceholder view={activeView} />;
+  }
+
   return (
     <div className="levi-shell">
+      <ActivityBar activeView={activeView} onSelect={setActiveView} />
       <Sidebar
         status={ollamaStatus}
         selectedProject={selectedProject}
         workspaceStatus={workspaceStatus}
         onOpenProject={openProjectFolder}
         onRefreshWorkspace={refreshWorkspace}
-        onNewChat={() => {
-          setActiveView("home");
-          setNewChatSignal((value) => value + 1);
-        }}
+        onNewChat={startNewChat}
         onOpenRules={() => setActiveView("rules")}
       />
       <main className="levi-main">
         <div className={openFile ? "levi-workspace-layout levi-workspace-layout-editor" : "levi-workspace-layout"}>
-          {activeView === "rules" ? (
-            <LazySurface label="Project Rules">
-              <ProjectRulesPanel onOpenRuleSource={setOpenFile} />
-            </LazySurface>
-          ) : (
-            <Home
-              selectedProject={selectedProject}
-              workspaceStatus={workspaceStatus}
-              newChatSignal={newChatSignal}
-              onOpenCitation={openWorkspaceCitation}
-              onEditApplied={openAppliedEdit}
-              onEditUndone={openUndoneEdit}
-            />
-          )}
+          {renderActiveWorkspace()}
           {openFile ? (
             <aside className="levi-editor-panel" aria-label="Read-only workspace file">
               <div className="levi-editor-header">
                 <div>
                   <div className="levi-editor-path">{openFile.relativePath}</div>
                   <div className="levi-editor-mode">
-                    {openFile.appliedByLevi ? "Applied by Levi - read-only workspace view" : openFile.undoneByLevi ? "Undo restored - read-only workspace view" : "Read-only workspace view"}
+                    {openFile.appliedByLevi
+                      ? "Applied by Levi - read-only workspace view"
+                      : openFile.undoneByLevi
+                        ? "Undo restored - read-only workspace view"
+                        : "Read-only workspace view"}
                   </div>
                 </div>
                 {canUndoEdit ? (
