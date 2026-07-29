@@ -1,0 +1,82 @@
+.levi-editor-panel {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.levi-editor-tabs {
+  display: flex;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-bottom: 1px solid var(--levi-color-divider);
+  background: var(--levi-color-surface);
+  scrollbar-width: thin;
+}
+
+.levi-editor-tab {
+  display: inline-flex;
+  min-width: 120px;
+  max-width: 220px;
+  flex: 0 0 auto;
+  align-items: center;
+  border-right: 1px solid var(--levi-color-divider);
+  border-top: 2px solid transparent;
+  color: var(--levi-color-mutedText);
+  background: var(--levi-color-surface);
+}
+
+.levi-editor-tab:hover {
+  color: var(--levi-color-primaryText);
+  background: color-mix(in srgb, var(--levi-color-surfaceElevated) 76%, var(--levi-color-surface));
+}
+
+.levi-editor-tab-active {
+  border-top-color: var(--levi-color-accent);
+  color: var(--levi-color-primaryText);
+  background: var(--levi-color-surfaceElevated);
+}
+
+.levi-editor-tab-label {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: var(--levi-space-8);
+  padding: 0 var(--levi-space-8) 0 var(--levi-space-12);
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  font-size: var(--levi-font-size-caption);
+  line-height: var(--levi-line-height-compact);
+}
+
+.levi-editor-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.levi-editor-tab-state {
+  flex: 0 0 auto;
+  color: var(--levi-color-accent);
+  font-size: 0.7em;
+}
+
+.levi-editor-tab .levi-icon-button {
+  width: var(--levi-space-28);
+  height: var(--levi-space-28);
+  min-height: 0;
+  margin-right: var(--levi-space-4);
+  opacity: 0;
+}
+
+.levi-editor-tab:hover .levi-icon-button,
+.levi-editor-tab-active .levi-icon-button,
+.levi-editor-tab .levi-icon-button:focus-visible {
+  opacity: 1;
+}
+
+.levi-editor-tab-label:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--levi-color-accent) 55%, transparent);
+  outline-offset: -2px;
+}
