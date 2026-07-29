@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { WorkspaceTreeNode } from "../../types/workspace-tree-api";
 import "../../styles/search-panel.css";
+import { patternMatches } from "./search-patterns";
 
 type SearchMatch = {
   id: string;
@@ -29,16 +30,6 @@ function flattenFiles(nodes: WorkspaceTreeNode[]): string[] {
   };
   visit(nodes);
   return files;
-}
-
-function patternMatches(path: string, pattern: string): boolean {
-  const terms = pattern.split(",").map((term) => term.trim()).filter(Boolean);
-  if (terms.length === 0) return true;
-  return terms.some((term) => {
-    const escaped = term.replace(/[.+^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*").replaceAll("?", ".");
-    try { return new RegExp(`^${escaped}$`, "i").test(path) || new RegExp(escaped, "i").test(path); }
-    catch { return path.toLowerCase().includes(term.toLowerCase()); }
-  });
 }
 
 function createMatcher(query: string, matchCase: boolean, wholeWord: boolean, regex: boolean): RegExp {
