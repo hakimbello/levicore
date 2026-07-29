@@ -36,6 +36,16 @@ export function useEditorTabs() {
     setActiveTabId((current) => tabs.some((tab) => tab.id === id) ? id : current);
   }
 
+  function activateRelativeTab(direction: 1 | -1) {
+    setActiveTabId((current) => {
+      if (tabs.length === 0) return null;
+      const currentIndex = tabs.findIndex((tab) => tab.id === current);
+      const startIndex = currentIndex >= 0 ? currentIndex : 0;
+      const nextIndex = (startIndex + direction + tabs.length) % tabs.length;
+      return tabs[nextIndex]?.id ?? current;
+    });
+  }
+
   function closeTab(id: string) {
     setTabs((current) => {
       const index = current.findIndex((tab) => tab.id === id);
@@ -47,6 +57,10 @@ export function useEditorTabs() {
       });
       return next;
     });
+  }
+
+  function closeActiveTab() {
+    if (activeTabId) closeTab(activeTabId);
   }
 
   function updateDirty(id: string, dirty: boolean) {
@@ -68,7 +82,9 @@ export function useEditorTabs() {
     activeTab,
     openFile,
     closeTab,
+    closeActiveTab,
     activateTab,
+    activateRelativeTab,
     updateDirty,
     pinTab,
     clearTabs
