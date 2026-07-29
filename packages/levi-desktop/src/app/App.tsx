@@ -1,4 +1,4 @@
-import { lazy, useEffect, useState } from "react";
+import { lazy, useEffect, useRef, useState } from "react";
 import { ActivityBar, type ActivityView } from "../components/ActivityBar";
 import { Icon } from "../components/Icon";
 import { LazySurface } from "../components/LazySurface";
@@ -7,8 +7,9 @@ import { ExplorerPanel } from "../features/explorer/ExplorerPanel";
 import { Home } from "../features/home/Home";
 import { TerminalPanel } from "../features/terminal/TerminalPanel";
 import { useEditorTabs } from "../hooks/use-editor-tabs";
-import type { EditApplyResult, EditUndoResult, OllamaStatus, SelectedProject, WorkspaceOpenFileResult, WorkspaceStatus } from "../types/levi-api";
+import type { EditApplyResult, EditUndoResult, OllamaStatus, SelectedProject, WorkspaceStatus } from "../types/levi-api";
 import type { WorkspaceReadPathResult } from "../types/workspace-tree-api";
+import "../styles/editor-tabs.css";
 
 const CodeEditor = lazy(async () => {
   const module = await import("../components/CodeEditor");
@@ -70,13 +71,17 @@ export function App() {
   const [canUndoEdit, setCanUndoEdit] = useState(false);
   const [newChatSignal, setNewChatSignal] = useState(0);
   const [activeView, setActiveView] = useState<ActivityView>("home");
+  const tabButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const {
     tabs,
     activeTabId,
     activeTab,
     openFile,
     closeTab,
+    closeActiveTab,
     activateTab,
+    activateRelativeTab,
+    pinTab,
     clearTabs
   } = useEditorTabs();
 
@@ -109,6 +114,29 @@ export function App() {
       disposed = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!activeTabId) return;
+    tabButtonRefs.current.get(activeTabId)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [activeTabId]);
+
+  useEffect(() => {
+    function handleEditorShortcut(event: KeyboardEvent) {
+      const commandKey = event.ctrlKey || event.metaKey;
+      if (!commandKey) return;
+
+      if (event.key === "Tab" && tabs.length > 1) {
+        event.preventDefault();
+        activateRelativeTab(event.shiftKey ? -1 : 1);
+      } else if (event.key.toLowerCase() === "w" && activeTabId) {
+        event.preventDefault();
+        closeActiveTab();
+      }
+    }
+
+    window.addEventListener("keydown", handleEditorShortcut);
+    return () => window.removeEventListener("keydown", handleEditorShortcut);
+  }, [activeTabId, activateRelativeTab, closeActiveTab, tabs.length]);
 
   async function openProjectFolder() {
     setWorkspaceStatus({ state: "scanning" });
@@ -178,6 +206,27 @@ export function App() {
     setNewChatSignal((value) => value + 1);
   }
 
+  function handleTabKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, tabId: string) {
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      activateRelativeTab(1);
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      activateRelativeTab(-1);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      const first = tabs[0];
+      if (first) activateTab(first.id);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      const last = tabs[tabs.length - 1];
+      if (last) activateTab(last.id);
+    } else if (event.key === "Delete") {
+      event.preventDefault();
+      closeTab(tabId);
+    }
+  }
+
   function renderActiveWorkspace() {
     if (activeView === "rules") {
       return (
@@ -231,29 +280,42 @@ export function App() {
           {activeTab ? (
             <aside className="levi-editor-panel" aria-label="Workspace editor">
               <div className="levi-editor-tabs" role="tablist" aria-label="Open files">
-                {tabs.map((tab) => (
-                  <div key={tab.id} className={tab.id === activeTabId ? "levi-editor-tab levi-editor-tab-active" : "levi-editor-tab"}>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={tab.id === activeTabId}
-                      className="levi-editor-tab-label"
-                      onClick={() => activateTab(tab.id)}
-                      title={tab.relativePath}
-                    >
-                      {tab.pinned ? "📌 " : ""}{tab.dirty ? "● " : ""}{tab.relativePath.split(/[\\/]/).pop()}
-                    </button>
-                    <button
-                      type="button"
-                      className="levi-icon-button"
-                      onClick={() => closeTab(tab.id)}
-                      aria-label={`Close ${tab.relativePath}`}
-                      title="Close tab"
-                    >
-                      <Icon name="close" />
-                    </button>
-                  </div>
-                ))}
+                {tabs.map((tab) => {
+                  const active = tab.id === activeTabId;
+                  const fileName = tab.relativePath.split(/[\\/]/).pop() ?? tab.relativePath;
+                  return (
+                    <div key={tab.id} className={active ? "levi-editor-tab levi-editor-tab-active" : "levi-editor-tab"}>
+                      <button
+                        ref={(element) => {
+                          if (element) tabButtonRefs.current.set(tab.id, element);
+                          else tabButtonRefs.current.delete(tab.id);
+                        }}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        tabIndex={active ? 0 : -1}
+                        className="levi-editor-tab-label"
+                        onClick={() => activateTab(tab.id)}
+                        onDoubleClick={() => pinTab(tab.id, !tab.pinned)}
+                        onKeyDown={(event) => handleTabKeyDown(event, tab.id)}
+                        title={`${tab.relativePath}${tab.pinned ? " — pinned" : ""}`}
+                      >
+                        {tab.pinned ? <span className="levi-editor-tab-state" aria-label="Pinned">◆</span> : null}
+                        {tab.dirty ? <span className="levi-editor-tab-state" aria-label="Unsaved changes">●</span> : null}
+                        <span className="levi-editor-tab-name">{fileName}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="levi-icon-button"
+                        onClick={() => closeTab(tab.id)}
+                        aria-label={`Close ${tab.relativePath}`}
+                        title="Close tab (Ctrl+W)"
+                      >
+                        <Icon name="close" />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
               <div className="levi-editor-header">
                 <div>
