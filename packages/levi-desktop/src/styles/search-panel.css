@@ -1,0 +1,10 @@
+.levi-search-panel{display:flex;flex-direction:column;min-width:0;min-height:0;height:100%;background:var(--levi-color-surface,#fff);color:var(--levi-color-primary-text,#151515)}
+.levi-search-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 20px 10px;border-bottom:1px solid var(--levi-color-border,#ddd)}
+.levi-search-header h1{margin:0;font-size:18px}.levi-search-header span{font-size:12px;color:var(--levi-color-muted-text,#666)}
+.levi-search-controls{display:grid;gap:8px;padding:12px 20px;border-bottom:1px solid var(--levi-color-border,#ddd)}
+.levi-search-controls input{width:100%;box-sizing:border-box;border:1px solid var(--levi-color-border,#ccc);border-radius:6px;padding:9px 10px;background:var(--levi-color-surface-elevated,#fafafa);color:inherit}
+.levi-search-query-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:6px}.levi-search-query-row button{min-width:34px;border:1px solid var(--levi-color-border,#ccc);border-radius:6px;background:transparent;color:inherit}.levi-search-query-row button[aria-pressed=true]{background:var(--levi-color-accent-soft,#e8efff);border-color:var(--levi-color-accent,#3767d6)}
+.levi-search-results{min-height:0;overflow:auto;padding:8px 0 24px}.levi-search-file{border-bottom:1px solid var(--levi-color-border,#eee)}
+.levi-search-file-heading{display:flex;align-items:baseline;gap:8px;padding:10px 20px 6px}.levi-search-file-heading span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--levi-color-muted-text,#666)}
+.levi-search-match{display:grid;grid-template-columns:72px minmax(0,1fr);gap:8px;width:100%;border:0;padding:7px 20px;text-align:left;background:transparent;color:inherit;font-family:inherit}.levi-search-match:hover,.levi-search-match-selected{background:var(--levi-color-accent-soft,#eef3ff)}
+.levi-search-line{font-family:var(--levi-font-mono,monospace);font-size:12px;color:var(--levi-color-muted-text,#666)}.levi-search-error,.levi-search-empty{padding:16px 20px}.levi-search-error{color:#a32525}
