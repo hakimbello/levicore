@@ -15,6 +15,10 @@ import type {
   TerminalResizeRequest,
   WorkspaceOpenFileRequest
 } from "../../src/types/levi-api";
+import type {
+  LeviApiWithWorkspaceTree,
+  WorkspaceReadPathRequest
+} from "../../src/types/workspace-tree-api";
 
 const IPC_CHANNELS = {
   ollamaGetStatus: "levi:ollama:get-status",
@@ -23,6 +27,8 @@ const IPC_CHANNELS = {
   workspaceGetStatus: "levi:workspace:get-status",
   workspaceRefresh: "levi:workspace:refresh",
   workspaceOpenFile: "levi:workspace:open-file",
+  workspaceListTree: "levi:workspace:list-tree",
+  workspaceReadPath: "levi:workspace:read-path",
   rulesGetStatus: "levi:rules:get-status",
   rulesList: "levi:rules:list",
   rulesRefresh: "levi:rules:refresh",
@@ -200,7 +206,7 @@ function isExecutionStreamEvent(value: unknown): value is ExecutionStreamEvent {
   return false;
 }
 
-const leviApi: LeviApi = {
+const leviApi: LeviApiWithWorkspaceTree = {
   ollama: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.ollamaGetStatus)
   },
@@ -211,7 +217,9 @@ const leviApi: LeviApi = {
   workspace: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.workspaceGetStatus),
     refresh: () => ipcRenderer.invoke(IPC_CHANNELS.workspaceRefresh),
-    openFile: (request: WorkspaceOpenFileRequest) => ipcRenderer.invoke(IPC_CHANNELS.workspaceOpenFile, request)
+    openFile: (request: WorkspaceOpenFileRequest) => ipcRenderer.invoke(IPC_CHANNELS.workspaceOpenFile, request),
+    listTree: () => ipcRenderer.invoke(IPC_CHANNELS.workspaceListTree),
+    readPath: (request: WorkspaceReadPathRequest) => ipcRenderer.invoke(IPC_CHANNELS.workspaceReadPath, request)
   },
   rules: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.rulesGetStatus),
