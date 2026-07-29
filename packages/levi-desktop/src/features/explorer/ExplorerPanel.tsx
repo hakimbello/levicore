@@ -1,43 +1,72 @@
-import { useMemo, useState } from "react";
+import { memo, useEffect, useState } from "react";
+import { Icon } from "../../components/Icon";
+import { useWorkspaceTree } from "../../hooks/use-workspace-tree";
 import type { WorkspaceStatus } from "../../types/levi-api";
-import { buildExplorerTree, type ExplorerNode } from "./file-tree";
+import type { WorkspaceReadPathResult, WorkspaceTreeNode } from "../../types/workspace-tree-api";
+
+const EXPANDED_STORAGE_KEY = "levi.explorer.expandedFolders";
+const SELECTED_STORAGE_KEY = "levi.explorer.selectedFile";
 
 type ExplorerPanelProps = {
   workspaceStatus: WorkspaceStatus;
   selectedPath?: string;
-  onSelectFile?: (relativePath: string) => void;
+  onOpenFile: (file: WorkspaceReadPathResult) => void;
 };
 
-function TreeNode({
+type TreeNodeProps = {
+  node: WorkspaceTreeNode;
+  depth: number;
+  expanded: Set<string>;
+  selectedPath?: string;
+  onToggle: (relativePath: string) => void;
+  onSelectFile: (relativePath: string) => void;
+};
+
+function readExpandedFolders(): Set<string> {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(EXPANDED_STORAGE_KEY) ?? "[]");
+    return new Set(Array.isArray(stored) ? stored.filter((value): value is string => typeof value === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+const TreeNode = memo(function TreeNode({
   node,
   depth,
   expanded,
   selectedPath,
   onToggle,
   onSelectFile
-}: {
-  node: ExplorerNode;
-  depth: number;
-  expanded: Set<string>;
-  selectedPath?: string;
-  onToggle: (id: string) => void;
-  onSelectFile?: (relativePath: string) => void;
-}) {
+}: TreeNodeProps) {
   const isFolder = node.kind === "folder";
-  const isExpanded = expanded.has(node.id);
-  const isSelected = node.relativePath === selectedPath;
+  const isExpanded = isFolder && expanded.has(node.relativePath);
+  const isSelected = !isFolder && node.relativePath === selectedPath;
+
+  function activate() {
+    if (isFolder) onToggle(node.relativePath);
+    else onSelectFile(node.relativePath);
+  }
 
   return (
-    <div>
+    <div role="treeitem" aria-expanded={isFolder ? isExpanded : undefined} aria-selected={isSelected}>
       <button
         type="button"
         className={isSelected ? "levi-explorer-row levi-explorer-row-selected" : "levi-explorer-row"}
         style={{ paddingLeft: `${10 + depth * 16}px` }}
-        onClick={() => {
-          if (isFolder) onToggle(node.id);
-          else onSelectFile?.(node.relativePath);
+        onClick={activate}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowRight" && isFolder && !isExpanded) {
+            event.preventDefault();
+            onToggle(node.relativePath);
+          } else if (event.key === "ArrowLeft" && isFolder && isExpanded) {
+            event.preventDefault();
+            onToggle(node.relativePath);
+          } else if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            activate();
+          }
         }}
-        aria-expanded={isFolder ? isExpanded : undefined}
         title={node.relativePath}
       >
         <span className="levi-explorer-chevron" aria-hidden="true">
@@ -51,7 +80,7 @@ function TreeNode({
       {isFolder && isExpanded
         ? node.children?.map((child) => (
             <TreeNode
-              key={child.id}
+              key={child.relativePath}
               node={child}
               depth={depth + 1}
               expanded={expanded}
@@ -63,35 +92,43 @@ function TreeNode({
         : null}
     </div>
   );
-}
+});
 
-export function ExplorerPanel({ workspaceStatus, selectedPath, onSelectFile }: ExplorerPanelProps) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+export function ExplorerPanel({ workspaceStatus, selectedPath, onOpenFile }: ExplorerPanelProps) {
+  const { tree, loading, refreshing, error, refresh } = useWorkspaceTree();
+  const [expanded, setExpanded] = useState<Set<string>>(readExpandedFolders);
+  const [persistedSelectedPath, setPersistedSelectedPath] = useState<string | undefined>(
+    () => window.localStorage.getItem(SELECTED_STORAGE_KEY) ?? undefined
+  );
+  const [openError, setOpenError] = useState<string | null>(null);
+  const activeSelectedPath = selectedPath ?? persistedSelectedPath;
 
-  const paths = useMemo(() => {
-    const summary = workspaceStatus.summary;
-    if (!summary) return [];
-    return Array.from(
-      new Set([
-        ...summary.likelyEntryPoints,
-        ...summary.documentationFiles,
-        ...summary.manifestFiles
-      ])
-    );
-  }, [workspaceStatus.summary]);
+  useEffect(() => {
+    window.localStorage.setItem(EXPANDED_STORAGE_KEY, JSON.stringify([...expanded]));
+  }, [expanded]);
 
-  const tree = useMemo(() => buildExplorerTree(paths), [paths]);
-
-  function toggleNode(id: string) {
+  function toggleNode(relativePath: string) {
     setExpanded((current) => {
       const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(relativePath)) next.delete(relativePath);
+      else next.add(relativePath);
       return next;
     });
   }
 
-  if (workspaceStatus.state === "scanning") {
+  async function selectFile(relativePath: string) {
+    setOpenError(null);
+    try {
+      const file = await window.levi.workspace.readPath({ relativePath });
+      setPersistedSelectedPath(relativePath);
+      window.localStorage.setItem(SELECTED_STORAGE_KEY, relativePath);
+      onOpenFile(file);
+    } catch (nextError) {
+      setOpenError(nextError instanceof Error ? nextError.message : "Unable to open the selected file.");
+    }
+  }
+
+  if (workspaceStatus.state === "scanning" || loading) {
     return <section className="levi-explorer-panel"><div className="levi-explorer-empty">Scanning workspace…</div></section>;
   }
 
@@ -99,7 +136,18 @@ export function ExplorerPanel({ workspaceStatus, selectedPath, onSelectFile }: E
     return <section className="levi-explorer-panel"><div className="levi-explorer-empty">{workspaceStatus.error ?? "Workspace scan failed."}</div></section>;
   }
 
-  if (!workspaceStatus.summary) {
+  if (error) {
+    return (
+      <section className="levi-explorer-panel">
+        <div className="levi-explorer-empty">
+          <div>{error}</div>
+          <button type="button" className="levi-button levi-button-secondary" onClick={() => void refresh()}>Retry</button>
+        </div>
+      </section>
+    );
+  }
+
+  if (!tree) {
     return <section className="levi-explorer-panel"><div className="levi-explorer-empty">Open a project folder to view files.</div></section>;
   }
 
@@ -108,25 +156,35 @@ export function ExplorerPanel({ workspaceStatus, selectedPath, onSelectFile }: E
       <header className="levi-explorer-header">
         <div>
           <div className="levi-explorer-title">Explorer</div>
-          <div className="levi-explorer-project">{workspaceStatus.summary.projectName}</div>
+          <div className="levi-explorer-project">{tree.projectName}</div>
         </div>
-        <div className="levi-explorer-count">{paths.length}</div>
+        <button
+          type="button"
+          className="levi-icon-button"
+          onClick={() => void refresh()}
+          disabled={refreshing}
+          aria-label="Refresh Explorer"
+          title="Refresh Explorer"
+        >
+          <Icon name="refresh" />
+        </button>
       </header>
-      <div className="levi-explorer-tree" role="tree">
-        {tree.length > 0 ? (
-          tree.map((node) => (
+      {openError ? <div className="levi-explorer-empty" role="alert">{openError}</div> : null}
+      <div className="levi-explorer-tree" role="tree" aria-label={`${tree.projectName} files`}>
+        {tree.nodes.length > 0 ? (
+          tree.nodes.map((node) => (
             <TreeNode
-              key={node.id}
+              key={node.relativePath}
               node={node}
               depth={0}
               expanded={expanded}
-              selectedPath={selectedPath}
+              selectedPath={activeSelectedPath}
               onToggle={toggleNode}
-              onSelectFile={onSelectFile}
+              onSelectFile={(relativePath) => void selectFile(relativePath)}
             />
           ))
         ) : (
-          <div className="levi-explorer-empty">No indexed files were found.</div>
+          <div className="levi-explorer-empty">No project files were found.</div>
         )}
       </div>
     </section>
