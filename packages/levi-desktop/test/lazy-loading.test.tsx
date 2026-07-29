@@ -61,6 +61,11 @@ describe("Levi desktop lazy loading", () => {
     expect(homeSource).toMatch(/import\("\.\/ExecutionReviewPanel"\)/);
   });
 
+  it("lazy-loads Settings from App", () => {
+    const appSource = readSource("src/app/App.tsx");
+    expect(appSource).toMatch(/import\("\.\.\/features\/settings\/SettingsPanel"\)/);
+  });
+
   it("loads Monaco from bundled assets instead of a CDN loader default", () => {
     const setupSource = readSource("src/monaco-setup.ts");
     const editorSource = readSource("src/components/CodeEditor.tsx");

@@ -9,6 +9,7 @@ export const IPC_CHANNELS = {
   workspaceOpenFile: "levi:workspace:open-file",
   workspaceListTree: "levi:workspace:list-tree",
   workspaceReadPath: "levi:workspace:read-path",
+  workspaceWritePath: "levi:workspace:write-path",
   rulesGetStatus: "levi:rules:get-status",
   rulesList: "levi:rules:list",
   rulesRefresh: "levi:rules:refresh",

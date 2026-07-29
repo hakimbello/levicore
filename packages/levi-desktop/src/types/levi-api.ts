@@ -1,3 +1,11 @@
+import type {
+  WorkspaceReadPathRequest,
+  WorkspaceReadPathResult,
+  WorkspaceTreeResult,
+  WorkspaceWritePathRequest,
+  WorkspaceWritePathResult
+} from "./workspace-tree-api";
+
 export type OllamaStatus = {
   ready: boolean;
   modelCount: number;
@@ -93,7 +101,7 @@ export type WorkspaceOpenFileResult = {
   content: string;
   language: string;
   lineStart: number;
-  readOnly: true;
+  readOnly: boolean;
   appliedByLevi?: boolean;
   undoneByLevi?: boolean;
 };
@@ -718,6 +726,9 @@ export type LeviApi = {
     getStatus: () => Promise<WorkspaceStatus>;
     refresh: () => Promise<WorkspaceStatus>;
     openFile: (request: WorkspaceOpenFileRequest) => Promise<WorkspaceOpenFileResult>;
+    listTree: () => Promise<WorkspaceTreeResult>;
+    readPath: (request: WorkspaceReadPathRequest) => Promise<WorkspaceReadPathResult>;
+    writePath: (request: WorkspaceWritePathRequest) => Promise<WorkspaceWritePathResult>;
   };
   rules: {
     getStatus: () => Promise<ProjectRulesStatus>;
