@@ -78,6 +78,13 @@ export function writeEditorRecovery(
   window.localStorage.setItem(recoveryKey(workspacePath), JSON.stringify(record));
 }
 
+export function removeEditorRecoveryEntry(workspacePath: string, relativePath: string): void {
+  const record = readEditorRecovery(workspacePath);
+  if (!record) return;
+  const entries = record.entries.filter((entry) => entry.relativePath !== relativePath);
+  writeEditorRecovery(workspacePath, record.activeTabId === relativePath ? null : record.activeTabId, entries);
+}
+
 export function clearEditorRecovery(workspacePath: string): void {
   window.localStorage.removeItem(recoveryKey(workspacePath));
 }
