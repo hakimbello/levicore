@@ -5,6 +5,7 @@ import { LazySurface } from "../components/LazySurface";
 import { Sidebar } from "../components/Sidebar";
 import { ExplorerPanel } from "../features/explorer/ExplorerPanel";
 import { Home } from "../features/home/Home";
+import { SearchPanel } from "../features/search/SearchPanel";
 import { TerminalPanel } from "../features/terminal/TerminalPanel";
 import { type EditorTab, useEditorTabs } from "../hooks/use-editor-tabs";
 import type { EditApplyResult, EditUndoResult, OllamaStatus, SelectedProject, WorkspaceStatus } from "../types/levi-api";
@@ -26,7 +27,6 @@ const idleWorkspaceStatus: WorkspaceStatus = { state: "idle" };
 const FILE_CONFLICT_CODE = "WORKSPACE_FILE_CONFLICT";
 
 const placeholderCopy: Partial<Record<ActivityView, { title: string; description: string }>> = {
-  search: { title: "Search", description: "Workspace-wide search and replace will be added after the Explorer foundation." },
   "source-control": { title: "Source Control", description: "Git status, staging, commits, and branch controls are scheduled for the IDE Core phase." },
   terminal: { title: "Terminal", description: "Use the terminal panel at the bottom of the workspace." },
   settings: { title: "Settings", description: "Desktop, model, workspace, and appearance settings will be consolidated here." }
@@ -52,6 +52,7 @@ export function App() {
   const [canUndoEdit, setCanUndoEdit] = useState(false);
   const [newChatSignal, setNewChatSignal] = useState(0);
   const [activeView, setActiveView] = useState<ActivityView>("home");
+  const [searchFocusSignal, setSearchFocusSignal] = useState(0);
   const [savingTabId, setSavingTabId] = useState<string | null>(null);
   const [savingAll, setSavingAll] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -121,8 +122,11 @@ export function App() {
     return () => window.removeEventListener("beforeunload", protectUnsavedChanges);
   }, [hasDirtyTabs]);
 
-  function confirmDiscard(message: string): boolean {
-    return window.confirm(message);
+  function confirmDiscard(message: string): boolean { return window.confirm(message); }
+
+  function selectActivityView(view: ActivityView) {
+    setActiveView(view);
+    if (view === "search") setSearchFocusSignal((value) => value + 1);
   }
 
   function requestCloseTab(tabId: string) {
@@ -135,12 +139,7 @@ export function App() {
 
   async function writeTab(tab: EditorTab, force = false): Promise<"saved" | "conflict" | "failed"> {
     try {
-      await window.levi.workspace.writePath({
-        relativePath: tab.relativePath,
-        content: tab.content,
-        expectedContent: tab.savedContent,
-        force
-      });
+      await window.levi.workspace.writePath({ relativePath: tab.relativePath, content: tab.content, expectedContent: tab.savedContent, force });
       markSaved(tab.id, tab.content);
       if (conflictTabId === tab.id) setConflictTabId(null);
       return "saved";
@@ -165,9 +164,7 @@ export function App() {
     if (result === "conflict") {
       setConflictTabId(activeTab.id);
       setSaveError("This file changed on disk. Reload it or overwrite the external version.");
-    } else if (result === "failed" && !saveError) {
-      setSaveError("The file could not be saved.");
-    }
+    } else if (result === "failed" && !saveError) setSaveError("The file could not be saved.");
     setSavingTabId(null);
   }
 
@@ -179,7 +176,6 @@ export function App() {
     let saved = 0;
     let conflicts = 0;
     let failed = 0;
-
     for (const tab of dirtyWorkspaceTabs) {
       setSavingTabId(tab.id);
       const result = await writeTab(tab);
@@ -187,15 +183,10 @@ export function App() {
       else if (result === "conflict") conflicts += 1;
       else failed += 1;
     }
-
     setSavingTabId(null);
     setSavingAll(false);
     const problems = conflicts + failed;
-    setSaveSummary(
-      problems === 0
-        ? `Saved ${saved} file${saved === 1 ? "" : "s"}.`
-        : `Saved ${saved}; ${conflicts} conflict${conflicts === 1 ? "" : "s"}; ${failed} failed.`
-    );
+    setSaveSummary(problems === 0 ? `Saved ${saved} file${saved === 1 ? "" : "s"}.` : `Saved ${saved}; ${conflicts} conflict${conflicts === 1 ? "" : "s"}; ${failed} failed.`);
   }
 
   async function reloadActiveTabFromDisk() {
@@ -209,16 +200,17 @@ export function App() {
       setConflictTabId(null);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "The file could not be reloaded.");
-    } finally {
-      setSavingTabId(null);
-    }
+    } finally { setSavingTabId(null); }
   }
 
   useEffect(() => {
     function handleEditorShortcut(event: KeyboardEvent) {
       const commandKey = event.ctrlKey || event.metaKey;
       if (!commandKey) return;
-      if (event.key === "Tab" && tabs.length > 1) {
+      if (event.key.toLowerCase() === "f" && event.shiftKey) {
+        event.preventDefault();
+        selectActivityView("search");
+      } else if (event.key === "Tab" && tabs.length > 1) {
         event.preventDefault();
         activateRelativeTab(event.shiftKey ? -1 : 1);
       } else if (event.key.toLowerCase() === "w" && activeTabId) {
@@ -258,12 +250,16 @@ export function App() {
     setWorkspaceStatus(await window.levi.workspace.refresh());
   }
 
-  async function openWorkspaceCitation(sourceId: string, lineStart?: number) {
-    openFile(await window.levi.workspace.openFile({ sourceId, lineStart }));
-  }
+  async function openWorkspaceCitation(sourceId: string, lineStart?: number) { openFile(await window.levi.workspace.openFile({ sourceId, lineStart })); }
 
   function openExplorerFile(file: WorkspaceReadPathResult) {
     openFile({ sourceId: `WORKSPACE:${file.relativePath}`, relativePath: file.relativePath, content: file.content, language: file.language, lineStart: 1, readOnly: false });
+    setCanUndoEdit(false);
+  }
+
+  async function openSearchMatch(relativePath: string, lineNumber: number) {
+    const file = await window.levi.workspace.readPath({ relativePath });
+    openFile({ sourceId: `WORKSPACE:${file.relativePath}`, relativePath: file.relativePath, content: file.content, language: file.language, lineStart: lineNumber, readOnly: false });
     setCanUndoEdit(false);
   }
 
@@ -291,15 +287,14 @@ export function App() {
   function renderActiveWorkspace() {
     if (activeView === "rules") return <LazySurface label="Project Rules"><ProjectRulesPanel onOpenRuleSource={openFile} /></LazySurface>;
     if (activeView === "explorer") return <ExplorerPanel workspaceStatus={workspaceStatus} selectedPath={activeTab?.relativePath} onOpenFile={openExplorerFile} />;
-    if (activeView === "home") {
-      return <Home selectedProject={selectedProject} workspaceStatus={workspaceStatus} newChatSignal={newChatSignal} onOpenCitation={openWorkspaceCitation} onEditApplied={openAppliedEdit} onEditUndone={openUndoneEdit} />;
-    }
+    if (activeView === "search") return <SearchPanel enabled={Boolean(selectedProject)} focusSignal={searchFocusSignal} onOpenMatch={openSearchMatch} />;
+    if (activeView === "home") return <Home selectedProject={selectedProject} workspaceStatus={workspaceStatus} newChatSignal={newChatSignal} onOpenCitation={openWorkspaceCitation} onEditApplied={openAppliedEdit} onEditUndone={openUndoneEdit} />;
     return <WorkspacePlaceholder view={activeView} />;
   }
 
   return (
     <div className="levi-shell">
-      <ActivityBar activeView={activeView} onSelect={setActiveView} />
+      <ActivityBar activeView={activeView} onSelect={selectActivityView} />
       <Sidebar status={ollamaStatus} selectedProject={selectedProject} workspaceStatus={workspaceStatus} onOpenProject={openProjectFolder} onRefreshWorkspace={refreshWorkspace} onNewChat={startNewChat} onOpenRules={() => setActiveView("rules")} />
       <main className="levi-main">
         <div className={activeTab ? "levi-workspace-layout levi-workspace-layout-editor" : "levi-workspace-layout"}>
@@ -329,17 +324,13 @@ export function App() {
                     {saveError ? `Save failed: ${saveError}` : saveSummary ? saveSummary : savingAll ? "Saving all changed files…" : savingTabId === activeTab.id ? "Saving…" : activeTabEditable ? activeTab.dirty ? "Unsaved changes — Ctrl+S to save" : "Workspace file — editable" : activeTab.appliedByLevi ? "Applied by Levi — read-only workspace view" : activeTab.undoneByLevi ? "Undo restored — read-only workspace view" : "Read-only workspace view"}
                   </div>
                 </div>
-                {dirtyWorkspaceTabs.length > 0 ? (
-                  <button type="button" className="levi-button levi-button-secondary" onClick={() => void saveAllTabs()} disabled={savingAll || Boolean(savingTabId)} aria-label="Save all files" title="Save All (Ctrl+Shift+S)"><span>{savingAll ? "Saving All…" : `Save All (${dirtyWorkspaceTabs.length})`}</span></button>
-                ) : null}
+                {dirtyWorkspaceTabs.length > 0 ? <button type="button" className="levi-button levi-button-secondary" onClick={() => void saveAllTabs()} disabled={savingAll || Boolean(savingTabId)} aria-label="Save all files" title="Save All (Ctrl+Shift+S)"><span>{savingAll ? "Saving All…" : `Save All (${dirtyWorkspaceTabs.length})`}</span></button> : null}
                 {activeTabHasConflict ? (
                   <>
                     <button type="button" className="levi-button levi-button-secondary" onClick={() => void reloadActiveTabFromDisk()} disabled={savingTabId === activeTab.id || savingAll}><span>Reload</span></button>
                     <button type="button" className="levi-button levi-button-secondary" onClick={() => void saveActiveTab(true)} disabled={savingTabId === activeTab.id || savingAll}><span>Overwrite</span></button>
                   </>
-                ) : activeTabEditable ? (
-                  <button type="button" className="levi-button levi-button-secondary" onClick={() => void saveActiveTab()} disabled={!activeTab.dirty || savingTabId === activeTab.id || savingAll} aria-label="Save file"><span>{savingTabId === activeTab.id ? "Saving…" : "Save"}</span></button>
-                ) : null}
+                ) : activeTabEditable ? <button type="button" className="levi-button levi-button-secondary" onClick={() => void saveActiveTab()} disabled={!activeTab.dirty || savingTabId === activeTab.id || savingAll} aria-label="Save file"><span>{savingTabId === activeTab.id ? "Saving…" : "Save"}</span></button> : null}
                 {canUndoEdit ? <button type="button" className="levi-button levi-button-secondary" onClick={() => void undoLastEdit()} aria-label="Undo Last Edit"><Icon name="refresh" /><span>Undo Last Edit</span></button> : null}
               </div>
               <div className="levi-editor-host">
