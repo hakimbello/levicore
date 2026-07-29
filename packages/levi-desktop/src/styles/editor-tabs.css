@@ -63,8 +63,8 @@
 }
 
 .levi-editor-tab .levi-icon-button {
-  width: var(--levi-space-28);
-  height: var(--levi-space-28);
+  width: var(--levi-space-32);
+  height: var(--levi-space-32);
   min-height: 0;
   margin-right: var(--levi-space-4);
   opacity: 0;
