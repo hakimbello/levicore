@@ -6,6 +6,7 @@ import { Sidebar } from "../components/Sidebar";
 import { ExplorerPanel } from "../features/explorer/ExplorerPanel";
 import { Home } from "../features/home/Home";
 import { TerminalPanel } from "../features/terminal/TerminalPanel";
+import { useEditorTabs } from "../hooks/use-editor-tabs";
 import type { EditApplyResult, EditUndoResult, OllamaStatus, SelectedProject, WorkspaceOpenFileResult, WorkspaceStatus } from "../types/levi-api";
 import type { WorkspaceReadPathResult } from "../types/workspace-tree-api";
 
@@ -66,10 +67,18 @@ export function App() {
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus>(unknownStatus);
   const [selectedProject, setSelectedProject] = useState<SelectedProject | null>(null);
   const [workspaceStatus, setWorkspaceStatus] = useState<WorkspaceStatus>(idleWorkspaceStatus);
-  const [openFile, setOpenFile] = useState<WorkspaceOpenFileResult | null>(null);
   const [canUndoEdit, setCanUndoEdit] = useState(false);
   const [newChatSignal, setNewChatSignal] = useState(0);
   const [activeView, setActiveView] = useState<ActivityView>("home");
+  const {
+    tabs,
+    activeTabId,
+    activeTab,
+    openFile,
+    closeTab,
+    activateTab,
+    clearTabs
+  } = useEditorTabs();
 
   useEffect(() => {
     let disposed = false;
@@ -89,16 +98,13 @@ export function App() {
         if (recentProject && workspace.state === "idle") {
           setWorkspaceStatus({ state: "scanning" });
           window.levi.workspace.refresh().then((nextStatus) => {
-            if (!disposed) {
-              setWorkspaceStatus(nextStatus);
-            }
+            if (!disposed) setWorkspaceStatus(nextStatus);
           });
         }
       }
     }
 
     void loadShellState();
-
     return () => {
       disposed = true;
     };
@@ -106,30 +112,27 @@ export function App() {
 
   async function openProjectFolder() {
     setWorkspaceStatus({ state: "scanning" });
-    setOpenFile(null);
+    clearTabs();
     setCanUndoEdit(false);
     const project = await window.levi.projects.openFolder();
     setSelectedProject(project ?? selectedProject);
     setWorkspaceStatus(await window.levi.workspace.getStatus());
-    if (project) {
-      setActiveView("explorer");
-    }
+    if (project) setActiveView("explorer");
   }
 
   async function refreshWorkspace() {
     setWorkspaceStatus({ state: "scanning", summary: workspaceStatus.summary });
-    setOpenFile(null);
+    clearTabs();
     setCanUndoEdit(false);
     setWorkspaceStatus(await window.levi.workspace.refresh());
   }
 
   async function openWorkspaceCitation(sourceId: string, lineStart?: number) {
-    const file = await window.levi.workspace.openFile({ sourceId, lineStart });
-    setOpenFile(file);
+    openFile(await window.levi.workspace.openFile({ sourceId, lineStart }));
   }
 
   function openExplorerFile(file: WorkspaceReadPathResult) {
-    setOpenFile({
+    openFile({
       sourceId: `WORKSPACE:${file.relativePath}`,
       relativePath: file.relativePath,
       content: file.content,
@@ -141,7 +144,7 @@ export function App() {
   }
 
   function openAppliedEdit(result: EditApplyResult) {
-    setOpenFile({
+    openFile({
       sourceId: "LEVIEDIT",
       relativePath: result.relativePath,
       content: result.content,
@@ -154,7 +157,7 @@ export function App() {
   }
 
   function openUndoneEdit(result: EditUndoResult) {
-    setOpenFile({
+    openFile({
       sourceId: "LEVIEDIT",
       relativePath: result.relativePath,
       content: result.content,
@@ -167,8 +170,7 @@ export function App() {
   }
 
   async function undoLastEdit() {
-    const result = await window.levi.edits.undoLast();
-    openUndoneEdit(result);
+    openUndoneEdit(await window.levi.edits.undoLast());
   }
 
   function startNewChat() {
@@ -180,7 +182,7 @@ export function App() {
     if (activeView === "rules") {
       return (
         <LazySurface label="Project Rules">
-          <ProjectRulesPanel onOpenRuleSource={setOpenFile} />
+          <ProjectRulesPanel onOpenRuleSource={openFile} />
         </LazySurface>
       );
     }
@@ -189,7 +191,7 @@ export function App() {
       return (
         <ExplorerPanel
           workspaceStatus={workspaceStatus}
-          selectedPath={openFile?.relativePath}
+          selectedPath={activeTab?.relativePath}
           onOpenFile={openExplorerFile}
         />
       );
@@ -224,17 +226,42 @@ export function App() {
         onOpenRules={() => setActiveView("rules")}
       />
       <main className="levi-main">
-        <div className={openFile ? "levi-workspace-layout levi-workspace-layout-editor" : "levi-workspace-layout"}>
+        <div className={activeTab ? "levi-workspace-layout levi-workspace-layout-editor" : "levi-workspace-layout"}>
           {renderActiveWorkspace()}
-          {openFile ? (
-            <aside className="levi-editor-panel" aria-label="Read-only workspace file">
+          {activeTab ? (
+            <aside className="levi-editor-panel" aria-label="Workspace editor">
+              <div className="levi-editor-tabs" role="tablist" aria-label="Open files">
+                {tabs.map((tab) => (
+                  <div key={tab.id} className={tab.id === activeTabId ? "levi-editor-tab levi-editor-tab-active" : "levi-editor-tab"}>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={tab.id === activeTabId}
+                      className="levi-editor-tab-label"
+                      onClick={() => activateTab(tab.id)}
+                      title={tab.relativePath}
+                    >
+                      {tab.pinned ? "📌 " : ""}{tab.dirty ? "● " : ""}{tab.relativePath.split(/[\\/]/).pop()}
+                    </button>
+                    <button
+                      type="button"
+                      className="levi-icon-button"
+                      onClick={() => closeTab(tab.id)}
+                      aria-label={`Close ${tab.relativePath}`}
+                      title="Close tab"
+                    >
+                      <Icon name="close" />
+                    </button>
+                  </div>
+                ))}
+              </div>
               <div className="levi-editor-header">
                 <div>
-                  <div className="levi-editor-path">{openFile.relativePath}</div>
+                  <div className="levi-editor-path">{activeTab.relativePath}</div>
                   <div className="levi-editor-mode">
-                    {openFile.appliedByLevi
+                    {activeTab.appliedByLevi
                       ? "Applied by Levi - read-only workspace view"
-                      : openFile.undoneByLevi
+                      : activeTab.undoneByLevi
                         ? "Undo restored - read-only workspace view"
                         : "Read-only workspace view"}
                   </div>
@@ -245,13 +272,10 @@ export function App() {
                     <span>Undo Last Edit</span>
                   </button>
                 ) : null}
-                <button type="button" className="levi-icon-button" onClick={() => setOpenFile(null)} aria-label="Close file" title="Close file">
-                  <Icon name="close" />
-                </button>
               </div>
               <div className="levi-editor-host">
                 <LazySurface label="Editor">
-                  <CodeEditor value={openFile.content} language={openFile.language} lineStart={openFile.lineStart} />
+                  <CodeEditor value={activeTab.content} language={activeTab.language} lineStart={activeTab.lineStart} />
                 </LazySurface>
               </div>
             </aside>
