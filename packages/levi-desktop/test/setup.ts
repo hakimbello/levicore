@@ -104,6 +104,31 @@ function createDefaultApi(): LeviApi {
         language: "typescript",
         lineStart: 1,
         readOnly: true as const
+      })),
+      listTree: vi.fn(async () => ({
+        projectName: "Project",
+        rootPath: "C:\\Users\\developer\\Project",
+        nodes: [
+          {
+            name: "src",
+            relativePath: "src",
+            kind: "folder" as const,
+            children: [{ name: "main.tsx", relativePath: "src/main.tsx", kind: "file" as const }]
+          }
+        ],
+        nodeCount: 2,
+        truncated: false
+      })),
+      readPath: vi.fn(async () => ({
+        relativePath: "src/main.tsx",
+        content: "console.log('read only');\n",
+        language: "typescript",
+        readOnly: false as const
+      })),
+      writePath: vi.fn(async () => ({
+        relativePath: "src/main.tsx",
+        bytesWritten: 26,
+        savedAt: "2026-07-29T00:00:00.000Z"
       }))
     },
     rules: {

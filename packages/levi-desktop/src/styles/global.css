@@ -1023,6 +1023,13 @@ textarea:focus-visible,
   background: var(--levi-color-surface);
 }
 
+.levi-settings-panel {
+  overflow-y: auto;
+  min-width: 0;
+  padding: var(--levi-space-32);
+  background: var(--levi-color-surface);
+}
+
 .levi-rules-header {
   display: flex;
   align-items: flex-start;
@@ -1031,7 +1038,18 @@ textarea:focus-visible,
   margin-bottom: var(--levi-space-24);
 }
 
+.levi-settings-header {
+  margin-bottom: var(--levi-space-24);
+}
+
 .levi-rules-kicker {
+  color: var(--levi-color-mutedText);
+  font-size: var(--levi-font-size-caption);
+  font-weight: var(--levi-font-weight-semibold);
+  text-transform: uppercase;
+}
+
+.levi-settings-kicker {
   color: var(--levi-color-mutedText);
   font-size: var(--levi-font-size-caption);
   font-weight: var(--levi-font-weight-semibold);
@@ -1045,8 +1063,22 @@ textarea:focus-visible,
   line-height: var(--levi-line-height-tight);
 }
 
+.levi-settings-header h1 {
+  margin: var(--levi-space-4) 0;
+  color: var(--levi-color-primaryText);
+  font-size: var(--levi-font-size-display);
+  line-height: var(--levi-line-height-tight);
+}
+
 .levi-rules-header p,
 .levi-rules-timings {
+  margin: 0;
+  color: var(--levi-color-mutedText);
+  font-size: var(--levi-font-size-small);
+}
+
+.levi-settings-header p,
+.levi-settings-detail {
   margin: 0;
   color: var(--levi-color-mutedText);
   font-size: var(--levi-font-size-small);
@@ -1083,6 +1115,44 @@ textarea:focus-visible,
 .levi-rules-stats strong {
   color: var(--levi-color-primaryText);
   font-size: var(--levi-font-size-title);
+}
+
+.levi-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--levi-space-16);
+}
+
+.levi-settings-group {
+  display: grid;
+  gap: var(--levi-space-12);
+  min-width: 0;
+  padding: var(--levi-space-16);
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-md);
+  background: var(--levi-color-surfaceElevated);
+}
+
+.levi-settings-group h2 {
+  margin: 0;
+  color: var(--levi-color-primaryText);
+  font-size: var(--levi-font-size-title);
+}
+
+.levi-settings-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--levi-space-16);
+  min-width: 0;
+}
+
+.levi-settings-row span {
+  color: var(--levi-color-mutedText);
+}
+
+.levi-settings-row strong {
+  color: var(--levi-color-primaryText);
+  text-align: right;
 }
 
 .levi-rules-empty,
@@ -1261,7 +1331,8 @@ textarea:focus-visible,
 
   .levi-plan-grid,
   .levi-plan-stats,
-  .levi-rules-stats {
+  .levi-rules-stats,
+  .levi-settings-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 

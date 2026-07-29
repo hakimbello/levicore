@@ -22,14 +22,18 @@ const ProjectRulesPanel = lazy(async () => {
   return { default: module.ProjectRulesPanel };
 });
 
+const SettingsPanel = lazy(async () => {
+  const module = await import("../features/settings/SettingsPanel");
+  return { default: module.SettingsPanel };
+});
+
 const unknownStatus: OllamaStatus = { ready: false, modelCount: 0, models: [] };
 const idleWorkspaceStatus: WorkspaceStatus = { state: "idle" };
 const FILE_CONFLICT_CODE = "WORKSPACE_FILE_CONFLICT";
 
 const placeholderCopy: Partial<Record<ActivityView, { title: string; description: string }>> = {
   "source-control": { title: "Source Control", description: "Git status, staging, commits, and branch controls are scheduled for the IDE Core phase." },
-  terminal: { title: "Terminal", description: "Use the terminal panel at the bottom of the workspace." },
-  settings: { title: "Settings", description: "Desktop, model, workspace, and appearance settings will be consolidated here." }
+  terminal: { title: "Terminal", description: "Use the terminal panel at the bottom of the workspace." }
 };
 
 function WorkspacePlaceholder({ view }: { view: ActivityView }) {
@@ -288,6 +292,7 @@ export function App() {
     if (activeView === "rules") return <LazySurface label="Project Rules"><ProjectRulesPanel onOpenRuleSource={openFile} /></LazySurface>;
     if (activeView === "explorer") return <ExplorerPanel workspaceStatus={workspaceStatus} selectedPath={activeTab?.relativePath} onOpenFile={openExplorerFile} />;
     if (activeView === "search") return <SearchPanel enabled={Boolean(selectedProject)} focusSignal={searchFocusSignal} onOpenMatch={openSearchMatch} />;
+    if (activeView === "settings") return <LazySurface label="Settings"><SettingsPanel status={ollamaStatus} selectedProject={selectedProject} workspaceStatus={workspaceStatus} /></LazySurface>;
     if (activeView === "home") return <Home selectedProject={selectedProject} workspaceStatus={workspaceStatus} newChatSignal={newChatSignal} onOpenCitation={openWorkspaceCitation} onEditApplied={openAppliedEdit} onEditUndone={openUndoneEdit} />;
     return <WorkspacePlaceholder view={activeView} />;
   }
@@ -295,7 +300,17 @@ export function App() {
   return (
     <div className="levi-shell">
       <ActivityBar activeView={activeView} onSelect={selectActivityView} />
-      <Sidebar status={ollamaStatus} selectedProject={selectedProject} workspaceStatus={workspaceStatus} onOpenProject={openProjectFolder} onRefreshWorkspace={refreshWorkspace} onNewChat={startNewChat} onOpenRules={() => setActiveView("rules")} />
+      <Sidebar
+        status={ollamaStatus}
+        selectedProject={selectedProject}
+        workspaceStatus={workspaceStatus}
+        activeView={activeView}
+        onOpenProject={openProjectFolder}
+        onRefreshWorkspace={refreshWorkspace}
+        onNewChat={startNewChat}
+        onOpenRules={() => selectActivityView("rules")}
+        onOpenSettings={() => selectActivityView("settings")}
+      />
       <main className="levi-main">
         <div className={activeTab ? "levi-workspace-layout levi-workspace-layout-editor" : "levi-workspace-layout"}>
           {renderActiveWorkspace()}

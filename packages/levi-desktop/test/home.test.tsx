@@ -50,19 +50,34 @@ describe("Levi desktop Home", () => {
     await waitForInitialBridge();
   });
 
-  it("keeps sidebar and prompt controls in keyboard order", async () => {
+  it("keeps activity bar and sidebar controls in keyboard order", async () => {
     const user = userEvent.setup();
     render(<App />);
 
     await user.tab();
-    expect(screen.getByRole("button", { name: "New Chat" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Explorer" })).toHaveFocus();
     await user.tab();
-    expect(screen.getByRole("button", { name: "Projects" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Levi AI" })).toHaveFocus();
     await user.tab();
-    expect(screen.getByRole("button", { name: "History" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Search" })).toHaveFocus();
     await user.tab();
-    expect(screen.getByRole("button", { name: "Settings" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Source Control" })).toHaveFocus();
     await waitForInitialBridge();
+  });
+
+  it("opens Settings diagnostics from the existing sidebar item", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Local AI Ready")).toBeInTheDocument());
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    await user.click(within(nav).getByRole("button", { name: "Settings" }));
+
+    expect(await screen.findByRole("region", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Provider diagnostics" })).toBeInTheDocument();
+    expect(screen.getByText("qwen3.6:latest, qwen2.5-coder:7b")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "What do you want to build?" })).not.toBeInTheDocument();
   });
 
   it("does not render example prompts", async () => {
