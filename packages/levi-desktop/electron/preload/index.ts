@@ -17,7 +17,8 @@ import type {
 } from "../../src/types/levi-api";
 import type {
   LeviApiWithWorkspaceTree,
-  WorkspaceReadPathRequest
+  WorkspaceReadPathRequest,
+  WorkspaceWritePathRequest
 } from "../../src/types/workspace-tree-api";
 
 const IPC_CHANNELS = {
@@ -29,6 +30,7 @@ const IPC_CHANNELS = {
   workspaceOpenFile: "levi:workspace:open-file",
   workspaceListTree: "levi:workspace:list-tree",
   workspaceReadPath: "levi:workspace:read-path",
+  workspaceWritePath: "levi:workspace:write-path",
   rulesGetStatus: "levi:rules:get-status",
   rulesList: "levi:rules:list",
   rulesRefresh: "levi:rules:refresh",
@@ -70,35 +72,22 @@ const IPC_CHANNELS = {
 } as const;
 
 function isTerminalDataEvent(value: unknown): value is TerminalDataEvent {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
+  if (!value || typeof value !== "object") return false;
   const event = value as Partial<TerminalDataEvent>;
   return typeof event.id === "string" && typeof event.data === "string";
 }
 
 function isConversationStreamEvent(value: unknown): value is ConversationStreamEvent {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
+  if (!value || typeof value !== "object") return false;
   const event = value as Partial<ConversationStreamEvent>;
-  if (typeof event.requestId !== "string" || typeof event.type !== "string") {
-    return false;
-  }
-  if (event.type === "chunk") {
-    return typeof (event as { content?: unknown }).content === "string";
-  }
-  if (event.type === "done") {
-    return true;
-  }
+  if (typeof event.requestId !== "string" || typeof event.type !== "string") return false;
+  if (event.type === "chunk") return typeof (event as { content?: unknown }).content === "string";
+  if (event.type === "done") return true;
   if (event.type === "stopped") {
     const reason = (event as { reason?: unknown }).reason;
     return reason === "user" || reason === "window-closed";
   }
-  if (event.type === "citations") {
-    const citations = (event as { citations?: unknown }).citations;
-    return Array.isArray(citations);
-  }
+  if (event.type === "citations") return Array.isArray((event as { citations?: unknown }).citations);
   if (event.type === "error") {
     const error = event as { code?: unknown; message?: unknown; recoverable?: unknown };
     return typeof error.code === "string" && typeof error.message === "string" && typeof error.recoverable === "boolean";
@@ -107,13 +96,9 @@ function isConversationStreamEvent(value: unknown): value is ConversationStreamE
 }
 
 function isEditStreamEvent(value: unknown): value is EditStreamEvent {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
+  if (!value || typeof value !== "object") return false;
   const event = value as Partial<EditStreamEvent>;
-  if (typeof event.type !== "string") {
-    return false;
-  }
+  if (typeof event.type !== "string") return false;
   if (event.type === "status") {
     return typeof (event as { requestId?: unknown }).requestId === "string" && typeof (event as { message?: unknown }).message === "string";
   }
@@ -121,12 +106,8 @@ function isEditStreamEvent(value: unknown): value is EditStreamEvent {
     const proposalEvent = event as { requestId?: unknown; proposal?: unknown };
     return typeof proposalEvent.requestId === "string" && typeof proposalEvent.proposal === "object";
   }
-  if (event.type === "rejected" || event.type === "applied") {
-    return typeof (event as { proposalId?: unknown }).proposalId === "string";
-  }
-  if (event.type === "undone") {
-    return typeof (event as { relativePath?: unknown }).relativePath === "string";
-  }
+  if (event.type === "rejected" || event.type === "applied") return typeof (event as { proposalId?: unknown }).proposalId === "string";
+  if (event.type === "undone") return typeof (event as { relativePath?: unknown }).relativePath === "string";
   if (event.type === "error") {
     const error = event as { code?: unknown; message?: unknown; recoverable?: unknown };
     return typeof error.code === "string" && typeof error.message === "string" && typeof error.recoverable === "boolean";
@@ -135,13 +116,9 @@ function isEditStreamEvent(value: unknown): value is EditStreamEvent {
 }
 
 function isPlanningStreamEvent(value: unknown): value is PlanningStreamEvent {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
+  if (!value || typeof value !== "object") return false;
   const event = value as Partial<PlanningStreamEvent>;
-  if (typeof event.type !== "string") {
-    return false;
-  }
+  if (typeof event.type !== "string") return false;
   if (event.type === "status") {
     return typeof (event as { requestId?: unknown }).requestId === "string" && typeof (event as { message?: unknown }).message === "string";
   }
@@ -165,27 +142,17 @@ function isPlanningStreamEvent(value: unknown): value is PlanningStreamEvent {
 }
 
 function isProjectRulesStreamEvent(value: unknown): value is ProjectRulesStreamEvent {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
+  if (!value || typeof value !== "object") return false;
   const event = value as Partial<ProjectRulesStreamEvent>;
-  if (event.type === "status") {
-    return typeof (event as { status?: { state?: unknown } }).status?.state === "string";
-  }
-  if (event.type === "updated") {
-    return typeof (event as { result?: unknown }).result === "object";
-  }
+  if (event.type === "status") return typeof (event as { status?: { state?: unknown } }).status?.state === "string";
+  if (event.type === "updated") return typeof (event as { result?: unknown }).result === "object";
   return false;
 }
 
 function isExecutionStreamEvent(value: unknown): value is ExecutionStreamEvent {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
+  if (!value || typeof value !== "object") return false;
   const event = value as Partial<ExecutionStreamEvent>;
-  if (typeof event.type !== "string") {
-    return false;
-  }
+  if (typeof event.type !== "string") return false;
   if (event.type === "status") {
     return typeof (event as { transactionId?: unknown }).transactionId === "string" && typeof (event as { message?: unknown }).message === "string";
   }
@@ -219,7 +186,8 @@ const leviApi: LeviApiWithWorkspaceTree = {
     refresh: () => ipcRenderer.invoke(IPC_CHANNELS.workspaceRefresh),
     openFile: (request: WorkspaceOpenFileRequest) => ipcRenderer.invoke(IPC_CHANNELS.workspaceOpenFile, request),
     listTree: () => ipcRenderer.invoke(IPC_CHANNELS.workspaceListTree),
-    readPath: (request: WorkspaceReadPathRequest) => ipcRenderer.invoke(IPC_CHANNELS.workspaceReadPath, request)
+    readPath: (request: WorkspaceReadPathRequest) => ipcRenderer.invoke(IPC_CHANNELS.workspaceReadPath, request),
+    writePath: (request: WorkspaceWritePathRequest) => ipcRenderer.invoke(IPC_CHANNELS.workspaceWritePath, request)
   },
   rules: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.rulesGetStatus),
@@ -228,9 +196,7 @@ const leviApi: LeviApiWithWorkspaceTree = {
     openSource: (request: ProjectRuleOpenSourceRequest) => ipcRenderer.invoke(IPC_CHANNELS.rulesOpenSource, request),
     onEvent: (listener: (event: ProjectRulesStreamEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
-        if (isProjectRulesStreamEvent(payload)) {
-          listener(payload);
-        }
+        if (isProjectRulesStreamEvent(payload)) listener(payload);
       };
       ipcRenderer.on(IPC_CHANNELS.rulesEvent, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.rulesEvent, handler);
@@ -245,9 +211,7 @@ const leviApi: LeviApiWithWorkspaceTree = {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.editsGetStatus),
     onEvent: (listener: (event: EditStreamEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
-        if (isEditStreamEvent(payload)) {
-          listener(payload);
-        }
+        if (isEditStreamEvent(payload)) listener(payload);
       };
       ipcRenderer.on(IPC_CHANNELS.editsEvent, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.editsEvent, handler);
@@ -260,9 +224,7 @@ const leviApi: LeviApiWithWorkspaceTree = {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.planningGetStatus),
     onEvent: (listener: (event: PlanningStreamEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
-        if (isPlanningStreamEvent(payload)) {
-          listener(payload);
-        }
+        if (isPlanningStreamEvent(payload)) listener(payload);
       };
       ipcRenderer.on(IPC_CHANNELS.planningEvent, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.planningEvent, handler);
@@ -280,9 +242,7 @@ const leviApi: LeviApiWithWorkspaceTree = {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.executionGetStatus),
     onEvent: (listener: (event: ExecutionStreamEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
-        if (isExecutionStreamEvent(payload)) {
-          listener(payload);
-        }
+        if (isExecutionStreamEvent(payload)) listener(payload);
       };
       ipcRenderer.on(IPC_CHANNELS.executionEvent, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.executionEvent, handler);
@@ -295,9 +255,7 @@ const leviApi: LeviApiWithWorkspaceTree = {
     dispose: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.terminalDispose, id),
     onData: (listener: (event: TerminalDataEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
-        if (isTerminalDataEvent(payload)) {
-          listener(payload);
-        }
+        if (isTerminalDataEvent(payload)) listener(payload);
       };
       ipcRenderer.on(IPC_CHANNELS.terminalData, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.terminalData, handler);
@@ -308,9 +266,7 @@ const leviApi: LeviApiWithWorkspaceTree = {
     cancel: (requestId: string) => ipcRenderer.invoke(IPC_CHANNELS.conversationCancel, requestId),
     onEvent: (listener: (event: ConversationStreamEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
-        if (isConversationStreamEvent(payload)) {
-          listener(payload);
-        }
+        if (isConversationStreamEvent(payload)) listener(payload);
       };
       ipcRenderer.on(IPC_CHANNELS.conversationEvent, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.conversationEvent, handler);
