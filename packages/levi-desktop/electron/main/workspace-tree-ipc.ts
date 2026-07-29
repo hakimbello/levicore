@@ -253,3 +253,5 @@ export function registerWorkspaceTreeIpc(): void {
   ipcMain.handle(WORKSPACE_TREE_CHANNEL, () => listWorkspaceTree());
   ipcMain.handle(WORKSPACE_READ_PATH_CHANNEL, (_event, request: WorkspaceReadPathRequest) => readWorkspacePath(request));
 }
+
+registerWorkspaceTreeIpc();
