@@ -8,6 +8,7 @@ export type EditorTab = WorkspaceOpenFileResult & {
   id: string;
   dirty: boolean;
   pinned: boolean;
+  savedContent: string;
 };
 
 type PersistedEditorSession = {
@@ -29,16 +30,13 @@ function sessionKey(workspacePath: string): string {
 
 function parseSession(value: string | null): PersistedEditorSession | null {
   if (!value) return null;
-
   try {
     const parsed = JSON.parse(value) as Partial<PersistedEditorSession>;
     if (parsed.version !== SESSION_VERSION || !Array.isArray(parsed.tabs)) return null;
-
     const tabs = parsed.tabs.filter(
       (tab): tab is { relativePath: string; pinned: boolean } =>
         typeof tab?.relativePath === "string" && typeof tab?.pinned === "boolean"
     );
-
     return {
       version: SESSION_VERSION,
       activeTabId: typeof parsed.activeTabId === "string" ? parsed.activeTabId : null,
@@ -61,12 +59,10 @@ export function useEditorTabs(workspacePath?: string) {
 
   useEffect(() => {
     let disposed = false;
-
     async function restoreSession() {
       setTabs([]);
       setActiveTabId(null);
       setRestoredWorkspacePath(null);
-
       if (!workspacePath) return;
 
       const session = parseSession(window.localStorage.getItem(sessionKey(workspacePath)));
@@ -83,6 +79,7 @@ export function useEditorTabs(workspacePath?: string) {
               sourceId: `WORKSPACE:${file.relativePath}`,
               relativePath: file.relativePath,
               content: file.content,
+              savedContent: file.content,
               language: file.language,
               lineStart: 1,
               readOnly: true,
@@ -97,12 +94,10 @@ export function useEditorTabs(workspacePath?: string) {
       );
 
       if (disposed) return;
-
       const availableTabs = restored.filter((tab): tab is EditorTab => tab !== null);
       const restoredActiveId = availableTabs.some((tab) => tab.id === session.activeTabId)
         ? session.activeTabId
         : availableTabs[0]?.id ?? null;
-
       setTabs(availableTabs);
       setActiveTabId(restoredActiveId);
       setRestoredWorkspacePath(workspacePath);
@@ -116,16 +111,11 @@ export function useEditorTabs(workspacePath?: string) {
 
   useEffect(() => {
     if (!workspacePath || restoredWorkspacePath !== workspacePath) return;
-
     const session: PersistedEditorSession = {
       version: SESSION_VERSION,
       activeTabId,
-      tabs: tabs.map((tab) => ({
-        relativePath: tab.relativePath,
-        pinned: tab.pinned
-      }))
+      tabs: tabs.map((tab) => ({ relativePath: tab.relativePath, pinned: tab.pinned }))
     };
-
     window.localStorage.setItem(sessionKey(workspacePath), JSON.stringify(session));
   }, [activeTabId, restoredWorkspacePath, tabs, workspacePath]);
 
@@ -134,9 +124,10 @@ export function useEditorTabs(workspacePath?: string) {
     setTabs((current) => {
       const existing = current.find((tab) => tab.id === id);
       if (existing) {
-        return current.map((tab) => tab.id === id ? { ...tab, ...file } : tab);
+        if (existing.dirty) return current;
+        return current.map((tab) => tab.id === id ? { ...tab, ...file, savedContent: file.content, dirty: false } : tab);
       }
-      return [...current, { ...file, id, dirty: false, pinned: false }];
+      return [...current, { ...file, id, dirty: false, pinned: false, savedContent: file.content }];
     });
     setActiveTabId(id);
   }
@@ -172,6 +163,18 @@ export function useEditorTabs(workspacePath?: string) {
     if (activeTabId) closeTab(activeTabId);
   }
 
+  function updateContent(id: string, content: string) {
+    setTabs((current) => current.map((tab) =>
+      tab.id === id ? { ...tab, content, dirty: content !== tab.savedContent } : tab
+    ));
+  }
+
+  function markSaved(id: string, content: string) {
+    setTabs((current) => current.map((tab) =>
+      tab.id === id ? { ...tab, content, savedContent: content, dirty: false } : tab
+    ));
+  }
+
   function updateDirty(id: string, dirty: boolean) {
     setTabs((current) => current.map((tab) => tab.id === id ? { ...tab, dirty } : tab));
   }
@@ -183,9 +186,7 @@ export function useEditorTabs(workspacePath?: string) {
   function clearTabs(options?: { forgetSession?: boolean }) {
     setTabs([]);
     setActiveTabId(null);
-    if (options?.forgetSession && workspacePath) {
-      window.localStorage.removeItem(sessionKey(workspacePath));
-    }
+    if (options?.forgetSession && workspacePath) window.localStorage.removeItem(sessionKey(workspacePath));
   }
 
   return {
@@ -198,6 +199,8 @@ export function useEditorTabs(workspacePath?: string) {
     closeActiveTab,
     activateTab,
     activateRelativeTab,
+    updateContent,
+    markSaved,
     updateDirty,
     pinTab,
     clearTabs
