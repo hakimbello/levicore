@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import { clearEditorRecovery, readEditorRecovery, writeEditorRecovery } from "../services/editor-recovery";
 import type { WorkspaceOpenFileResult } from "../types/levi-api";
 
 const SESSION_VERSION = 1;
 const SESSION_PREFIX = "levi.editor.session";
+const RECOVERY_WRITE_DELAY_MS = 2_000;
 
 export type EditorTab = WorkspaceOpenFileResult & {
   id: string;
@@ -59,6 +61,7 @@ export function useEditorTabs(workspacePath?: string) {
 
   useEffect(() => {
     let disposed = false;
+
     async function restoreSession() {
       setTabs([]);
       setActiveTabId(null);
@@ -66,26 +69,40 @@ export function useEditorTabs(workspacePath?: string) {
       if (!workspacePath) return;
 
       const session = parseSession(window.localStorage.getItem(sessionKey(workspacePath)));
-      if (!session || session.tabs.length === 0) {
-        if (!disposed) setRestoredWorkspacePath(workspacePath);
-        return;
-      }
+      const recovery = readEditorRecovery(workspacePath);
+      const restoreRecovery = recovery
+        ? window.confirm(`Levi found ${recovery.entries.length} unsaved file${recovery.entries.length === 1 ? "" : "s"} from the previous session. Restore them?`)
+        : false;
+
+      if (recovery && !restoreRecovery) clearEditorRecovery(workspacePath);
+
+      const recoveryByPath = new Map(
+        restoreRecovery && recovery ? recovery.entries.map((entry) => [entry.relativePath, entry]) : []
+      );
+      const orderedPaths = [
+        ...(session?.tabs.map((tab) => tab.relativePath) ?? []),
+        ...Array.from(recoveryByPath.keys())
+      ].filter((relativePath, index, all) => all.indexOf(relativePath) === index);
 
       const restored = await Promise.all(
-        session.tabs.map(async (savedTab): Promise<EditorTab | null> => {
+        orderedPaths.map(async (relativePath): Promise<EditorTab | null> => {
           try {
-            const file = await window.levi.workspace.readPath({ relativePath: savedTab.relativePath });
+            const file = await window.levi.workspace.readPath({ relativePath });
+            const savedTab = session?.tabs.find((tab) => tab.relativePath === relativePath);
+            const recovered = recoveryByPath.get(relativePath);
+            const content = recovered?.content ?? file.content;
+            const savedContent = recovered?.savedContent ?? file.content;
             return {
               sourceId: `WORKSPACE:${file.relativePath}`,
               relativePath: file.relativePath,
-              content: file.content,
-              savedContent: file.content,
+              content,
+              savedContent,
               language: file.language,
               lineStart: 1,
-              readOnly: true,
+              readOnly: false,
               id: file.relativePath,
-              dirty: false,
-              pinned: savedTab.pinned
+              dirty: content !== savedContent,
+              pinned: recovered?.pinned ?? savedTab?.pinned ?? false
             };
           } catch {
             return null;
@@ -95,9 +112,13 @@ export function useEditorTabs(workspacePath?: string) {
 
       if (disposed) return;
       const availableTabs = restored.filter((tab): tab is EditorTab => tab !== null);
-      const restoredActiveId = availableTabs.some((tab) => tab.id === session.activeTabId)
-        ? session.activeTabId
+      const preferredActiveId = restoreRecovery && recovery?.activeTabId
+        ? recovery.activeTabId
+        : session?.activeTabId ?? null;
+      const restoredActiveId = availableTabs.some((tab) => tab.id === preferredActiveId)
+        ? preferredActiveId
         : availableTabs[0]?.id ?? null;
+
       setTabs(availableTabs);
       setActiveTabId(restoredActiveId);
       setRestoredWorkspacePath(workspacePath);
@@ -117,6 +138,25 @@ export function useEditorTabs(workspacePath?: string) {
       tabs: tabs.map((tab) => ({ relativePath: tab.relativePath, pinned: tab.pinned }))
     };
     window.localStorage.setItem(sessionKey(workspacePath), JSON.stringify(session));
+  }, [activeTabId, restoredWorkspacePath, tabs, workspacePath]);
+
+  useEffect(() => {
+    if (!workspacePath || restoredWorkspacePath !== workspacePath) return;
+    const timeout = window.setTimeout(() => {
+      const timestamp = new Date().toISOString();
+      const entries = tabs
+        .filter((tab) => tab.dirty && tab.sourceId.startsWith("WORKSPACE:"))
+        .map((tab) => ({
+          relativePath: tab.relativePath,
+          content: tab.content,
+          savedContent: tab.savedContent,
+          pinned: tab.pinned,
+          timestamp
+        }));
+      writeEditorRecovery(workspacePath, activeTabId, entries);
+    }, RECOVERY_WRITE_DELAY_MS);
+
+    return () => window.clearTimeout(timeout);
   }, [activeTabId, restoredWorkspacePath, tabs, workspacePath]);
 
   function openFile(file: WorkspaceOpenFileResult) {
@@ -159,10 +199,6 @@ export function useEditorTabs(workspacePath?: string) {
     });
   }
 
-  function closeActiveTab() {
-    if (activeTabId) closeTab(activeTabId);
-  }
-
   function updateContent(id: string, content: string) {
     setTabs((current) => current.map((tab) =>
       tab.id === id ? { ...tab, content, dirty: content !== tab.savedContent } : tab
@@ -183,10 +219,15 @@ export function useEditorTabs(workspacePath?: string) {
     setTabs((current) => current.map((tab) => tab.id === id ? { ...tab, pinned } : tab));
   }
 
-  function clearTabs(options?: { forgetSession?: boolean }) {
+  function clearRecovery() {
+    if (workspacePath) clearEditorRecovery(workspacePath);
+  }
+
+  function clearTabs(options?: { forgetSession?: boolean; forgetRecovery?: boolean }) {
     setTabs([]);
     setActiveTabId(null);
     if (options?.forgetSession && workspacePath) window.localStorage.removeItem(sessionKey(workspacePath));
+    if (options?.forgetRecovery && workspacePath) clearEditorRecovery(workspacePath);
   }
 
   return {
@@ -196,13 +237,13 @@ export function useEditorTabs(workspacePath?: string) {
     sessionRestored: restoredWorkspacePath === workspacePath,
     openFile,
     closeTab,
-    closeActiveTab,
     activateTab,
     activateRelativeTab,
     updateContent,
     markSaved,
     updateDirty,
     pinTab,
+    clearRecovery,
     clearTabs
   };
 }
