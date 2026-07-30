@@ -19,9 +19,10 @@ type RuntimeInstance = {
 };
 
 type RuntimeFactory = (options: unknown) => RuntimeInstance;
+type RuntimeConstructor = new (options: unknown) => RuntimeInstance;
 
 type RuntimeModule = {
-  LeviApplicationRuntime: RuntimeFactory;
+  LeviApplicationRuntime: RuntimeConstructor;
 };
 
 type DesktopRuntimeServiceOptions = {
@@ -176,7 +177,7 @@ export class DesktopRuntimeService {
   private loadRuntimeFactory(): RuntimeFactory {
     const runtimePath = path.join(this.repositoryRoot, "src", "levi-application-runtime.js");
     const runtimeModule = require(runtimePath) as RuntimeModule;
-    return runtimeModule.LeviApplicationRuntime;
+    return (options: unknown) => new runtimeModule.LeviApplicationRuntime(options);
   }
 
   private async refreshHealth(runtime: RuntimeInstance): Promise<void> {
