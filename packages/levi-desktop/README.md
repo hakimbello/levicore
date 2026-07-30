@@ -23,6 +23,7 @@ From `packages/levi-desktop`:
 - `npm run test`
 - `npm run build`
 - `npm run package`
+- `npm run package:dir`
 
 ## Generated Directories
 
@@ -68,11 +69,15 @@ Build output:
 - Renderer bundle in `dist/`
 - Electron main and preload bundles in `dist-electron/electron/`
 
-Unsigned directory packaging is available through:
+Unsigned production installer packaging is available through:
 
 - `npm run package --workspace levi-desktop`
 
-Installers, code signing, auto-update, and publishing are not implemented in this milestone.
+This produces a Windows NSIS installer in `release/`. Unsigned directory packaging for local smoke checks remains available through:
+
+- `npm run package:dir --workspace levi-desktop`
+
+Code signing, auto-update, and publishing are not implemented in this milestone.
 
 ## Bundle Strategy
 

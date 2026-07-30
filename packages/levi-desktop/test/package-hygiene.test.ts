@@ -59,4 +59,33 @@ describe("Levi desktop package hygiene", () => {
     expect(readme).toMatch(/dist-electron\//);
     expect(readme).toMatch(/node_modules\//);
   });
+
+  it("packages production Windows installers instead of only unpacked directories", () => {
+    const packageJson = JSON.parse(readText("package.json")) as {
+      scripts: Record<string, string>;
+      devDependencies: Record<string, string>;
+      build: {
+        artifactName?: string;
+        npmRebuild?: boolean;
+        asarUnpack?: string[];
+        directories?: { output?: string };
+        win?: { target?: Array<{ target?: string; arch?: string[] }> | string };
+        nsis?: Record<string, unknown>;
+      };
+    };
+
+    expect(packageJson.devDependencies.electron).toBe("37.10.3");
+    expect(packageJson.scripts.package).toBe("npm run build && electron-builder --win nsis");
+    expect(packageJson.scripts["package:dir"]).toBe("npm run build && electron-builder --win dir");
+    expect(packageJson.build.npmRebuild).toBe(false);
+    expect(packageJson.build.asarUnpack).toEqual(["node_modules/node-pty/prebuilds/**"]);
+    expect(packageJson.build.directories?.output).toBe("release");
+    expect(packageJson.build.artifactName).toBe("${productName}-${version}-${os}-${arch}.${ext}");
+    expect(packageJson.build.win?.target).toEqual([{ target: "nsis", arch: ["x64"] }]);
+    expect(packageJson.build.nsis).toMatchObject({
+      oneClick: false,
+      perMachine: false,
+      allowToChangeInstallationDirectory: true
+    });
+  });
 });
