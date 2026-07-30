@@ -7,6 +7,7 @@ import type {
   LeviApi,
   PlanningStreamEvent,
   ProjectRulesStreamEvent,
+  UpdateStatusEvent,
   WorkspaceScanSummary
 } from "../src/types/levi-api";
 
@@ -34,6 +35,7 @@ declare global {
     __leviEditListeners: Array<(event: EditStreamEvent) => void>;
     __leviPlanningListeners: Array<(event: PlanningStreamEvent) => void>;
     __leviRulesListeners: Array<(event: ProjectRulesStreamEvent) => void>;
+    __leviUpdateListeners: Array<(event: UpdateStatusEvent) => void>;
   }
 }
 
@@ -139,6 +141,35 @@ function createDefaultApi(): LeviApi {
         bytesWritten: 26,
         savedAt: "2026-07-29T00:00:00.000Z"
       }))
+    },
+    updates: {
+      getStatus: vi.fn(async () => ({
+        state: "idle" as const,
+        currentVersion: "0.1.0"
+      })),
+      checkForUpdates: vi.fn(async () => ({
+        state: "update-not-available" as const,
+        currentVersion: "0.1.0",
+        message: "Levi is up to date."
+      })),
+      downloadUpdate: vi.fn(async () => ({
+        state: "downloaded" as const,
+        currentVersion: "0.1.0",
+        availableVersion: "0.1.1",
+        progressPercent: 100
+      })),
+      installDownloadedUpdate: vi.fn(async () => ({
+        state: "downloaded" as const,
+        currentVersion: "0.1.0",
+        availableVersion: "0.1.1",
+        progressPercent: 100
+      })),
+      onEvent: vi.fn((listener: (event: UpdateStatusEvent) => void) => {
+        window.__leviUpdateListeners.push(listener);
+        return () => {
+          window.__leviUpdateListeners = window.__leviUpdateListeners.filter((current) => current !== listener);
+        };
+      })
     },
     rules: {
       getStatus: vi.fn(async () => ({
@@ -371,6 +402,7 @@ beforeEach(() => {
   window.__leviEditListeners = [];
   window.__leviPlanningListeners = [];
   window.__leviRulesListeners = [];
+  window.__leviUpdateListeners = [];
   vi.stubGlobal("levi", api);
   Object.defineProperty(window, "levi", {
     value: api,

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "../src/app/App";
 import type { ExecutionPublicTransaction } from "../src/types/levi-api";
@@ -123,6 +123,68 @@ describe("Levi desktop Home", () => {
     expect(screen.getByRole("region", { name: "Provider diagnostics" })).toBeInTheDocument();
     expect(screen.getByText("qwen3.6:latest, qwen2.5-coder:7b")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "What do you want to build?" })).not.toBeInTheDocument();
+  });
+
+  it("checks for updates through Settings IPC", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Local AI Ready")).toBeInTheDocument());
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    await user.click(within(nav).getByRole("button", { name: "Settings" }));
+
+    expect(await screen.findByRole("region", { name: "Update diagnostics" })).toBeInTheDocument();
+    expect(screen.getByText("0.1.0")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Check for Updates" }));
+
+    await waitFor(() => expect(window.levi.updates.checkForUpdates).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("Up to date")).toBeInTheDocument();
+  });
+
+  it("renders update availability, download progress, and explicit install approval", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Local AI Ready")).toBeInTheDocument());
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    await user.click(within(nav).getByRole("button", { name: "Settings" }));
+    await screen.findByRole("region", { name: "Update diagnostics" });
+
+    act(() => {
+      for (const listener of window.__leviUpdateListeners) {
+        listener({
+          type: "status",
+          status: {
+            state: "update-available",
+            currentVersion: "0.1.0",
+            availableVersion: "0.1.1"
+          }
+        });
+      }
+    });
+    expect(await screen.findByText("Update available")).toBeInTheDocument();
+    expect(screen.getByText("Version 0.1.1 is available.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Download Update" }));
+    await waitFor(() => expect(window.levi.updates.downloadUpdate).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      for (const listener of window.__leviUpdateListeners) {
+        listener({
+          type: "status",
+          status: {
+            state: "downloaded",
+            currentVersion: "0.1.0",
+            availableVersion: "0.1.1",
+            progressPercent: 100
+          }
+        });
+      }
+    });
+    expect(await screen.findByText("Downloaded")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Install Update" }));
+
+    await waitFor(() => expect(window.levi.updates.installDownloadedUpdate).toHaveBeenCalledTimes(1));
   });
 
   it("opens History from the existing sidebar item with an empty state", async () => {

@@ -1162,6 +1162,12 @@ textarea:focus-visible,
   text-align: right;
 }
 
+.levi-settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--levi-space-8);
+}
+
 .levi-history-list {
   display: grid;
   gap: var(--levi-space-12);
