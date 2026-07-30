@@ -41,6 +41,7 @@ type HomeProps = {
   onOpenCitation: (sourceId: string, lineStart?: number) => Promise<void>;
   onEditApplied: (result: EditApplyResult) => void;
   onEditUndone: (result: EditUndoResult) => void;
+  onExecutionTransactionUpdate: (transaction: ExecutionPublicTransaction) => void;
 };
 
 type ChatMessageStatus = "streaming" | "done" | "stopped" | "error";
@@ -74,7 +75,14 @@ function isLikelyPlanningPrompt(prompt: string): boolean {
   return isPlanningPrompt(prompt);
 }
 
-export function Home({ selectedProject, workspaceStatus, newChatSignal, onOpenCitation, onEditApplied }: HomeProps) {
+export function Home({
+  selectedProject,
+  workspaceStatus,
+  newChatSignal,
+  onOpenCitation,
+  onEditApplied,
+  onExecutionTransactionUpdate
+}: HomeProps) {
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
@@ -112,6 +120,11 @@ export function Home({ selectedProject, workspaceStatus, newChatSignal, onOpenCi
     }
     promptBox.style.height = "auto";
     promptBox.style.height = `${Math.min(promptBox.scrollHeight, layout.promptMaxHeight)}px`;
+  }
+
+  function updateActiveTransaction(transaction: ExecutionPublicTransaction) {
+    setActiveTransaction(transaction);
+    onExecutionTransactionUpdate(transaction);
   }
 
   useEffect(() => {
@@ -158,7 +171,7 @@ export function Home({ selectedProject, workspaceStatus, newChatSignal, onOpenCi
       if (disposed || !status.activeTransaction) {
         return;
       }
-      setActiveTransaction(status.activeTransaction);
+      updateActiveTransaction(status.activeTransaction);
     });
     return () => {
       disposed = true;
@@ -267,7 +280,7 @@ export function Home({ selectedProject, workspaceStatus, newChatSignal, onOpenCi
 
       if (event.type === "approved") {
         setPlanNotice({ planId: event.planId, message: event.message });
-        setActiveTransaction(event.transaction);
+        updateActiveTransaction(event.transaction);
         setExecutionError(null);
         return;
       }
@@ -377,22 +390,22 @@ export function Home({ selectedProject, workspaceStatus, newChatSignal, onOpenCi
         return;
       }
       if (event.type === "prepared") {
-        setActiveTransaction(event.transaction);
+        updateActiveTransaction(event.transaction);
         setExecutionError(null);
         return;
       }
       if (event.type === "proposal") {
-        setActiveTransaction(event.transaction);
+        updateActiveTransaction(event.transaction);
         setExecutionError(null);
         return;
       }
       if (event.type === "applied") {
-        setActiveTransaction(event.transaction);
+        updateActiveTransaction(event.transaction);
         setExecutionError(null);
         return;
       }
       if (event.type === "kept" || event.type === "cancelled" || event.type === "rolled-back") {
-        setActiveTransaction(event.transaction);
+        updateActiveTransaction(event.transaction);
         setExecutionError(null);
         return;
       }
@@ -634,7 +647,7 @@ export function Home({ selectedProject, workspaceStatus, newChatSignal, onOpenCi
     try {
       const result = await window.levi.planning.approve(executionPlan.planId);
       setPlanNotice({ planId: result.planId, message: result.message });
-      setActiveTransaction(result.transaction);
+      updateActiveTransaction(result.transaction);
       setExecutionError(null);
     } catch (error) {
       setPlanNotice({
@@ -649,7 +662,7 @@ export function Home({ selectedProject, workspaceStatus, newChatSignal, onOpenCi
       return;
     }
     const result = await window.levi.execution.applyStep(activeTransaction.transactionId);
-    setActiveTransaction(result.transaction);
+    updateActiveTransaction(result.transaction);
     setExecutionError(null);
   }
 
@@ -658,7 +671,7 @@ export function Home({ selectedProject, workspaceStatus, newChatSignal, onOpenCi
       return;
     }
     const result = await window.levi.execution.rejectStep(activeTransaction.transactionId);
-    setActiveTransaction(result.transaction);
+    updateActiveTransaction(result.transaction);
     setExecutionError(null);
   }
 
@@ -683,7 +696,7 @@ export function Home({ selectedProject, workspaceStatus, newChatSignal, onOpenCi
       return;
     }
     const result = await window.levi.execution.cancel(activeTransaction.transactionId);
-    setActiveTransaction(result.transaction);
+    updateActiveTransaction(result.transaction);
   }
 
   async function keepExecution() {
@@ -691,7 +704,7 @@ export function Home({ selectedProject, workspaceStatus, newChatSignal, onOpenCi
       return;
     }
     const result = await window.levi.execution.keep(activeTransaction.transactionId);
-    setActiveTransaction(result.transaction);
+    updateActiveTransaction(result.transaction);
     setExecutionPlan(null);
   }
 
@@ -700,7 +713,7 @@ export function Home({ selectedProject, workspaceStatus, newChatSignal, onOpenCi
       return;
     }
     const result = await window.levi.execution.rollback(activeTransaction.transactionId);
-    setActiveTransaction(result.transaction);
+    updateActiveTransaction(result.transaction);
     setExecutionPlan(null);
   }
 

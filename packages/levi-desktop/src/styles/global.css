@@ -1023,6 +1023,7 @@ textarea:focus-visible,
   background: var(--levi-color-surface);
 }
 
+.levi-history-panel,
 .levi-settings-panel {
   overflow-y: auto;
   min-width: 0;
@@ -1038,6 +1039,7 @@ textarea:focus-visible,
   margin-bottom: var(--levi-space-24);
 }
 
+.levi-history-header,
 .levi-settings-header {
   margin-bottom: var(--levi-space-24);
 }
@@ -1049,6 +1051,7 @@ textarea:focus-visible,
   text-transform: uppercase;
 }
 
+.levi-history-kicker,
 .levi-settings-kicker {
   color: var(--levi-color-mutedText);
   font-size: var(--levi-font-size-caption);
@@ -1063,6 +1066,7 @@ textarea:focus-visible,
   line-height: var(--levi-line-height-tight);
 }
 
+.levi-history-header h1,
 .levi-settings-header h1 {
   margin: var(--levi-space-4) 0;
   color: var(--levi-color-primaryText);
@@ -1077,6 +1081,9 @@ textarea:focus-visible,
   font-size: var(--levi-font-size-small);
 }
 
+.levi-history-header p,
+.levi-history-entry p,
+.levi-history-empty,
 .levi-settings-header p,
 .levi-settings-detail {
   margin: 0;
@@ -1151,6 +1158,53 @@ textarea:focus-visible,
 }
 
 .levi-settings-row strong {
+  color: var(--levi-color-primaryText);
+  text-align: right;
+}
+
+.levi-history-list {
+  display: grid;
+  gap: var(--levi-space-12);
+}
+
+.levi-history-empty,
+.levi-history-entry {
+  padding: var(--levi-space-16);
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-md);
+  background: var(--levi-color-surfaceElevated);
+}
+
+.levi-history-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(var(--levi-space-64), 320px);
+  gap: var(--levi-space-16);
+}
+
+.levi-history-entry h2 {
+  margin: 0 0 var(--levi-space-8);
+  color: var(--levi-color-primaryText);
+  font-size: var(--levi-font-size-title);
+}
+
+.levi-history-meta {
+  display: grid;
+  gap: var(--levi-space-8);
+  margin: 0;
+}
+
+.levi-history-meta div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--levi-space-12);
+}
+
+.levi-history-meta dt {
+  color: var(--levi-color-mutedText);
+}
+
+.levi-history-meta dd {
+  margin: 0;
   color: var(--levi-color-primaryText);
   text-align: right;
 }
@@ -1337,6 +1391,7 @@ textarea:focus-visible,
   }
 
   .levi-rules-header,
+  .levi-history-entry,
   .levi-rule-card {
     grid-template-columns: minmax(0, 1fr);
   }
