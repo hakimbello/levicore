@@ -91,6 +91,29 @@ export type WorkspaceStatus = {
   runtime?: RuntimeConnectionStatus;
 };
 
+export type UpdateStatusState =
+  | "idle"
+  | "checking"
+  | "update-available"
+  | "update-not-available"
+  | "downloading"
+  | "downloaded"
+  | "error";
+
+export type UpdateStatus = {
+  state: UpdateStatusState;
+  currentVersion: string;
+  availableVersion?: string;
+  progressPercent?: number;
+  message?: string;
+  error?: string;
+};
+
+export type UpdateStatusEvent = {
+  type: "status";
+  status: UpdateStatus;
+};
+
 export type WorkspaceFileReference = {
   sourceId: string;
   relativePath: string;
@@ -738,6 +761,13 @@ export type LeviApi = {
     listTree: () => Promise<WorkspaceTreeResult>;
     readPath: (request: WorkspaceReadPathRequest) => Promise<WorkspaceReadPathResult>;
     writePath: (request: WorkspaceWritePathRequest) => Promise<WorkspaceWritePathResult>;
+  };
+  updates: {
+    getStatus: () => Promise<UpdateStatus>;
+    checkForUpdates: () => Promise<UpdateStatus>;
+    downloadUpdate: () => Promise<UpdateStatus>;
+    installDownloadedUpdate: () => Promise<UpdateStatus>;
+    onEvent: (listener: (event: UpdateStatusEvent) => void) => () => void;
   };
   rules: {
     getStatus: () => Promise<ProjectRulesStatus>;

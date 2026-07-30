@@ -180,4 +180,24 @@ describe("Levi desktop security boundaries", () => {
     expect(forbiddenVsCodeImports).toEqual([]);
     expect(runtimeReferences).toEqual(["electron/main/runtime-service.ts"]);
   });
+
+  it("keeps auto-updater ownership behind the main-process service boundary", () => {
+    const desktopFiles = collectSourceFiles(path.join(packageRoot, "src")).concat(
+      collectSourceFiles(path.join(packageRoot, "electron"))
+    );
+    const updaterReferences = desktopFiles
+      .filter((file) => fs.readFileSync(file, "utf8").includes("autoUpdater"))
+      .map((file) => path.relative(packageRoot, file).replace(/\\/g, "/"));
+    const rendererUpdaterReferences = collectSourceFiles(path.join(packageRoot, "src")).filter((file) =>
+      /electron-updater|autoUpdater/.test(fs.readFileSync(file, "utf8"))
+    );
+    const preloadSource = readSource("electron/preload/index.ts");
+
+    expect(updaterReferences).toEqual(["electron/main/update-service.ts"]);
+    expect(rendererUpdaterReferences).toEqual([]);
+    expect(preloadSource).toContain("updates: {");
+    expect(preloadSource).toContain("checkForUpdates: () => ipcRenderer.invoke(IPC_CHANNELS.updatesCheck)");
+    expect(preloadSource).not.toContain("electron-updater");
+    expect(preloadSource).not.toContain("quitAndInstall");
+  });
 });

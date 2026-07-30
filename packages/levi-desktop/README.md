@@ -90,7 +90,9 @@ To verify a signed Windows executable or installer, run:
 
 The `Status` field must be `Valid` for a signed release artifact. Certificates, passwords, signing tokens, and private keys must never be committed to this repository or written into package configuration.
 
-Auto-update and publishing are not implemented in this milestone.
+Auto-update is implemented through Electron Builder's updater companion in the Electron main process. The renderer can only inspect update status, start update checks/downloads, and approve installation through Levi's typed preload IPC bridge. Levi does not automatically restart or install an update.
+
+Live update verification remains blocked until publishing provides a hosted update feed. Publishing is not implemented in this milestone.
 
 ## Bundle Strategy
 

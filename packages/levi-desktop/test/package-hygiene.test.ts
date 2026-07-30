@@ -11,6 +11,7 @@ function readText(relativePath: string): string {
 
 function desktopPackageJson(): {
   scripts: Record<string, string>;
+  dependencies: Record<string, string>;
   devDependencies: Record<string, string>;
   build: {
     artifactName?: string;
@@ -26,6 +27,7 @@ function desktopPackageJson(): {
       cscKeyPassword?: string;
     };
     nsis?: Record<string, unknown>;
+    publish?: unknown;
   };
 } {
   return JSON.parse(readText("package.json"));
@@ -146,5 +148,15 @@ describe("Levi desktop package hygiene", () => {
     expect(result.stderr).toContain("Windows code signing was explicitly requested");
     expect(result.stderr).toContain("WIN_CSC_LINK or CSC_LINK");
     expect(result.stderr).toContain("WIN_CSC_KEY_PASSWORD or CSC_KEY_PASSWORD");
+  });
+
+  it("integrates auto-update without configuring publishing", () => {
+    const packageJson = desktopPackageJson();
+    const readme = readText("README.md");
+
+    expect(packageJson.dependencies["electron-updater"]).toMatch(/^\^6\./);
+    expect(packageJson.build.publish).toBeUndefined();
+    expect(readme).toContain("Auto-update is implemented");
+    expect(readme).toContain("Live update verification remains blocked until publishing provides a hosted update feed.");
   });
 });
