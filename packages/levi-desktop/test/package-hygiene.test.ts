@@ -10,6 +10,12 @@ function readText(relativePath: string): string {
 }
 
 function desktopPackageJson(): {
+  author?: string;
+  bugs?: { url?: string };
+  description?: string;
+  homepage?: string;
+  license?: string;
+  repository?: { type?: string; url?: string };
   scripts: Record<string, string>;
   dependencies: Record<string, string>;
   devDependencies: Record<string, string>;
@@ -85,6 +91,22 @@ describe("Levi desktop package hygiene", () => {
     expect(readme).toMatch(/dist\//);
     expect(readme).toMatch(/dist-electron\//);
     expect(readme).toMatch(/node_modules\//);
+  });
+
+  it("includes public release metadata for packaged builds", () => {
+    const packageJson = desktopPackageJson();
+
+    expect(packageJson.description).toBe("Standalone Levi desktop shell.");
+    expect(packageJson.author).toBe("Hakim Bello");
+    expect(packageJson.license).toBe("MIT");
+    expect(packageJson.homepage).toBe("https://github.com/hakimbello/levicore#readme");
+    expect(packageJson.repository).toEqual({
+      type: "git",
+      url: "https://github.com/hakimbello/levicore.git"
+    });
+    expect(packageJson.bugs).toEqual({
+      url: "https://github.com/hakimbello/levicore/issues"
+    });
   });
 
   it("packages production Windows installers instead of only unpacked directories", () => {
