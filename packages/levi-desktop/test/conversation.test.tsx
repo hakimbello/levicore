@@ -564,7 +564,7 @@ describe("Levi local conversation", () => {
     await user.click(await screen.findByRole("button", { name: "Apply" }));
 
     expect(window.levi.edits.apply).toHaveBeenCalledWith("proposal-1");
-    await waitFor(() => expect(screen.getByText("Applied by Levi - read-only workspace view")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Applied by Levi — read-only workspace view")).toBeInTheDocument());
     expect(screen.getByRole("button", { name: "Undo Last Edit" })).toBeInTheDocument();
   });
 });
