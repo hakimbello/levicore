@@ -117,7 +117,7 @@ Do not track:
 
 ## IDE-001B Runtime Connection
 
-This milestone intentionally stops at the shell. IDE-001B should connect the reusable LeviCore runtime through a main-process service boundary, likely by importing stable runtime modules from the repository root or launching a local runtime worker owned by the main process. The renderer should continue to communicate only through typed preload methods and should not receive secrets or direct filesystem/runtime authority.
+The desktop shell connects the reusable LeviCore runtime through a main-process service boundary. The Electron main process owns runtime initialization and workspace synchronization, while the renderer continues to communicate only through typed preload methods and does not receive secrets or direct filesystem/runtime authority.
 
 ## Why The VS Code Extension Is Not Imported
 
