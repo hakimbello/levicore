@@ -1,6 +1,6 @@
 import { Icon } from "./Icon";
 
-export type ActivityView = "home" | "explorer" | "search" | "source-control" | "terminal" | "rules" | "settings";
+export type ActivityView = "home" | "explorer" | "search" | "source-control" | "terminal" | "history" | "rules" | "settings";
 
 type ActivityBarProps = {
   activeView: ActivityView;

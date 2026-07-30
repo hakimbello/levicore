@@ -10,6 +10,7 @@ type SidebarProps = {
   onOpenProject: () => void;
   onRefreshWorkspace: () => void;
   onNewChat: () => void;
+  onOpenHistory: () => void;
   onOpenRules: () => void;
   onOpenSettings: () => void;
 };
@@ -30,6 +31,7 @@ export function Sidebar({
   onOpenProject,
   onRefreshWorkspace,
   onNewChat,
+  onOpenHistory,
   onOpenRules,
   onOpenSettings
 }: SidebarProps) {
@@ -64,7 +66,11 @@ export function Sidebar({
           <Icon name="folder" />
           <span>Projects</span>
         </button>
-        <button type="button" className="levi-nav-item">
+        <button
+          type="button"
+          className={activeView === "history" ? "levi-nav-item levi-nav-item-active" : "levi-nav-item"}
+          onClick={onOpenHistory}
+        >
           <Icon name="history" />
           <span>History</span>
         </button>

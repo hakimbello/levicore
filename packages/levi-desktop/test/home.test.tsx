@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "../src/app/App";
+import type { ExecutionPublicTransaction } from "../src/types/levi-api";
 
 vi.mock("@xterm/xterm", () => {
   class MockTerminal {
@@ -24,6 +25,50 @@ vi.mock("@xterm/addon-fit", () => {
 
 async function waitForInitialBridge() {
   await waitFor(() => expect(window.levi.ollama.getStatus).toHaveBeenCalled());
+}
+
+function historyTransaction(): ExecutionPublicTransaction {
+  return {
+    transactionId: "history-tx-1",
+    planId: "plan-1",
+    goal: "Update server timeout",
+    workspaceRootPath: "C:\\Users\\wetie\\Project",
+    scanTimestamp: "2026-07-29T00:00:00.000Z",
+    status: "kept",
+    steps: [
+      {
+        stepIndex: 0,
+        planStepId: "1:0",
+        planStepOrder: 1,
+        planStepTitle: "Update implementation",
+        relativePath: "src/main.ts",
+        status: "applied"
+      }
+    ],
+    currentStepIndex: 0,
+    appliedProjectRules: [],
+    ruleConflicts: [],
+    unsupportedOperations: { creates: [], deletes: [] },
+    validationCommands: ["npm test"],
+    aggregateReview: {
+      files: [
+        {
+          relativePath: "src/main.ts",
+          addedLineCount: 1,
+          removedLineCount: 1,
+          diff: [],
+          validationStatus: "passed"
+        }
+      ],
+      totalAdded: 1,
+      totalRemoved: 1,
+      validationCommands: ["npm test"],
+      commandsNotRun: true
+    },
+    createdAt: "2026-07-29T12:00:00.000Z",
+    completedAt: "2026-07-29T12:02:00.000Z",
+    totals: { stepCount: 1, appliedCount: 1, pendingCount: 0 }
+  };
 }
 
 describe("Levi desktop Home", () => {
@@ -78,6 +123,38 @@ describe("Levi desktop Home", () => {
     expect(screen.getByRole("region", { name: "Provider diagnostics" })).toBeInTheDocument();
     expect(screen.getByText("qwen3.6:latest, qwen2.5-coder:7b")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "What do you want to build?" })).not.toBeInTheDocument();
+  });
+
+  it("opens History from the existing sidebar item with an empty state", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Local AI Ready")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "History" }));
+
+    expect(await screen.findByRole("region", { name: "History" })).toBeInTheDocument();
+    expect(screen.getByText("No execution history yet. Approved execution transactions will appear here during this session.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "What do you want to build?" })).not.toBeInTheDocument();
+  });
+
+  it("renders existing execution entries in History", async () => {
+    vi.mocked(window.levi.execution.getStatus).mockResolvedValue({
+      activeTransaction: historyTransaction(),
+      route: {
+        stepGeneration: "qwen2.5-coder:7b"
+      }
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Local AI Ready")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "History" }));
+
+    expect(await screen.findByRole("region", { name: "History" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Update server timeout" })).toBeInTheDocument();
+    expect(screen.getByText("src/main.ts")).toBeInTheDocument();
+    expect(screen.getByText("kept")).toBeInTheDocument();
+    expect(screen.getByText("1/1 files applied")).toBeInTheDocument();
   });
 
   it("does not render example prompts", async () => {

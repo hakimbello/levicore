@@ -8,7 +8,7 @@ import { Home } from "../features/home/Home";
 import { SearchPanel } from "../features/search/SearchPanel";
 import { TerminalPanel } from "../features/terminal/TerminalPanel";
 import { type EditorTab, useEditorTabs } from "../hooks/use-editor-tabs";
-import type { EditApplyResult, EditUndoResult, OllamaStatus, SelectedProject, WorkspaceStatus } from "../types/levi-api";
+import type { EditApplyResult, EditUndoResult, ExecutionPublicTransaction, OllamaStatus, SelectedProject, WorkspaceStatus } from "../types/levi-api";
 import type { WorkspaceReadPathResult } from "../types/workspace-tree-api";
 import "../styles/editor-tabs.css";
 
@@ -20,6 +20,11 @@ const CodeEditor = lazy(async () => {
 const ProjectRulesPanel = lazy(async () => {
   const module = await import("../features/rules/ProjectRulesPanel");
   return { default: module.ProjectRulesPanel };
+});
+
+const HistoryPanel = lazy(async () => {
+  const module = await import("../features/history/HistoryPanel");
+  return { default: module.HistoryPanel };
 });
 
 const SettingsPanel = lazy(async () => {
@@ -56,6 +61,7 @@ export function App() {
   const [canUndoEdit, setCanUndoEdit] = useState(false);
   const [newChatSignal, setNewChatSignal] = useState(0);
   const [activeView, setActiveView] = useState<ActivityView>("home");
+  const [executionHistory, setExecutionHistory] = useState<ExecutionPublicTransaction[]>([]);
   const [searchFocusSignal, setSearchFocusSignal] = useState(0);
   const [savingTabId, setSavingTabId] = useState<string | null>(null);
   const [savingAll, setSavingAll] = useState(false);
@@ -82,20 +88,31 @@ export function App() {
   const hasDirtyTabs = tabs.some((tab) => tab.dirty);
   const activeTabHasConflict = Boolean(activeTab && conflictTabId === activeTab.id);
 
+  function recordExecutionTransaction(transaction: ExecutionPublicTransaction) {
+    setExecutionHistory((current) => {
+      const next = current.filter((item) => item.transactionId !== transaction.transactionId);
+      return [transaction, ...next].slice(0, 24);
+    });
+  }
+
   useEffect(() => {
     let disposed = false;
     async function loadShellState() {
-      const [status, recentProject, workspace, editStatus] = await Promise.all([
+      const [status, recentProject, workspace, editStatus, executionStatus] = await Promise.all([
         window.levi.ollama.getStatus(),
         window.levi.projects.getRecent(),
         window.levi.workspace.getStatus(),
-        window.levi.edits.getStatus()
+        window.levi.edits.getStatus(),
+        window.levi.execution.getStatus()
       ]);
       if (!disposed) {
         setOllamaStatus(status);
         setSelectedProject(recentProject);
         setWorkspaceStatus(workspace);
         setCanUndoEdit(editStatus.canUndo);
+        if (executionStatus.activeTransaction) {
+          recordExecutionTransaction(executionStatus.activeTransaction);
+        }
         if (recentProject && workspace.state === "idle") {
           setWorkspaceStatus({ state: "scanning" });
           window.levi.workspace.refresh().then((nextStatus) => {
@@ -292,8 +309,9 @@ export function App() {
     if (activeView === "rules") return <LazySurface label="Project Rules"><ProjectRulesPanel onOpenRuleSource={openFile} /></LazySurface>;
     if (activeView === "explorer") return <ExplorerPanel workspaceStatus={workspaceStatus} selectedPath={activeTab?.relativePath} onOpenFile={openExplorerFile} />;
     if (activeView === "search") return <SearchPanel enabled={Boolean(selectedProject)} focusSignal={searchFocusSignal} onOpenMatch={openSearchMatch} />;
+    if (activeView === "history") return <LazySurface label="History"><HistoryPanel transactions={executionHistory} /></LazySurface>;
     if (activeView === "settings") return <LazySurface label="Settings"><SettingsPanel status={ollamaStatus} selectedProject={selectedProject} workspaceStatus={workspaceStatus} /></LazySurface>;
-    if (activeView === "home") return <Home selectedProject={selectedProject} workspaceStatus={workspaceStatus} newChatSignal={newChatSignal} onOpenCitation={openWorkspaceCitation} onEditApplied={openAppliedEdit} onEditUndone={openUndoneEdit} />;
+    if (activeView === "home") return <Home selectedProject={selectedProject} workspaceStatus={workspaceStatus} newChatSignal={newChatSignal} onOpenCitation={openWorkspaceCitation} onEditApplied={openAppliedEdit} onEditUndone={openUndoneEdit} onExecutionTransactionUpdate={recordExecutionTransaction} />;
     return <WorkspacePlaceholder view={activeView} />;
   }
 
@@ -308,6 +326,7 @@ export function App() {
         onOpenProject={openProjectFolder}
         onRefreshWorkspace={refreshWorkspace}
         onNewChat={startNewChat}
+        onOpenHistory={() => selectActivityView("history")}
         onOpenRules={() => selectActivityView("rules")}
         onOpenSettings={() => selectActivityView("settings")}
       />
