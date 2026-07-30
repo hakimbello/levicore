@@ -76,10 +76,19 @@ export type WorkspaceScanSummary = {
   scanTimestamp: string;
 };
 
+export type RuntimeConnectionStatus = {
+  state: "uninitialized" | "ready" | "degraded" | "failed" | "unavailable";
+  runtimeState?: string;
+  overallRuntimeHealth?: number;
+  workspaceId?: string;
+  error?: string;
+};
+
 export type WorkspaceStatus = {
   state: "idle" | "scanning" | "ready" | "refresh-required" | "failed";
   summary?: WorkspaceScanSummary;
   error?: string;
+  runtime?: RuntimeConnectionStatus;
 };
 
 export type WorkspaceFileReference = {
