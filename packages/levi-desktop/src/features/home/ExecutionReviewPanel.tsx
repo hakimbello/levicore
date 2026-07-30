@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ExecutionPlan, ExecutionPublicProposal, ExecutionPublicTransaction } from "../../types/levi-api";
 
 type ExecutionReviewPanelProps = {
@@ -35,6 +35,7 @@ export function ExecutionReviewPanel({
   onProposeStep
 }: ExecutionReviewPanelProps) {
   const [busy, setBusy] = useState<"apply" | "reject" | "keep" | "rollback" | null>(null);
+  const busyRef = useRef(false);
   const step = currentStep(transaction);
   const proposal = currentProposal(transaction);
   const hasAppliedSteps = transaction.totals.appliedCount > 0;
@@ -54,6 +55,10 @@ export function ExecutionReviewPanel({
     transaction.totals.appliedCount < transaction.totals.stepCount;
 
   async function run(action: "apply" | "reject" | "keep" | "rollback") {
+    if (busyRef.current) {
+      return;
+    }
+    busyRef.current = true;
     setBusy(action);
     try {
       if (action === "apply") {
@@ -66,6 +71,7 @@ export function ExecutionReviewPanel({
         await onRollback();
       }
     } finally {
+      busyRef.current = false;
       setBusy(null);
     }
   }
@@ -101,11 +107,11 @@ export function ExecutionReviewPanel({
           <strong>Ready for step review</strong>
           <div>
             {transaction.totals.appliedCount === 0
-              ? "No file has been modified yet. Generate the first step proposal to continue."
-              : "Generate the next step proposal to continue."}
+              ? "No file has been modified yet. Generate code for the first planned step to continue."
+              : "Generate code for the next planned step to continue."}
           </div>
           <button type="button" className="levi-secondary-button" onClick={() => void onProposeStep()}>
-            Generate Step Proposal
+            Generate Code
           </button>
         </div>
       ) : null}
@@ -179,7 +185,7 @@ export function ExecutionReviewPanel({
               Cancel Transaction
             </button>
             <button type="button" className="levi-apply-button" disabled={busy !== null} onClick={() => void run("apply")}>
-              Apply Step
+              {busy === "apply" ? "Applying..." : "Apply Code"}
             </button>
           </div>
         </>

@@ -7,8 +7,15 @@ import type {
   LeviApi,
   PlanningStreamEvent,
   ProjectRulesStreamEvent,
+  UpdateStatusEvent,
   WorkspaceScanSummary
 } from "../src/types/levi-api";
+
+vi.mock("../src/monaco-setup", () => ({
+  loader: {
+    config: vi.fn()
+  }
+}));
 
 vi.mock("@monaco-editor/react", () => ({
   default: ({ value }: { value: string }) =>
@@ -16,7 +23,10 @@ vi.mock("@monaco-editor/react", () => ({
       "aria-label": "Read-only editor",
       readOnly: true,
       value
-    })
+    }),
+  loader: {
+    config: vi.fn()
+  }
 }));
 
 declare global {
@@ -25,6 +35,7 @@ declare global {
     __leviEditListeners: Array<(event: EditStreamEvent) => void>;
     __leviPlanningListeners: Array<(event: PlanningStreamEvent) => void>;
     __leviRulesListeners: Array<(event: ProjectRulesStreamEvent) => void>;
+    __leviUpdateListeners: Array<(event: UpdateStatusEvent) => void>;
   }
 }
 
@@ -36,14 +47,23 @@ function mockExecutionTransaction(status: ExecutionTransactionStatus, overrides:
     workspaceRootPath: "C:\\Users\\wetie\\Project",
     scanTimestamp: new Date().toISOString(),
     status,
-    steps: [],
+    steps: [
+      {
+        stepIndex: 0,
+        planStepId: "1:0",
+        planStepOrder: 1,
+        planStepTitle: "Update implementation",
+        relativePath: "src/main.ts",
+        status: "pending" as const
+      }
+    ],
     currentStepIndex: 0,
     appliedProjectRules: [],
     ruleConflicts: [],
     unsupportedOperations: { creates: [], deletes: [] },
     validationCommands: ["npm test"],
     createdAt: new Date().toISOString(),
-    totals: { stepCount: 0, appliedCount: 0, pendingCount: 0 },
+    totals: { stepCount: 1, appliedCount: 0, pendingCount: 1 },
     ...overrides
   };
 }
@@ -95,7 +115,61 @@ function createDefaultApi(): LeviApi {
         language: "typescript",
         lineStart: 1,
         readOnly: true as const
+      })),
+      listTree: vi.fn(async () => ({
+        projectName: "Project",
+        rootPath: "C:\\Users\\wetie\\Project",
+        nodes: [
+          {
+            name: "src",
+            relativePath: "src",
+            kind: "folder" as const,
+            children: [{ name: "main.tsx", relativePath: "src/main.tsx", kind: "file" as const }]
+          }
+        ],
+        nodeCount: 2,
+        truncated: false
+      })),
+      readPath: vi.fn(async () => ({
+        relativePath: "src/main.tsx",
+        content: "console.log('read only');\n",
+        language: "typescript",
+        readOnly: false as const
+      })),
+      writePath: vi.fn(async () => ({
+        relativePath: "src/main.tsx",
+        bytesWritten: 26,
+        savedAt: "2026-07-29T00:00:00.000Z"
       }))
+    },
+    updates: {
+      getStatus: vi.fn(async () => ({
+        state: "idle" as const,
+        currentVersion: "0.1.0"
+      })),
+      checkForUpdates: vi.fn(async () => ({
+        state: "update-not-available" as const,
+        currentVersion: "0.1.0",
+        message: "Levi is up to date."
+      })),
+      downloadUpdate: vi.fn(async () => ({
+        state: "downloaded" as const,
+        currentVersion: "0.1.0",
+        availableVersion: "0.1.1",
+        progressPercent: 100
+      })),
+      installDownloadedUpdate: vi.fn(async () => ({
+        state: "downloaded" as const,
+        currentVersion: "0.1.0",
+        availableVersion: "0.1.1",
+        progressPercent: 100
+      })),
+      onEvent: vi.fn((listener: (event: UpdateStatusEvent) => void) => {
+        window.__leviUpdateListeners.push(listener);
+        return () => {
+          window.__leviUpdateListeners = window.__leviUpdateListeners.filter((current) => current !== listener);
+        };
+      })
     },
     rules: {
       getStatus: vi.fn(async () => ({
@@ -328,6 +402,7 @@ beforeEach(() => {
   window.__leviEditListeners = [];
   window.__leviPlanningListeners = [];
   window.__leviRulesListeners = [];
+  window.__leviUpdateListeners = [];
   vi.stubGlobal("levi", api);
   Object.defineProperty(window, "levi", {
     value: api,

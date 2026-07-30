@@ -1,3 +1,11 @@
+import type {
+  WorkspaceReadPathRequest,
+  WorkspaceReadPathResult,
+  WorkspaceTreeResult,
+  WorkspaceWritePathRequest,
+  WorkspaceWritePathResult
+} from "./workspace-tree-api";
+
 export type OllamaStatus = {
   ready: boolean;
   modelCount: number;
@@ -68,10 +76,42 @@ export type WorkspaceScanSummary = {
   scanTimestamp: string;
 };
 
+export type RuntimeConnectionStatus = {
+  state: "uninitialized" | "ready" | "degraded" | "failed" | "unavailable";
+  runtimeState?: string;
+  overallRuntimeHealth?: number;
+  workspaceId?: string;
+  error?: string;
+};
+
 export type WorkspaceStatus = {
   state: "idle" | "scanning" | "ready" | "refresh-required" | "failed";
   summary?: WorkspaceScanSummary;
   error?: string;
+  runtime?: RuntimeConnectionStatus;
+};
+
+export type UpdateStatusState =
+  | "idle"
+  | "checking"
+  | "update-available"
+  | "update-not-available"
+  | "downloading"
+  | "downloaded"
+  | "error";
+
+export type UpdateStatus = {
+  state: UpdateStatusState;
+  currentVersion: string;
+  availableVersion?: string;
+  progressPercent?: number;
+  message?: string;
+  error?: string;
+};
+
+export type UpdateStatusEvent = {
+  type: "status";
+  status: UpdateStatus;
 };
 
 export type WorkspaceFileReference = {
@@ -93,7 +133,7 @@ export type WorkspaceOpenFileResult = {
   content: string;
   language: string;
   lineStart: number;
-  readOnly: true;
+  readOnly: boolean;
   appliedByLevi?: boolean;
   undoneByLevi?: boolean;
 };
@@ -718,6 +758,16 @@ export type LeviApi = {
     getStatus: () => Promise<WorkspaceStatus>;
     refresh: () => Promise<WorkspaceStatus>;
     openFile: (request: WorkspaceOpenFileRequest) => Promise<WorkspaceOpenFileResult>;
+    listTree: () => Promise<WorkspaceTreeResult>;
+    readPath: (request: WorkspaceReadPathRequest) => Promise<WorkspaceReadPathResult>;
+    writePath: (request: WorkspaceWritePathRequest) => Promise<WorkspaceWritePathResult>;
+  };
+  updates: {
+    getStatus: () => Promise<UpdateStatus>;
+    checkForUpdates: () => Promise<UpdateStatus>;
+    downloadUpdate: () => Promise<UpdateStatus>;
+    installDownloadedUpdate: () => Promise<UpdateStatus>;
+    onEvent: (listener: (event: UpdateStatusEvent) => void) => () => void;
   };
   rules: {
     getStatus: () => Promise<ProjectRulesStatus>;

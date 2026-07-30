@@ -660,6 +660,24 @@ describe("IDE-002B execution context", () => {
       await expect(applyStep(transaction)).rejects.toThrow(/no proposal/i);
     });
 
+    it("leaves the target file unchanged while generated code is only proposed", async () => {
+      const { root, scan, cache, plan, transaction } = await prepareFixture();
+      const step = transaction.steps[0];
+      const before = await fs.readFile(path.join(root, step.relativePath), "utf8");
+
+      attachProposal({
+        transaction,
+        plan,
+        scan,
+        cache,
+        proposedContent: "export const label = 'Proposed';\n"
+      });
+
+      expect(await fs.readFile(path.join(root, step.relativePath), "utf8")).toBe(before);
+      expect(step.status).toBe("proposed");
+      expect(step.proposal?.proposedContent).toBe("export const label = 'Proposed';\n");
+    });
+
     it("checks base hash and rejects stale files before writing", async () => {
       const { root, scan, cache, plan, transaction } = await prepareFixture();
       const step = transaction.steps[0];
@@ -690,6 +708,19 @@ describe("IDE-002B execution context", () => {
       expect(onDisk).toBe(proposed);
       expect(hashContent(onDisk)).toBe(step.proposal?.proposedHash);
       expect(step.status).toBe("applied");
+    });
+
+    it("prevents duplicate in-flight apply operations", async () => {
+      const { root, scan, cache, plan, transaction } = await prepareFixture();
+      const step = transaction.steps[0];
+      const proposed = "export const label = 'Applied once';\n";
+      attachProposal({ transaction, plan, scan, cache, proposedContent: proposed });
+
+      const firstApply = applyStep(transaction);
+      await expect(applyStep(transaction)).rejects.toThrow(/already in progress/i);
+      await firstApply;
+
+      expect(await fs.readFile(path.join(root, step.relativePath), "utf8")).toBe(proposed);
     });
   });
 
@@ -878,6 +909,25 @@ describe("IDE-002B execution context", () => {
 
       expect(transaction.abortGeneration).toBe(true);
       expect(transaction.status).toBe("cancelled");
+    });
+
+    it("leaves workspace files unchanged when cancelling a proposed step review", async () => {
+      const { root, scan, cache, plan, transaction } = await prepareFixture();
+      const beforeHash = await hashTree(root);
+
+      attachProposal({
+        transaction,
+        plan,
+        scan,
+        cache,
+        proposedContent: "export const label = 'Cancelled';\n"
+      });
+      cancelTransaction(transaction);
+
+      expect(await hashTree(root)).toBe(beforeHash);
+      expect(transaction.status).toBe("cancelled");
+      expect(transaction.steps[0].status).toBe("proposed");
+      expect(transaction.steps[0].proposal).toBeDefined();
     });
 
     it("builds aggregate review when cancelling with applied steps", async () => {
