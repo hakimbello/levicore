@@ -10,13 +10,22 @@ import type {
   WorkspaceScanSummary
 } from "../src/types/levi-api";
 
+vi.mock("../src/monaco-setup", () => ({
+  loader: {
+    config: vi.fn()
+  }
+}));
+
 vi.mock("@monaco-editor/react", () => ({
   default: ({ value }: { value: string }) =>
     createElement("textarea", {
       "aria-label": "Read-only editor",
       readOnly: true,
       value
-    })
+    }),
+  loader: {
+    config: vi.fn()
+  }
 }));
 
 declare global {

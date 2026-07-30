@@ -127,7 +127,10 @@ export function App() {
 
   useEffect(() => {
     if (!activeTabId) return;
-    tabButtonRefs.current.get(activeTabId)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const activeTabButton = tabButtonRefs.current.get(activeTabId);
+    if (typeof activeTabButton?.scrollIntoView === "function") {
+      activeTabButton.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
     setSaveError(null);
     setSaveSummary(null);
     setConflictTabId((current) => current === activeTabId ? current : null);
