@@ -23,6 +23,8 @@ From `packages/levi-desktop`:
 - `npm run test`
 - `npm run build`
 - `npm run package`
+- `npm run package:signed`
+- `npm run package:dir`
 
 ## Generated Directories
 
@@ -68,11 +70,29 @@ Build output:
 - Renderer bundle in `dist/`
 - Electron main and preload bundles in `dist-electron/electron/`
 
-Unsigned directory packaging is available through:
+Unsigned production installer packaging is available through:
 
 - `npm run package --workspace levi-desktop`
 
-Installers, code signing, auto-update, and publishing are not implemented in this milestone.
+This produces a Windows NSIS installer in `release/`. Unsigned directory packaging for local smoke checks remains available through:
+
+- `npm run package:dir --workspace levi-desktop`
+
+Signing-enabled Windows release packaging is available through:
+
+- `npm run package:signed --workspace levi-desktop`
+
+Windows signing uses Electron Builder's environment-based certificate support. Provide the certificate as a `.pfx`/`.p12` file path or base64-encoded certificate data through `WIN_CSC_LINK` or `CSC_LINK`, and provide its password through `WIN_CSC_KEY_PASSWORD` or `CSC_KEY_PASSWORD`. The signed package command fails before packaging when signing is requested and these variables are missing, and Electron Builder fails the release when `forceCodeSigning` is enabled but the supplied credentials cannot sign the artifact.
+
+To verify a signed Windows executable or installer, run:
+
+- `Get-AuthenticodeSignature .\release\Levi-0.1.0-win-x64.exe | Format-List`
+
+The `Status` field must be `Valid` for a signed release artifact. Certificates, passwords, signing tokens, and private keys must never be committed to this repository or written into package configuration.
+
+Auto-update is implemented through Electron Builder's updater companion in the Electron main process. The renderer can only inspect update status, start update checks/downloads, and approve installation through Levi's typed preload IPC bridge. Levi does not automatically restart or install an update.
+
+Live update verification remains blocked until publishing provides a hosted update feed. Publishing is not implemented in this milestone.
 
 ## Bundle Strategy
 
@@ -100,7 +120,7 @@ Track as source:
 - `src/` renderer React code
 - `electron/` main and preload TypeScript
 - `test/` desktop tests
-- `scripts/dev.mjs`
+- `scripts/*.mjs`
 - `index.html`
 - `package.json`
 - `tsconfig.json`, `electron/tsconfig.json`
@@ -117,7 +137,7 @@ Do not track:
 
 ## IDE-001B Runtime Connection
 
-This milestone intentionally stops at the shell. IDE-001B should connect the reusable LeviCore runtime through a main-process service boundary, likely by importing stable runtime modules from the repository root or launching a local runtime worker owned by the main process. The renderer should continue to communicate only through typed preload methods and should not receive secrets or direct filesystem/runtime authority.
+The desktop shell connects the reusable LeviCore runtime through a main-process service boundary. The Electron main process owns runtime initialization and workspace synchronization, while the renderer continues to communicate only through typed preload methods and does not receive secrets or direct filesystem/runtime authority.
 
 ## Why The VS Code Extension Is Not Imported
 

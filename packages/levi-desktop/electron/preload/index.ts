@@ -13,6 +13,7 @@ import type {
   TerminalCreateRequest,
   TerminalDataEvent,
   TerminalResizeRequest,
+  UpdateStatusEvent,
   WorkspaceOpenFileRequest
 } from "../../src/types/levi-api";
 import type {
@@ -31,6 +32,11 @@ const IPC_CHANNELS = {
   workspaceListTree: "levi:workspace:list-tree",
   workspaceReadPath: "levi:workspace:read-path",
   workspaceWritePath: "levi:workspace:write-path",
+  updatesGetStatus: "levi:updates:get-status",
+  updatesCheck: "levi:updates:check",
+  updatesDownload: "levi:updates:download",
+  updatesInstall: "levi:updates:install",
+  updatesEvent: "levi:updates:event",
   rulesGetStatus: "levi:rules:get-status",
   rulesList: "levi:rules:list",
   rulesRefresh: "levi:rules:refresh",
@@ -149,6 +155,22 @@ function isProjectRulesStreamEvent(value: unknown): value is ProjectRulesStreamE
   return false;
 }
 
+function isUpdateStatusEvent(value: unknown): value is UpdateStatusEvent {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const event = value as Partial<UpdateStatusEvent>;
+  const status = event.status as { state?: unknown; currentVersion?: unknown; progressPercent?: unknown } | undefined;
+  return (
+    event.type === "status" &&
+    Boolean(status) &&
+    typeof status?.state === "string" &&
+    ["idle", "checking", "update-available", "update-not-available", "downloading", "downloaded", "error"].includes(status.state) &&
+    typeof status.currentVersion === "string" &&
+    (status.progressPercent === undefined || typeof status.progressPercent === "number")
+  );
+}
+
 function isExecutionStreamEvent(value: unknown): value is ExecutionStreamEvent {
   if (!value || typeof value !== "object") return false;
   const event = value as Partial<ExecutionStreamEvent>;
@@ -188,6 +210,21 @@ const leviApi: LeviApiWithWorkspaceTree = {
     listTree: () => ipcRenderer.invoke(IPC_CHANNELS.workspaceListTree),
     readPath: (request: WorkspaceReadPathRequest) => ipcRenderer.invoke(IPC_CHANNELS.workspaceReadPath, request),
     writePath: (request: WorkspaceWritePathRequest) => ipcRenderer.invoke(IPC_CHANNELS.workspaceWritePath, request)
+  },
+  updates: {
+    getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.updatesGetStatus),
+    checkForUpdates: () => ipcRenderer.invoke(IPC_CHANNELS.updatesCheck),
+    downloadUpdate: () => ipcRenderer.invoke(IPC_CHANNELS.updatesDownload),
+    installDownloadedUpdate: () => ipcRenderer.invoke(IPC_CHANNELS.updatesInstall),
+    onEvent: (listener: (event: UpdateStatusEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+        if (isUpdateStatusEvent(payload)) {
+          listener(payload);
+        }
+      };
+      ipcRenderer.on(IPC_CHANNELS.updatesEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.updatesEvent, handler);
+    }
   },
   rules: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.rulesGetStatus),

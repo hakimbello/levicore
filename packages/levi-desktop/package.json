@@ -11,13 +11,16 @@
     "test": "vitest run",
     "live:acceptance": "node scripts/live-acceptance.mjs",
     "lint": "npm run typecheck",
-    "package": "npm run build && electron-builder --win --dir",
-    "dist": "npm run build && electron-builder --win"
+    "package": "npm run build && electron-builder --win nsis",
+    "package:signed": "node scripts/validate-signing-env.mjs --required && npm run build && electron-builder --win nsis -c.forceCodeSigning=true",
+    "package:dir": "npm run build && electron-builder --win dir",
+    "dist": "npm run package"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
+    "electron-updater": "^6.8.9",
     "monaco-editor": "^0.52.2",
     "node-pty": "^1.0.0",
     "react": "^19.1.1",
@@ -31,7 +34,7 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.7.0",
-    "electron": "^37.2.5",
+    "electron": "37.10.3",
     "electron-builder": "^26.0.12",
     "jsdom": "^26.1.0",
     "typescript": "^5.8.3",
@@ -42,13 +45,44 @@
   "build": {
     "appId": "dev.levicore.desktop",
     "productName": "Levi",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "npmRebuild": false,
+    "asarUnpack": [
+      "node_modules/node-pty/prebuilds/**"
+    ],
+    "extraFiles": [
+      {
+        "from": "../../src",
+        "to": "src",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
     "files": [
       "dist/**",
       "dist-electron/**",
       "package.json"
     ],
     "win": {
-      "target": "dir"
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
     }
   }
 }

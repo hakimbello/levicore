@@ -8,7 +8,7 @@ import { Home } from "../features/home/Home";
 import { SearchPanel } from "../features/search/SearchPanel";
 import { TerminalPanel } from "../features/terminal/TerminalPanel";
 import { type EditorTab, useEditorTabs } from "../hooks/use-editor-tabs";
-import type { EditApplyResult, EditUndoResult, OllamaStatus, SelectedProject, WorkspaceStatus } from "../types/levi-api";
+import type { EditApplyResult, EditUndoResult, ExecutionPublicTransaction, OllamaStatus, SelectedProject, UpdateStatus, WorkspaceStatus } from "../types/levi-api";
 import type { WorkspaceReadPathResult } from "../types/workspace-tree-api";
 import "../styles/editor-tabs.css";
 
@@ -22,14 +22,23 @@ const ProjectRulesPanel = lazy(async () => {
   return { default: module.ProjectRulesPanel };
 });
 
+const HistoryPanel = lazy(async () => {
+  const module = await import("../features/history/HistoryPanel");
+  return { default: module.HistoryPanel };
+});
+
+const SettingsPanel = lazy(async () => {
+  const module = await import("../features/settings/SettingsPanel");
+  return { default: module.SettingsPanel };
+});
+
 const unknownStatus: OllamaStatus = { ready: false, modelCount: 0, models: [] };
 const idleWorkspaceStatus: WorkspaceStatus = { state: "idle" };
 const FILE_CONFLICT_CODE = "WORKSPACE_FILE_CONFLICT";
 
 const placeholderCopy: Partial<Record<ActivityView, { title: string; description: string }>> = {
   "source-control": { title: "Source Control", description: "Git status, staging, commits, and branch controls are scheduled for the IDE Core phase." },
-  terminal: { title: "Terminal", description: "Use the terminal panel at the bottom of the workspace." },
-  settings: { title: "Settings", description: "Desktop, model, workspace, and appearance settings will be consolidated here." }
+  terminal: { title: "Terminal", description: "Use the terminal panel at the bottom of the workspace." }
 };
 
 function WorkspacePlaceholder({ view }: { view: ActivityView }) {
@@ -45,13 +54,20 @@ function WorkspacePlaceholder({ view }: { view: ActivityView }) {
   );
 }
 
+const idleUpdateStatus: UpdateStatus = {
+  state: "idle",
+  currentVersion: "0.0.0"
+};
+
 export function App() {
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus>(unknownStatus);
   const [selectedProject, setSelectedProject] = useState<SelectedProject | null>(null);
   const [workspaceStatus, setWorkspaceStatus] = useState<WorkspaceStatus>(idleWorkspaceStatus);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>(idleUpdateStatus);
   const [canUndoEdit, setCanUndoEdit] = useState(false);
   const [newChatSignal, setNewChatSignal] = useState(0);
   const [activeView, setActiveView] = useState<ActivityView>("home");
+  const [executionHistory, setExecutionHistory] = useState<ExecutionPublicTransaction[]>([]);
   const [searchFocusSignal, setSearchFocusSignal] = useState(0);
   const [savingTabId, setSavingTabId] = useState<string | null>(null);
   const [savingAll, setSavingAll] = useState(false);
@@ -78,20 +94,33 @@ export function App() {
   const hasDirtyTabs = tabs.some((tab) => tab.dirty);
   const activeTabHasConflict = Boolean(activeTab && conflictTabId === activeTab.id);
 
+  function recordExecutionTransaction(transaction: ExecutionPublicTransaction) {
+    setExecutionHistory((current) => {
+      const next = current.filter((item) => item.transactionId !== transaction.transactionId);
+      return [transaction, ...next].slice(0, 24);
+    });
+  }
+
   useEffect(() => {
     let disposed = false;
     async function loadShellState() {
-      const [status, recentProject, workspace, editStatus] = await Promise.all([
+      const [status, recentProject, workspace, editStatus, executionStatus, updates] = await Promise.all([
         window.levi.ollama.getStatus(),
         window.levi.projects.getRecent(),
         window.levi.workspace.getStatus(),
-        window.levi.edits.getStatus()
+        window.levi.edits.getStatus(),
+        window.levi.execution.getStatus(),
+        window.levi.updates.getStatus()
       ]);
       if (!disposed) {
         setOllamaStatus(status);
         setSelectedProject(recentProject);
         setWorkspaceStatus(workspace);
+        setUpdateStatus(updates);
         setCanUndoEdit(editStatus.canUndo);
+        if (executionStatus.activeTransaction) {
+          recordExecutionTransaction(executionStatus.activeTransaction);
+        }
         if (recentProject && workspace.state === "idle") {
           setWorkspaceStatus({ state: "scanning" });
           window.levi.workspace.refresh().then((nextStatus) => {
@@ -101,12 +130,24 @@ export function App() {
       }
     }
     void loadShellState();
-    return () => { disposed = true; };
+    const unsubscribeUpdates = window.levi.updates.onEvent((event) => {
+      if (!disposed) {
+        setUpdateStatus(event.status);
+      }
+    });
+
+    return () => {
+      disposed = true;
+      unsubscribeUpdates();
+    };
   }, []);
 
   useEffect(() => {
     if (!activeTabId) return;
-    tabButtonRefs.current.get(activeTabId)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const activeTabButton = tabButtonRefs.current.get(activeTabId);
+    if (typeof activeTabButton?.scrollIntoView === "function") {
+      activeTabButton.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
     setSaveError(null);
     setSaveSummary(null);
     setConflictTabId((current) => current === activeTabId ? current : null);
@@ -288,14 +329,53 @@ export function App() {
     if (activeView === "rules") return <LazySurface label="Project Rules"><ProjectRulesPanel onOpenRuleSource={openFile} /></LazySurface>;
     if (activeView === "explorer") return <ExplorerPanel workspaceStatus={workspaceStatus} selectedPath={activeTab?.relativePath} onOpenFile={openExplorerFile} />;
     if (activeView === "search") return <SearchPanel enabled={Boolean(selectedProject)} focusSignal={searchFocusSignal} onOpenMatch={openSearchMatch} />;
-    if (activeView === "home") return <Home selectedProject={selectedProject} workspaceStatus={workspaceStatus} newChatSignal={newChatSignal} onOpenCitation={openWorkspaceCitation} onEditApplied={openAppliedEdit} onEditUndone={openUndoneEdit} />;
+    if (activeView === "history") return <LazySurface label="History"><HistoryPanel transactions={executionHistory} /></LazySurface>;
+    if (activeView === "settings") {
+      return (
+        <LazySurface label="Settings">
+          <SettingsPanel
+            status={ollamaStatus}
+            selectedProject={selectedProject}
+            workspaceStatus={workspaceStatus}
+            updateStatus={updateStatus}
+            onCheckForUpdates={checkForUpdates}
+            onDownloadUpdate={downloadUpdate}
+            onInstallDownloadedUpdate={installDownloadedUpdate}
+          />
+        </LazySurface>
+      );
+    }
+    if (activeView === "home") return <Home selectedProject={selectedProject} workspaceStatus={workspaceStatus} newChatSignal={newChatSignal} onOpenCitation={openWorkspaceCitation} onEditApplied={openAppliedEdit} onEditUndone={openUndoneEdit} onExecutionTransactionUpdate={recordExecutionTransaction} />;
     return <WorkspacePlaceholder view={activeView} />;
+  }
+
+  async function checkForUpdates() {
+    setUpdateStatus(await window.levi.updates.checkForUpdates());
+  }
+
+  async function downloadUpdate() {
+    setUpdateStatus(await window.levi.updates.downloadUpdate());
+  }
+
+  async function installDownloadedUpdate() {
+    setUpdateStatus(await window.levi.updates.installDownloadedUpdate());
   }
 
   return (
     <div className="levi-shell">
       <ActivityBar activeView={activeView} onSelect={selectActivityView} />
-      <Sidebar status={ollamaStatus} selectedProject={selectedProject} workspaceStatus={workspaceStatus} onOpenProject={openProjectFolder} onRefreshWorkspace={refreshWorkspace} onNewChat={startNewChat} onOpenRules={() => setActiveView("rules")} />
+      <Sidebar
+        status={ollamaStatus}
+        selectedProject={selectedProject}
+        workspaceStatus={workspaceStatus}
+        activeView={activeView}
+        onOpenProject={openProjectFolder}
+        onRefreshWorkspace={refreshWorkspace}
+        onNewChat={startNewChat}
+        onOpenHistory={() => selectActivityView("history")}
+        onOpenRules={() => selectActivityView("rules")}
+        onOpenSettings={() => selectActivityView("settings")}
+      />
       <main className="levi-main">
         <div className={activeTab ? "levi-workspace-layout levi-workspace-layout-editor" : "levi-workspace-layout"}>
           {renderActiveWorkspace()}

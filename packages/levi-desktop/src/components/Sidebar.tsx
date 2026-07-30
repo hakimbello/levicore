@@ -1,14 +1,18 @@
 import type { OllamaStatus, SelectedProject, WorkspaceStatus } from "../types/levi-api";
+import type { ActivityView } from "./ActivityBar";
 import { Icon } from "./Icon";
 
 type SidebarProps = {
   status: OllamaStatus;
   selectedProject: SelectedProject | null;
   workspaceStatus: WorkspaceStatus;
+  activeView: ActivityView;
   onOpenProject: () => void;
   onRefreshWorkspace: () => void;
   onNewChat: () => void;
+  onOpenHistory: () => void;
   onOpenRules: () => void;
+  onOpenSettings: () => void;
 };
 
 function getWorkspaceStatusLabel(status: WorkspaceStatus): string {
@@ -19,7 +23,18 @@ function getWorkspaceStatusLabel(status: WorkspaceStatus): string {
   return "No workspace scan";
 }
 
-export function Sidebar({ status, selectedProject, workspaceStatus, onOpenProject, onRefreshWorkspace, onNewChat, onOpenRules }: SidebarProps) {
+export function Sidebar({
+  status,
+  selectedProject,
+  workspaceStatus,
+  activeView,
+  onOpenProject,
+  onRefreshWorkspace,
+  onNewChat,
+  onOpenHistory,
+  onOpenRules,
+  onOpenSettings
+}: SidebarProps) {
   return (
     <aside className="levi-sidebar">
       <div className="levi-brand">
@@ -43,7 +58,7 @@ export function Sidebar({ status, selectedProject, workspaceStatus, onOpenProjec
       </div>
 
       <nav className="levi-nav" aria-label="Primary">
-        <button type="button" className="levi-nav-item levi-nav-item-active" onClick={onNewChat}>
+        <button type="button" className={activeView === "home" ? "levi-nav-item levi-nav-item-active" : "levi-nav-item"} onClick={onNewChat}>
           <Icon name="chat" />
           <span>New Chat</span>
         </button>
@@ -51,11 +66,19 @@ export function Sidebar({ status, selectedProject, workspaceStatus, onOpenProjec
           <Icon name="folder" />
           <span>Projects</span>
         </button>
-        <button type="button" className="levi-nav-item">
+        <button
+          type="button"
+          className={activeView === "history" ? "levi-nav-item levi-nav-item-active" : "levi-nav-item"}
+          onClick={onOpenHistory}
+        >
           <Icon name="history" />
           <span>History</span>
         </button>
-        <button type="button" className="levi-nav-item">
+        <button
+          type="button"
+          className={activeView === "settings" ? "levi-nav-item levi-nav-item-active" : "levi-nav-item"}
+          onClick={onOpenSettings}
+        >
           <Icon name="settings" />
           <span>Settings</span>
         </button>
