@@ -50,6 +50,15 @@
     "asarUnpack": [
       "node_modules/node-pty/prebuilds/**"
     ],
+    "extraFiles": [
+      {
+        "from": "../../src",
+        "to": "src",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
     "directories": {
       "output": "release"
     },
