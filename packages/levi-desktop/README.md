@@ -126,6 +126,7 @@ Track as source:
 - `electron/` main and preload TypeScript
 - `test/` desktop tests
 - `scripts/*.mjs`
+- `assets/`
 - `index.html`
 - `package.json`
 - `tsconfig.json`, `electron/tsconfig.json`

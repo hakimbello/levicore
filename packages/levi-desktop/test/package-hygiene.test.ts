@@ -19,6 +19,7 @@ function desktopPackageJson(): {
     asarUnpack?: string[];
     directories?: { output?: string };
     win?: {
+      icon?: string;
       target?: Array<{ target?: string; arch?: string[] }> | string;
       signtoolOptions?: Record<string, unknown>;
       certificateFile?: string;
@@ -65,6 +66,8 @@ describe("Levi desktop package hygiene", () => {
       "packages/levi-desktop/src/app/App.tsx",
       "packages/levi-desktop/electron/main/index.ts",
       "packages/levi-desktop/index.html",
+      "packages/levi-desktop/assets/levi.ico",
+      "packages/levi-desktop/assets/levi.svg",
       "packages/levi-desktop/vite.config.mjs",
       "packages/levi-desktop/README.md"
     ]) {
@@ -94,6 +97,8 @@ describe("Levi desktop package hygiene", () => {
     expect(packageJson.build.asarUnpack).toEqual(["node_modules/node-pty/prebuilds/**"]);
     expect(packageJson.build.directories?.output).toBe("release");
     expect(packageJson.build.artifactName).toBe("${productName}-${version}-${os}-${arch}.${ext}");
+    expect(packageJson.build.win?.icon).toBe("assets/levi.ico");
+    expect(fs.statSync(path.join(desktopRoot, "assets/levi.ico")).size).toBeGreaterThan(0);
     expect(packageJson.build.win?.target).toEqual([{ target: "nsis", arch: ["x64"] }]);
     expect(packageJson.build.nsis).toMatchObject({
       oneClick: false,
