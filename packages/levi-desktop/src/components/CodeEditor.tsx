@@ -14,6 +14,14 @@ type CodeEditorProps = {
 };
 
 type MountedEditor = Parameters<OnMount>[0];
+type MonacoInstance = Parameters<OnMount>[1];
+type SearchNavigationDetail = {
+  lineNumber: number;
+  columnStart: number;
+  matchLength: number;
+};
+
+const SEARCH_NAVIGATION_EVENT = "levi:search-navigation";
 
 export function CodeEditor({
   value,
@@ -24,6 +32,7 @@ export function CodeEditor({
   onSave
 }: CodeEditorProps) {
   const editorRef = useRef<MountedEditor | null>(null);
+  const monacoRef = useRef<MonacoInstance | null>(null);
 
   const handleBeforeMount: BeforeMount = (monaco) => {
     monaco.editor.defineTheme("levi-light", {
@@ -45,6 +54,7 @@ export function CodeEditor({
 
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
+    monacoRef.current = monaco;
     editor.updateOptions({ readOnly, domReadOnly: readOnly });
     editor.revealLineInCenter(lineStart);
     editor.setPosition({ lineNumber: lineStart, column: 1 });
@@ -59,6 +69,34 @@ export function CodeEditor({
     editor.setPosition({ lineNumber, column: 1 });
     editor.focus();
   }, [lineStart]);
+
+  useEffect(() => {
+    function handleSearchNavigation(event: Event) {
+      const editor = editorRef.current;
+      const monaco = monacoRef.current;
+      const model = editor?.getModel();
+      if (!editor || !monaco || !model) return;
+
+      const detail = (event as CustomEvent<SearchNavigationDetail>).detail;
+      if (!detail) return;
+
+      window.requestAnimationFrame(() => {
+        const currentModel = editor.getModel();
+        if (!currentModel) return;
+        const lineNumber = Math.max(1, Math.min(detail.lineNumber, currentModel.getLineCount()));
+        const maxColumn = currentModel.getLineMaxColumn(lineNumber);
+        const startColumn = Math.max(1, Math.min(detail.columnStart, maxColumn));
+        const endColumn = Math.max(startColumn, Math.min(startColumn + detail.matchLength, maxColumn));
+        const selection = new monaco.Selection(lineNumber, startColumn, lineNumber, endColumn);
+        editor.setSelection(selection);
+        editor.revealRangeInCenter(selection, monaco.editor.ScrollType.Smooth);
+        editor.focus();
+      });
+    }
+
+    window.addEventListener(SEARCH_NAVIGATION_EVENT, handleSearchNavigation);
+    return () => window.removeEventListener(SEARCH_NAVIGATION_EVENT, handleSearchNavigation);
+  }, []);
 
   return (
     <Editor
