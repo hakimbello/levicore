@@ -13,6 +13,7 @@
     "lint": "npm run typecheck",
     "package": "npm run build && electron-builder --win nsis",
     "package:signed": "node scripts/validate-signing-env.mjs --required && npm run build && electron-builder --win nsis -c.forceCodeSigning=true",
+    "package:publish": "npm run build && electron-builder --win nsis --publish always",
     "package:dir": "npm run build && electron-builder --win dir",
     "dist": "npm run package"
   },
@@ -66,6 +67,14 @@
       "dist/**",
       "dist-electron/**",
       "package.json"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "hakimbello",
+        "repo": "levicore",
+        "releaseType": "draft"
+      }
     ],
     "win": {
       "target": [

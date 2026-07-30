@@ -24,6 +24,7 @@ From `packages/levi-desktop`:
 - `npm run build`
 - `npm run package`
 - `npm run package:signed`
+- `npm run package:publish`
 - `npm run package:dir`
 
 ## Generated Directories
@@ -92,7 +93,11 @@ The `Status` field must be `Valid` for a signed release artifact. Certificates, 
 
 Auto-update is implemented through Electron Builder's updater companion in the Electron main process. The renderer can only inspect update status, start update checks/downloads, and approve installation through Levi's typed preload IPC bridge. Levi does not automatically restart or install an update.
 
-Live update verification remains blocked until publishing provides a hosted update feed. Publishing is not implemented in this milestone.
+Publishing is configured through Electron Builder for GitHub draft releases in `hakimbello/levicore`:
+
+- `npm run package:publish --workspace levi-desktop`
+
+Publishing requires a GitHub token supplied by the environment, such as `GH_TOKEN` or `GITHUB_TOKEN`. Tokens must never be committed to this repository or written into package configuration. Live update verification remains blocked until a draft release is published and its generated update feed is available.
 
 ## Bundle Strategy
 

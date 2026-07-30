@@ -150,13 +150,26 @@ describe("Levi desktop package hygiene", () => {
     expect(result.stderr).toContain("WIN_CSC_KEY_PASSWORD or CSC_KEY_PASSWORD");
   });
 
-  it("integrates auto-update without configuring publishing", () => {
+  it("configures GitHub draft publishing without committing credentials", () => {
     const packageJson = desktopPackageJson();
     const readme = readText("README.md");
 
     expect(packageJson.dependencies["electron-updater"]).toMatch(/^\^6\./);
-    expect(packageJson.build.publish).toBeUndefined();
+    expect(packageJson.scripts["package:publish"]).toBe("npm run build && electron-builder --win nsis --publish always");
+    expect(packageJson.build.publish).toEqual([
+      {
+        provider: "github",
+        owner: "hakimbello",
+        repo: "levicore",
+        releaseType: "draft"
+      }
+    ]);
+    expect(JSON.stringify(packageJson)).not.toContain("GH_TOKEN=");
+    expect(JSON.stringify(packageJson)).not.toContain("GITHUB_TOKEN=");
     expect(readme).toContain("Auto-update is implemented");
-    expect(readme).toContain("Live update verification remains blocked until publishing provides a hosted update feed.");
+    expect(readme).toContain("npm run package:publish --workspace levi-desktop");
+    expect(readme).toContain("GH_TOKEN");
+    expect(readme).toContain("GITHUB_TOKEN");
+    expect(readme).toContain("Live update verification remains blocked until a draft release is published");
   });
 });
