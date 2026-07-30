@@ -12,6 +12,7 @@
     "live:acceptance": "node scripts/live-acceptance.mjs",
     "lint": "npm run typecheck",
     "package": "npm run build && electron-builder --win nsis",
+    "package:signed": "node scripts/validate-signing-env.mjs --required && npm run build && electron-builder --win nsis -c.forceCodeSigning=true",
     "package:dir": "npm run build && electron-builder --win dir",
     "dist": "npm run package"
   },

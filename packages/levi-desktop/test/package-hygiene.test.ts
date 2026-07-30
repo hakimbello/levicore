@@ -1,12 +1,34 @@
 import fs from "node:fs";
 import path from "node:path";
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 
 const repoRoot = path.resolve(__dirname, "../../..");
 const desktopRoot = path.join(repoRoot, "packages/levi-desktop");
 
 function readText(relativePath: string): string {
   return fs.readFileSync(path.join(desktopRoot, relativePath), "utf8");
+}
+
+function desktopPackageJson(): {
+  scripts: Record<string, string>;
+  devDependencies: Record<string, string>;
+  build: {
+    artifactName?: string;
+    npmRebuild?: boolean;
+    asarUnpack?: string[];
+    directories?: { output?: string };
+    win?: {
+      target?: Array<{ target?: string; arch?: string[] }> | string;
+      signtoolOptions?: Record<string, unknown>;
+      certificateFile?: string;
+      certificatePassword?: string;
+      cscLink?: string;
+      cscKeyPassword?: string;
+    };
+    nsis?: Record<string, unknown>;
+  };
+} {
+  return JSON.parse(readText("package.json"));
 }
 
 function isIgnored(relativeFromRepoRoot: string): boolean {
@@ -61,18 +83,7 @@ describe("Levi desktop package hygiene", () => {
   });
 
   it("packages production Windows installers instead of only unpacked directories", () => {
-    const packageJson = JSON.parse(readText("package.json")) as {
-      scripts: Record<string, string>;
-      devDependencies: Record<string, string>;
-      build: {
-        artifactName?: string;
-        npmRebuild?: boolean;
-        asarUnpack?: string[];
-        directories?: { output?: string };
-        win?: { target?: Array<{ target?: string; arch?: string[] }> | string };
-        nsis?: Record<string, unknown>;
-      };
-    };
+    const packageJson = desktopPackageJson();
 
     expect(packageJson.devDependencies.electron).toBe("37.10.3");
     expect(packageJson.scripts.package).toBe("npm run build && electron-builder --win nsis");
@@ -87,5 +98,53 @@ describe("Levi desktop package hygiene", () => {
       perMachine: false,
       allowToChangeInstallationDirectory: true
     });
+  });
+
+  it("keeps unsigned local packaging separate from signing-required packaging", () => {
+    const packageJson = desktopPackageJson();
+
+    expect(packageJson.scripts.package).toBe("npm run build && electron-builder --win nsis");
+    expect(packageJson.scripts.package).not.toContain("forceCodeSigning");
+    expect(packageJson.scripts.package).not.toContain("validate-signing-env");
+    expect(packageJson.scripts["package:signed"]).toBe(
+      "node scripts/validate-signing-env.mjs --required && npm run build && electron-builder --win nsis -c.forceCodeSigning=true"
+    );
+  });
+
+  it("uses environment-based Windows signing credentials without committed certificate configuration", () => {
+    const packageJson = desktopPackageJson();
+    const readme = readText("README.md");
+    const signingScript = readText("scripts/validate-signing-env.mjs");
+
+    expect(packageJson.build.win?.signtoolOptions).toBeUndefined();
+    expect(packageJson.build.win?.certificateFile).toBeUndefined();
+    expect(packageJson.build.win?.certificatePassword).toBeUndefined();
+    expect(packageJson.build.win?.cscLink).toBeUndefined();
+    expect(packageJson.build.win?.cscKeyPassword).toBeUndefined();
+    for (const forbidden of ["certificatePassword", "WIN_CSC_LINK=", "CSC_LINK=", "WIN_CSC_KEY_PASSWORD=", "CSC_KEY_PASSWORD="]) {
+      expect(JSON.stringify(packageJson)).not.toContain(forbidden);
+    }
+    for (const variable of ["WIN_CSC_LINK", "CSC_LINK", "WIN_CSC_KEY_PASSWORD", "CSC_KEY_PASSWORD"]) {
+      expect(readme).toContain(variable);
+      expect(signingScript).toContain(variable);
+    }
+  });
+
+  it("fails safely when explicit signing is requested without credential environment", () => {
+    const env = { ...process.env };
+    delete env.WIN_CSC_LINK;
+    delete env.CSC_LINK;
+    delete env.WIN_CSC_KEY_PASSWORD;
+    delete env.CSC_KEY_PASSWORD;
+    const result = spawnSync(process.execPath, [path.join(desktopRoot, "scripts/validate-signing-env.mjs"), "--required"], {
+      cwd: desktopRoot,
+      env,
+      encoding: "utf8"
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Windows code signing was explicitly requested");
+    expect(result.stderr).toContain("WIN_CSC_LINK or CSC_LINK");
+    expect(result.stderr).toContain("WIN_CSC_KEY_PASSWORD or CSC_KEY_PASSWORD");
   });
 });
