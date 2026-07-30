@@ -23,6 +23,7 @@ From `packages/levi-desktop`:
 - `npm run test`
 - `npm run build`
 - `npm run package`
+- `npm run package:signed`
 - `npm run package:dir`
 
 ## Generated Directories
@@ -77,7 +78,19 @@ This produces a Windows NSIS installer in `release/`. Unsigned directory packagi
 
 - `npm run package:dir --workspace levi-desktop`
 
-Code signing, auto-update, and publishing are not implemented in this milestone.
+Signing-enabled Windows release packaging is available through:
+
+- `npm run package:signed --workspace levi-desktop`
+
+Windows signing uses Electron Builder's environment-based certificate support. Provide the certificate as a `.pfx`/`.p12` file path or base64-encoded certificate data through `WIN_CSC_LINK` or `CSC_LINK`, and provide its password through `WIN_CSC_KEY_PASSWORD` or `CSC_KEY_PASSWORD`. The signed package command fails before packaging when signing is requested and these variables are missing, and Electron Builder fails the release when `forceCodeSigning` is enabled but the supplied credentials cannot sign the artifact.
+
+To verify a signed Windows executable or installer, run:
+
+- `Get-AuthenticodeSignature .\release\Levi-0.1.0-win-x64.exe | Format-List`
+
+The `Status` field must be `Valid` for a signed release artifact. Certificates, passwords, signing tokens, and private keys must never be committed to this repository or written into package configuration.
+
+Auto-update and publishing are not implemented in this milestone.
 
 ## Bundle Strategy
 
@@ -105,7 +118,7 @@ Track as source:
 - `src/` renderer React code
 - `electron/` main and preload TypeScript
 - `test/` desktop tests
-- `scripts/dev.mjs`
+- `scripts/*.mjs`
 - `index.html`
 - `package.json`
 - `tsconfig.json`, `electron/tsconfig.json`
