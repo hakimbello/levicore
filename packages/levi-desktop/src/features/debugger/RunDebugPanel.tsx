@@ -1,6 +1,6 @@
 import { FormEvent, KeyboardEvent, useEffect, useState, type ChangeEvent, type ReactNode } from "react";
 import { Icon } from "../../components/Icon";
-import type { DebugLaunchConfiguration, DebugSetBreakpointRequest, DebugStackFrame, DebugState, DebugVariable, DebugExceptionBreakpoint } from "./DebugEvents";
+import type { DebugLaunchConfiguration, DebugSetBreakpointRequest, DebugStackFrame, DebugState, DebugVariable, DebugExceptionBreakpoint, DebugAdapterInstallRequest } from "./DebugEvents";
 import { MAX_VARIABLE_TREE_RENDER } from "./variableLimits";
 
 type RunDebugPanelProps = {
@@ -24,6 +24,12 @@ type RunDebugPanelProps = {
   onOpenSource: (relativePath: string) => Promise<void>;
   onContinueFromException: () => Promise<void>;
   onGetCompletions: (text: string, column: number) => Promise<Array<{ label: string; insertText?: string }>>;
+  onScanAdapters: () => Promise<void>;
+  onInstallAdapter: (request: DebugAdapterInstallRequest) => Promise<void>;
+  onUninstallAdapter: (adapterId: string) => Promise<void>;
+  onRevealAdapter: (adapterId: string) => Promise<void>;
+  onDismissAdapterRecommendation: (adapterId: string) => Promise<void>;
+  onCancelAdapterInstall: () => Promise<void>;
 };
 
 function defaultLaunchConfiguration(): DebugLaunchConfiguration {
@@ -57,7 +63,13 @@ export function RunDebugPanel({
   onRefreshLoadedSources,
   onOpenSource,
   onContinueFromException,
-  onGetCompletions
+  onGetCompletions,
+  onScanAdapters,
+  onInstallAdapter,
+  onUninstallAdapter,
+  onRevealAdapter,
+  onDismissAdapterRecommendation,
+  onCancelAdapterInstall
 }: RunDebugPanelProps) {
   const [configuration, setConfiguration] = useState<DebugLaunchConfiguration>(
     state.lastLaunchConfiguration ?? defaultLaunchConfiguration()
@@ -380,6 +392,107 @@ export function RunDebugPanel({
             </button>
           </form>
           {localError ? <div className="levi-edit-error" role="alert">{localError}</div> : null}
+          {state.launchAdapterDiagnostic ? (
+            <div className="levi-debug-adapter-diagnostic" role="alert">
+              <strong>{state.launchAdapterDiagnostic.configurationName ?? "Launch"} adapter</strong>
+              <p>{state.launchAdapterDiagnostic.message}</p>
+              {state.launchAdapterDiagnostic.action === "install" ? (
+                <button
+                  type="button"
+                  className="levi-button levi-button-secondary"
+                  onClick={() =>
+                    void onInstallAdapter({
+                      adapterId: state.launchAdapterDiagnostic!.adapterId,
+                      optionId: "npm-js-debug",
+                      confirmed: true
+                    })
+                  }
+                >
+                  Install Adapter
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </section>
+
+        <section className="levi-debug-section" aria-label="Debug Adapters">
+          <div className="levi-debug-section-header">
+            <h2>Debug Adapters</h2>
+            <button type="button" className="levi-button levi-button-secondary" onClick={() => void onScanAdapters()}>
+              <Icon name="refresh" />
+              <span>Rescan</span>
+            </button>
+          </div>
+          {state.adapterInstallProgress ? (
+            <div className="levi-debug-adapter-progress" aria-live="polite">
+              <strong>{state.adapterInstallProgress.adapterId}</strong>
+              <span>{state.adapterInstallProgress.message ?? state.adapterInstallProgress.phase}</span>
+              {typeof state.adapterInstallProgress.percent === "number" ? <span>{state.adapterInstallProgress.percent}%</span> : null}
+              {state.adapterInstallProgress.phase === "install" || state.adapterInstallProgress.phase === "download" ? (
+                <button type="button" className="levi-button levi-button-secondary" onClick={() => void onCancelAdapterInstall()}>
+                  Cancel
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {state.adapterRecommendations.length > 0 ? (
+            <div className="levi-debug-list">
+              {state.adapterRecommendations.map((recommendation) => (
+                <div key={recommendation.adapterId} className="levi-debug-row">
+                  <div>
+                    <strong>Recommended: {recommendation.displayName}</strong>
+                    <span>{recommendation.reason}</span>
+                  </div>
+                  <button type="button" className="levi-icon-button" onClick={() => void onDismissAdapterRecommendation(recommendation.adapterId)} aria-label={`Dismiss ${recommendation.displayName} recommendation`}>
+                    <Icon name="close" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          <div className="levi-debug-list">
+            {state.adapters.filter((adapter) => adapter.id !== "custom").map((adapter) => (
+              <div key={adapter.id} className="levi-debug-row">
+                <div>
+                  <strong>{adapter.displayName}</strong>
+                  <span>
+                    {adapter.state}
+                    {adapter.detectedVersion ? ` · ${adapter.detectedVersion}` : ""}
+                    {adapter.source ? ` · ${adapter.source}` : ""}
+                  </span>
+                  <small>{adapter.languages.join(", ") || "No languages"}</small>
+                  {adapter.message ? <small>{adapter.message}</small> : null}
+                </div>
+                <div className="levi-debug-inline-actions">
+                  {adapter.state === "missing" || adapter.state === "update-available" ? (
+                    <button
+                      type="button"
+                      className="levi-button levi-button-secondary"
+                      onClick={() =>
+                        void onInstallAdapter({
+                          adapterId: adapter.id,
+                          optionId: adapter.id === "python" ? "pip-debugpy" : "npm-js-debug",
+                          confirmed: true
+                        })
+                      }
+                    >
+                      {adapter.state === "update-available" ? "Update" : "Install"}
+                    </button>
+                  ) : null}
+                  {adapter.installPath || adapter.executablePath ? (
+                    <button type="button" className="levi-button levi-button-secondary" onClick={() => void onRevealAdapter(adapter.id)}>
+                      Reveal
+                    </button>
+                  ) : null}
+                  {adapter.installPath ? (
+                    <button type="button" className="levi-button levi-button-secondary" onClick={() => void onUninstallAdapter(adapter.id)}>
+                      Uninstall
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
         </section>
 
         <section className="levi-debug-section" aria-label="Breakpoints">

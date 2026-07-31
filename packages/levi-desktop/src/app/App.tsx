@@ -10,7 +10,7 @@ import { SearchPanel } from "../features/search/SearchPanel";
 import { TerminalPanel } from "../features/terminal/TerminalPanel";
 import { type EditorTab, useEditorTabs } from "../hooks/use-editor-tabs";
 import type { EditApplyResult, EditUndoResult, ExecutionPublicTransaction, OllamaStatus, SelectedProject, UpdateStatus, WorkspaceStatus } from "../types/levi-api";
-import type { DebugLaunchConfiguration, DebugSetBreakpointRequest, DebugStackFrame, DebugState, DebugExceptionBreakpoint } from "../features/debugger";
+import type { DebugLaunchConfiguration, DebugSetBreakpointRequest, DebugStackFrame, DebugState, DebugExceptionBreakpoint, DebugAdapterInstallRequest } from "../features/debugger";
 import { DEFAULT_EXCEPTION_BREAKPOINTS } from "../features/debugger";
 import type { WorkspaceReadPathResult } from "../types/workspace-tree-api";
 import "../styles/editor-tabs.css";
@@ -53,7 +53,9 @@ const idleDebugState: DebugState = {
   console: [],
   exceptionBreakpoints: DEFAULT_EXCEPTION_BREAKPOINTS.map((item) => ({ ...item })),
   inlineValues: [],
-  evaluationCache: []
+  evaluationCache: [],
+  adapters: [],
+  adapterRecommendations: []
 };
 const FILE_CONFLICT_CODE = "WORKSPACE_FILE_CONFLICT";
 
@@ -413,6 +415,12 @@ export function App() {
             onOpenSource={openDebugSource}
             onContinueFromException={continueFromDebugException}
             onGetCompletions={getDebugCompletions}
+            onScanAdapters={scanDebugAdapters}
+            onInstallAdapter={installDebugAdapter}
+            onUninstallAdapter={uninstallDebugAdapter}
+            onRevealAdapter={revealDebugAdapter}
+            onDismissAdapterRecommendation={dismissDebugAdapterRecommendation}
+            onCancelAdapterInstall={cancelDebugAdapterInstall}
           />
         </LazySurface>
       );
@@ -526,6 +534,30 @@ export function App() {
 
   async function getDebugCompletions(text: string, column: number) {
     return window.levi.debug.getCompletions({ text, column, frameId: debugState.activeStackFrame?.id });
+  }
+
+  async function scanDebugAdapters() {
+    await applyDebugState(window.levi.debug.scanAdapters());
+  }
+
+  async function installDebugAdapter(request: DebugAdapterInstallRequest) {
+    await applyDebugState(window.levi.debug.installAdapter(request));
+  }
+
+  async function uninstallDebugAdapter(adapterId: string) {
+    await applyDebugState(window.levi.debug.uninstallAdapter({ adapterId, confirmed: true }));
+  }
+
+  async function revealDebugAdapter(adapterId: string) {
+    await window.levi.debug.revealAdapterLocation(adapterId);
+  }
+
+  async function dismissDebugAdapterRecommendation(adapterId: string) {
+    await applyDebugState(window.levi.debug.dismissAdapterRecommendation(adapterId));
+  }
+
+  async function cancelDebugAdapterInstall() {
+    await window.levi.debug.cancelAdapterInstall();
   }
 
   async function editCodeEditorBreakpoint(_line: number, request: DebugSetBreakpointRequest): Promise<void> {

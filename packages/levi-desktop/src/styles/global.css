@@ -1685,6 +1685,17 @@ textarea:focus-visible,
   font-style: italic;
 }
 
+.levi-debug-adapter-diagnostic,
+.levi-debug-adapter-progress {
+  display: grid;
+  gap: var(--levi-space-8);
+  margin-top: var(--levi-space-12);
+  padding: var(--levi-space-12);
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-sm);
+  background: var(--levi-color-surface);
+}
+
 .levi-settings-group {
   display: grid;
   gap: var(--levi-space-12);
