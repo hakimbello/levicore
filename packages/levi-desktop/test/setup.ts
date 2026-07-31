@@ -383,6 +383,9 @@ function createDefaultApi(): LeviApi {
         callStack: [],
         loadedSources: [],
         console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: [],
         lastLaunchConfiguration: request.configuration ?? undefined,
         error: {
           code: "MISSING_ADAPTER" as const,
@@ -398,7 +401,10 @@ function createDefaultApi(): LeviApi {
         variables: [],
         callStack: [],
         loadedSources: [],
-        console: []
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: []
       })),
       restart: vi.fn(async () => ({
         state: "Stopped" as const,
@@ -408,7 +414,10 @@ function createDefaultApi(): LeviApi {
         variables: [],
         callStack: [],
         loadedSources: [],
-        console: []
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: []
       })),
       pause: vi.fn(async () => ({
         state: "Paused" as const,
@@ -418,7 +427,10 @@ function createDefaultApi(): LeviApi {
         variables: [],
         callStack: [],
         loadedSources: [],
-        console: []
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: []
       })),
       continue: vi.fn(async () => ({
         state: "Running" as const,
@@ -428,7 +440,10 @@ function createDefaultApi(): LeviApi {
         variables: [],
         callStack: [],
         loadedSources: [],
-        console: []
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: []
       })),
       stepOver: vi.fn(async () => ({
         state: "Paused" as const,
@@ -438,7 +453,10 @@ function createDefaultApi(): LeviApi {
         variables: [],
         callStack: [],
         loadedSources: [],
-        console: []
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: []
       })),
       stepInto: vi.fn(async () => ({
         state: "Paused" as const,
@@ -448,7 +466,10 @@ function createDefaultApi(): LeviApi {
         variables: [],
         callStack: [],
         loadedSources: [],
-        console: []
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: []
       })),
       stepOut: vi.fn(async () => ({
         state: "Paused" as const,
@@ -458,7 +479,10 @@ function createDefaultApi(): LeviApi {
         variables: [],
         callStack: [],
         loadedSources: [],
-        console: []
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: []
       })),
       setBreakpoint: vi.fn(async (request) => ({
         state: "Idle" as const,
@@ -481,7 +505,10 @@ function createDefaultApi(): LeviApi {
         variables: [],
         callStack: [],
         loadedSources: [],
-        console: []
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: []
       })),
       removeBreakpoint: vi.fn(async () => ({
         state: "Idle" as const,
@@ -491,7 +518,10 @@ function createDefaultApi(): LeviApi {
         variables: [],
         callStack: [],
         loadedSources: [],
-        console: []
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: []
       })),
       getBreakpoints: vi.fn(async () => []),
       getState: vi.fn(async () => ({
@@ -517,7 +547,10 @@ function createDefaultApi(): LeviApi {
         variables: [],
         callStack: [],
         loadedSources: [],
-        console: []
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: []
       })),
       selectConfiguration: vi.fn(async (name) => ({
         state: "Idle" as const,
@@ -528,7 +561,10 @@ function createDefaultApi(): LeviApi {
         variables: [],
         callStack: [],
         loadedSources: [],
-        console: []
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: []
       })),
       createLaunchConfig: vi.fn(async () => ({
         state: "Idle" as const,
@@ -538,7 +574,10 @@ function createDefaultApi(): LeviApi {
         variables: [],
         callStack: [],
         loadedSources: [],
-        console: []
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: []
       })),
       addWatch: vi.fn(async (expression) => ({
         state: "Idle" as const,
@@ -556,7 +595,10 @@ function createDefaultApi(): LeviApi {
         variables: [],
         callStack: [],
         loadedSources: [],
-        console: []
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: []
       })),
       updateWatch: vi.fn(async (request) => ({
         state: "Idle" as const,
@@ -574,7 +616,10 @@ function createDefaultApi(): LeviApi {
         variables: [],
         callStack: [],
         loadedSources: [],
-        console: []
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: []
       })),
       removeWatch: vi.fn(async () => ({
         state: "Idle" as const,
@@ -584,7 +629,10 @@ function createDefaultApi(): LeviApi {
         variables: [],
         callStack: [],
         loadedSources: [],
-        console: []
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: []
       })),
       loadVariables: vi.fn(async () => ({
         state: "Paused" as const,
@@ -594,7 +642,10 @@ function createDefaultApi(): LeviApi {
         variables: [],
         callStack: [],
         loadedSources: [],
-        console: []
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: []
       })),
       evaluate: vi.fn(async (request) => ({
         state: "Paused" as const,
@@ -611,7 +662,14 @@ function createDefaultApi(): LeviApi {
             category: "console" as const,
             output: request.expression
           }
-        ]
+        ],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: [],
+        lastEvaluation: {
+          expression: request.expression,
+          result: request.expression
+        }
       })),
       clearConsole: vi.fn(async () => ({
         state: "Paused" as const,
@@ -621,7 +679,10 @@ function createDefaultApi(): LeviApi {
         variables: [],
         callStack: [],
         loadedSources: [],
-        console: []
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: []
       })),
       selectStackFrame: vi.fn(async () => ({
         state: "Paused" as const,
@@ -631,8 +692,39 @@ function createDefaultApi(): LeviApi {
         variables: [],
         callStack: [],
         loadedSources: [],
-        console: []
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: []
       })),
+      setExceptionBreakpoints: vi.fn(async () => ({
+        state: "Idle" as const,
+        launchConfigurations: [],
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        loadedSources: [],
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: []
+      })),
+      refreshLoadedSources: vi.fn(async () => ({
+        state: "Running" as const,
+        launchConfigurations: [],
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        loadedSources: [{ name: "main.ts", relativePath: "src/main.ts" }],
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: []
+      })),
+      getCompletions: vi.fn(async () => [{ label: "count", insertText: "count" }]),
+      cancelEvaluations: vi.fn(async () => undefined),
       onEvent: vi.fn((listener: (event: DebugEvent) => void) => {
         window.__leviDebugListeners.push(listener);
         return () => {

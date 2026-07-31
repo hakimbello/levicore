@@ -3,8 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { BreakpointManager, DebugService, DebugSession, VariableStore, WatchStore, encodeDapMessage } from "../src/features/debugger";
+import { BreakpointManager, DebugService, DebugSession, EvaluationCache, VariableStore, WatchStore, encodeDapMessage } from "../src/features/debugger";
 import { DesktopDebugService, validateDebugSetBreakpointRequest, validateDebugStartRequest } from "../electron/main/debug-service";
+import { truncateValue, MAX_VARIABLE_CHILDREN } from "../src/features/debugger/variableLimits";
 import { App } from "../src/app/App";
 
 vi.mock("@xterm/xterm", () => {
@@ -219,6 +220,116 @@ describe("DAP debugger foundation", () => {
     const vscodeState = await vscodeService.getState();
 
     expect(vscodeState.launchConfigurations[0]).toMatchObject({ name: "Workspace App", source: ".vscode/launch.json" });
+  });
+
+  it("caches evaluations and exposes structured hover results without duplicate adapter calls", async () => {
+    let evaluateCalls = 0;
+    let dataListener: ((data: string) => void) | undefined;
+    let responseSeq = 200;
+    const service = new DebugService({
+      createAdapter: async () => ({
+        onData: (listener) => {
+          dataListener = listener;
+          return () => undefined;
+        },
+        write: (message) => {
+          const payload = JSON.parse(message.slice(message.indexOf("\r\n\r\n") + 4)) as { seq: number; command: string; arguments?: { expression?: string } };
+          if (payload.command === "evaluate") evaluateCalls += 1;
+          const bodies: Record<string, unknown> = {
+            initialize: {},
+            launch: {},
+            configurationDone: {},
+            setBreakpoints: { breakpoints: [] },
+            setExceptionBreakpoints: {},
+            evaluate: { result: "42", type: "number", variablesReference: 0 }
+          };
+          dataListener?.(
+            encodeDapMessage({
+              seq: responseSeq++,
+              type: "response",
+              request_seq: payload.seq,
+              command: payload.command,
+              success: true,
+              body: bodies[payload.command] ?? {}
+            })
+          );
+        },
+        dispose: vi.fn()
+      }),
+      resolveSourcePath: (relativePath) => `C:/repo/${relativePath}`,
+      relativizeSourcePath: (sourcePath) => sourcePath.replace("C:/repo/", "")
+    });
+
+    await service.start({ type: "node", request: "launch", name: "Node Launch", program: "src/main.ts" });
+    await service.evaluateExpression("count", "hover", 1);
+    await service.evaluateExpression("count", "hover", 1);
+
+    expect(evaluateCalls).toBe(1);
+    expect(service.snapshot().lastEvaluation).toMatchObject({ expression: "count", result: "42", type: "number", cached: true });
+    expect(service.snapshot().evaluationCache).toHaveLength(1);
+  });
+
+  it("limits variable payloads and truncates oversized values", () => {
+    expect(truncateValue("x".repeat(5000)).endsWith("…")).toBe(true);
+    const cache = new EvaluationCache();
+    cache.set("k", "expr", "repl", 1, { expression: "expr", result: "1" });
+    expect(cache.get("k")).toMatchObject({ result: "1" });
+    expect(cache.list()).toHaveLength(1);
+  });
+
+  it("parses exception stops and refreshes inline values from scopes", async () => {
+    let dataListener: ((data: string) => void) | undefined;
+    let responseSeq = 300;
+    const service = new DebugService({
+      createAdapter: async () => ({
+        onData: (listener) => {
+          dataListener = listener;
+          return () => undefined;
+        },
+        write: (message) => {
+          const payload = JSON.parse(message.slice(message.indexOf("\r\n\r\n") + 4)) as { seq: number; command: string };
+          const bodies: Record<string, unknown> = {
+            initialize: {},
+            launch: {},
+            configurationDone: {},
+            setBreakpoints: { breakpoints: [] },
+            setExceptionBreakpoints: {},
+            threads: { threads: [{ id: 1, name: "Main" }] },
+            stackTrace: { stackFrames: [{ id: 2, name: "main", source: { path: "C:/repo/src/main.ts" }, line: 8 }] },
+            scopes: { scopes: [{ name: "Local", variablesReference: 3, expensive: false }] },
+            variables: { variables: [{ name: "count", value: "42", type: "number", variablesReference: 0 }] },
+            loadedSources: { sources: [] }
+          };
+          dataListener?.(
+            encodeDapMessage({
+              seq: responseSeq++,
+              type: "response",
+              request_seq: payload.seq,
+              command: payload.command,
+              success: true,
+              body: bodies[payload.command] ?? {}
+            })
+          );
+        },
+        dispose: vi.fn()
+      }),
+      resolveSourcePath: (relativePath) => `C:/repo/${relativePath}`,
+      relativizeSourcePath: (sourcePath) => sourcePath.replace("C:/repo/", "")
+    });
+
+    await service.start({ type: "node", request: "launch", name: "Node Launch", program: "src/main.ts" });
+    dataListener?.(
+      encodeDapMessage({
+        seq: responseSeq++,
+        type: "event",
+        event: "stopped",
+        body: { threadId: 1, reason: "exception", text: "Error: boom", description: "Error" }
+      })
+    );
+
+    await waitFor(() => expect(service.snapshot().exceptionInfo?.message).toBe("Error: boom"));
+    expect(service.snapshot().inlineValues).toEqual([{ name: "count", value: "42" }]);
+    expect(service.snapshot().variables[0]?.variables.length).toBeLessThanOrEqual(MAX_VARIABLE_CHILDREN);
   });
 });
 
