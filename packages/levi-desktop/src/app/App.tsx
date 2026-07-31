@@ -7,7 +7,7 @@ import { ExplorerPanel } from "../features/explorer/ExplorerPanel";
 import { DebugToolbar } from "../features/debugger/DebugToolbar";
 import { Home } from "../features/home/Home";
 import { SearchPanel } from "../features/search/SearchPanel";
-import { TerminalPanel } from "../features/terminal/TerminalPanel";
+import { BottomPanel } from "../features/terminal/BottomPanel";
 import { type EditorTab, useEditorTabs } from "../hooks/use-editor-tabs";
 import type { EditApplyResult, EditUndoResult, ExecutionPublicTransaction, OllamaStatus, SelectedProject, UpdateStatus, WorkspaceStatus } from "../types/levi-api";
 import type { DebugLaunchConfiguration, DebugSetBreakpointRequest, DebugStackFrame, DebugState, DebugExceptionBreakpoint, DebugAdapterInstallRequest } from "../features/debugger";
@@ -692,7 +692,13 @@ export function App() {
             </aside>
           ) : null}
         </div>
-        <TerminalPanel selectedProject={selectedProject} />
+        <BottomPanel
+          selectedProject={selectedProject}
+          debugConsole={debugState.console}
+          debugLastEvaluation={debugState.lastEvaluation}
+          onEvaluateDebug={evaluateDebugExpression}
+          onClearDebugConsole={clearDebugConsole}
+        />
       </main>
     </div>
   );
