@@ -10,6 +10,7 @@ import type {
   UpdateStatusEvent,
   WorkspaceScanSummary
 } from "../src/types/levi-api";
+import type { DebugEvent } from "../src/features/debugger";
 
 vi.mock("../src/monaco-setup", () => ({
   loader: {
@@ -36,6 +37,7 @@ declare global {
     __leviPlanningListeners: Array<(event: PlanningStreamEvent) => void>;
     __leviRulesListeners: Array<(event: ProjectRulesStreamEvent) => void>;
     __leviUpdateListeners: Array<(event: UpdateStatusEvent) => void>;
+    __leviDebugListeners: Array<(event: DebugEvent) => void>;
   }
 }
 
@@ -371,6 +373,146 @@ function createDefaultApi(): LeviApi {
       })),
       onEvent: vi.fn(() => () => undefined)
     },
+    debug: {
+      start: vi.fn(async (request) => ({
+        state: "Stopped" as const,
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        console: [],
+        lastLaunchConfiguration: request.configuration,
+        error: {
+          code: "MISSING_ADAPTER" as const,
+          message: "Missing debug adapter for \"node\".",
+          recoverable: true
+        }
+      })),
+      stop: vi.fn(async () => ({
+        state: "Stopped" as const,
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        console: []
+      })),
+      restart: vi.fn(async () => ({
+        state: "Stopped" as const,
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        console: []
+      })),
+      pause: vi.fn(async () => ({
+        state: "Paused" as const,
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        console: []
+      })),
+      continue: vi.fn(async () => ({
+        state: "Running" as const,
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        console: []
+      })),
+      stepOver: vi.fn(async () => ({
+        state: "Paused" as const,
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        console: []
+      })),
+      stepInto: vi.fn(async () => ({
+        state: "Paused" as const,
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        console: []
+      })),
+      stepOut: vi.fn(async () => ({
+        state: "Paused" as const,
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        console: []
+      })),
+      setBreakpoint: vi.fn(async (request) => ({
+        state: "Idle" as const,
+        breakpoints: request.toggle
+          ? [
+              {
+                id: `${request.relativePath}:${request.line}:1`,
+                relativePath: request.relativePath,
+                line: request.line,
+                enabled: true,
+                condition: request.condition,
+                logMessage: request.logMessage,
+                createdAt: "2026-07-31T00:00:00.000Z",
+                updatedAt: "2026-07-31T00:00:00.000Z"
+              }
+            ]
+          : [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        console: []
+      })),
+      removeBreakpoint: vi.fn(async () => ({
+        state: "Idle" as const,
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        console: []
+      })),
+      getBreakpoints: vi.fn(async () => []),
+      getState: vi.fn(async () => ({
+        state: "Idle" as const,
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        console: []
+      })),
+      addWatch: vi.fn(async (expression) => ({
+        state: "Idle" as const,
+        breakpoints: [],
+        watches: [
+          {
+            id: "watch-1",
+            expression,
+            enabled: true,
+            createdAt: "2026-07-31T00:00:00.000Z",
+            updatedAt: "2026-07-31T00:00:00.000Z"
+          }
+        ],
+        variables: [],
+        callStack: [],
+        console: []
+      })),
+      removeWatch: vi.fn(async () => ({
+        state: "Idle" as const,
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        console: []
+      })),
+      onEvent: vi.fn((listener: (event: DebugEvent) => void) => {
+        window.__leviDebugListeners.push(listener);
+        return () => {
+          window.__leviDebugListeners = window.__leviDebugListeners.filter((current) => current !== listener);
+        };
+      })
+    },
     terminal: {
       create: vi.fn(async () => ({
         id: "terminal-1",
@@ -403,6 +545,7 @@ beforeEach(() => {
   window.__leviPlanningListeners = [];
   window.__leviRulesListeners = [];
   window.__leviUpdateListeners = [];
+  window.__leviDebugListeners = [];
   vi.stubGlobal("levi", api);
   Object.defineProperty(window, "levi", {
     value: api,

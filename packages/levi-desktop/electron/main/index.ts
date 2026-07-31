@@ -100,8 +100,10 @@ import {
   openRuleSourceFromId,
   type ProjectRulesCache
 } from "./project-rules-context";
+import { DesktopDebugService } from "./debug-service";
 import { DesktopRuntimeService } from "./runtime-service";
 import { UpdateService } from "./update-service";
+import type { DebugEvent } from "../../src/features/debugger";
 
 const OLLAMA_TAGS_URL = "http://127.0.0.1:11434/api/tags";
 const OLLAMA_CHAT_URL = "http://127.0.0.1:11434/api/chat";
@@ -150,6 +152,7 @@ let selectedProject: SelectedProject | null = null;
 let workspaceScan: WorkspaceScan | null = null;
 let workspaceStatus: WorkspaceStatus = createWorkspaceStatus("idle");
 let activeWorkspaceScan: Promise<WorkspaceStatus> | null = null;
+const debugService = new DesktopDebugService(() => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null);
 
 function getRepositoryRoot(): string {
   if (process.env.LEVI_REPO_ROOT && path.isAbsolute(process.env.LEVI_REPO_ROOT)) {
@@ -305,9 +308,15 @@ function sendUpdateEvent(window: BrowserWindow, event: UpdateStatusEvent): void 
   }
 }
 
+function sendDebugEvent(window: BrowserWindow, event: DebugEvent): void {
+  if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+    window.webContents.send(IPC_CHANNELS.debugEvent, event);
+  }
+}
+
 function assertNoIpcArgs(args: unknown[]): void {
   if (args.length > 0) {
-    throw new Error("Unexpected update IPC arguments.");
+    throw new Error("Unexpected IPC arguments.");
   }
 }
 
@@ -1982,6 +1991,62 @@ function registerIpc(): void {
       throw error;
     }
   });
+  ipcMain.handle(IPC_CHANNELS.debugStart, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.start(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.debugStop, (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.stop();
+  });
+  ipcMain.handle(IPC_CHANNELS.debugRestart, (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.restart();
+  });
+  ipcMain.handle(IPC_CHANNELS.debugPause, (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.pause();
+  });
+  ipcMain.handle(IPC_CHANNELS.debugContinue, (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.continue();
+  });
+  ipcMain.handle(IPC_CHANNELS.debugStepOver, (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.stepOver();
+  });
+  ipcMain.handle(IPC_CHANNELS.debugStepInto, (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.stepInto();
+  });
+  ipcMain.handle(IPC_CHANNELS.debugStepOut, (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.stepOut();
+  });
+  ipcMain.handle(IPC_CHANNELS.debugSetBreakpoint, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.setBreakpoint(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.debugRemoveBreakpoint, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.removeBreakpoint(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.debugGetBreakpoints, async (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return (await debugService.getState()).breakpoints;
+  });
+  ipcMain.handle(IPC_CHANNELS.debugGetState, (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.getState();
+  });
+  ipcMain.handle(IPC_CHANNELS.debugAddWatch, async (_event, expression, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.addWatch(expression);
+  });
+  ipcMain.handle(IPC_CHANNELS.debugRemoveWatch, async (_event, id, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.removeWatch(id);
+  });
   ipcMain.handle(IPC_CHANNELS.editsPropose, (event, rawRequest) => {
     const eventWindow = BrowserWindow.fromWebContents(event.sender);
     if (!eventWindow) {
@@ -2226,12 +2291,17 @@ async function createWindow(): Promise<void> {
   const unsubscribeUpdates = updateService.onStatus((status) => {
     sendUpdateEvent(updateWindow, { type: "status", status });
   });
+  const unsubscribeDebug = debugService.onEvent((event) => {
+    sendDebugEvent(updateWindow, event);
+  });
   mainWindow.webContents.on("destroyed", () => {
     unsubscribeUpdates();
+    unsubscribeDebug();
     abortActiveGeneration(mainWindowWebContentsId, "window-closed");
     abortActiveEditGeneration(mainWindowWebContentsId, "window-closed");
     abortActivePlanningGeneration(mainWindowWebContentsId, "window-closed");
     abortActiveExecutionGeneration(mainWindowWebContentsId, "window-closed");
+    void debugService.stop();
     citationSourcesByWindow.delete(mainWindowWebContentsId);
     editProposalsByWindow.delete(mainWindowWebContentsId);
     undoByWindow.delete(mainWindowWebContentsId);
@@ -2268,6 +2338,7 @@ app.whenReady().then(async () => {
 
 app.on("before-quit", () => {
   invalidateProjectRules("idle");
+  void debugService.dispose();
   void desktopRuntimeService.shutdown();
   for (const session of terminalSessions.values()) {
     session.kill();

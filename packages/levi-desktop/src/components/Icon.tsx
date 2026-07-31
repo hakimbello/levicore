@@ -12,6 +12,12 @@ export type IconName =
   | "refresh"
   | "close"
   | "terminal"
+  | "debug"
+  | "pause"
+  | "continue"
+  | "step-over"
+  | "step-into"
+  | "step-out"
   | "layers";
 
 type IconProps = {
@@ -33,6 +39,12 @@ const paths: Record<IconName, string> = {
   refresh: "M19 8a7 7 0 0 0-12.1-3.8L5 6M5 3v3h3M5 16a7 7 0 0 0 12.1 3.8L19 18M19 21v-3h-3",
   close: "M6 6l12 12M18 6 6 18",
   terminal: "M4 7l5 5-5 5M11 17h9",
+  debug: "M8 4h8M12 4v3M7 9h10v6a5 5 0 0 1-10 0V9zM4 13h3M17 13h3M8 20l-2 2M16 20l2 2",
+  pause: "M8 5h3v14H8zM13 5h3v14h-3z",
+  continue: "M7 5v14l11-7z",
+  "step-over": "M4 12a8 8 0 0 1 13.7-5.7L20 9M20 4v5h-5M8 17h8",
+  "step-into": "M12 4v12M8 12l4 4 4-4M6 20h12",
+  "step-out": "M12 20V8M8 12l4-4 4 4M6 4h12",
   layers: "M12 4l8 4-8 4-8-4 8-4zM4 12l8 4 8-4M4 16l8 4 8-4"
 };
 

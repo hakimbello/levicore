@@ -4,11 +4,13 @@ import { Icon } from "../components/Icon";
 import { LazySurface } from "../components/LazySurface";
 import { Sidebar } from "../components/Sidebar";
 import { ExplorerPanel } from "../features/explorer/ExplorerPanel";
+import { DebugToolbar } from "../features/debugger/DebugToolbar";
 import { Home } from "../features/home/Home";
 import { SearchPanel } from "../features/search/SearchPanel";
 import { TerminalPanel } from "../features/terminal/TerminalPanel";
 import { type EditorTab, useEditorTabs } from "../hooks/use-editor-tabs";
 import type { EditApplyResult, EditUndoResult, ExecutionPublicTransaction, OllamaStatus, SelectedProject, UpdateStatus, WorkspaceStatus } from "../types/levi-api";
+import type { DebugLaunchConfiguration, DebugSetBreakpointRequest, DebugState } from "../features/debugger";
 import type { WorkspaceReadPathResult } from "../types/workspace-tree-api";
 import "../styles/editor-tabs.css";
 
@@ -32,8 +34,21 @@ const SettingsPanel = lazy(async () => {
   return { default: module.SettingsPanel };
 });
 
+const RunDebugPanel = lazy(async () => {
+  const module = await import("../features/debugger/RunDebugPanel");
+  return { default: module.RunDebugPanel };
+});
+
 const unknownStatus: OllamaStatus = { ready: false, modelCount: 0, models: [] };
 const idleWorkspaceStatus: WorkspaceStatus = { state: "idle" };
+const idleDebugState: DebugState = {
+  state: "Idle",
+  breakpoints: [],
+  watches: [],
+  variables: [],
+  callStack: [],
+  console: []
+};
 const FILE_CONFLICT_CODE = "WORKSPACE_FILE_CONFLICT";
 
 const placeholderCopy: Partial<Record<ActivityView, { title: string; description: string }>> = {
@@ -64,6 +79,7 @@ export function App() {
   const [selectedProject, setSelectedProject] = useState<SelectedProject | null>(null);
   const [workspaceStatus, setWorkspaceStatus] = useState<WorkspaceStatus>(idleWorkspaceStatus);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>(idleUpdateStatus);
+  const [debugState, setDebugState] = useState<DebugState>(idleDebugState);
   const [canUndoEdit, setCanUndoEdit] = useState(false);
   const [newChatSignal, setNewChatSignal] = useState(0);
   const [activeView, setActiveView] = useState<ActivityView>("home");
@@ -104,12 +120,13 @@ export function App() {
   useEffect(() => {
     let disposed = false;
     async function loadShellState() {
-      const [status, recentProject, workspace, editStatus, executionStatus, updates] = await Promise.all([
+      const [status, recentProject, workspace, editStatus, executionStatus, debug, updates] = await Promise.all([
         window.levi.ollama.getStatus(),
         window.levi.projects.getRecent(),
         window.levi.workspace.getStatus(),
         window.levi.edits.getStatus(),
         window.levi.execution.getStatus(),
+        window.levi.debug.getState(),
         window.levi.updates.getStatus()
       ]);
       if (!disposed) {
@@ -117,6 +134,7 @@ export function App() {
         setSelectedProject(recentProject);
         setWorkspaceStatus(workspace);
         setUpdateStatus(updates);
+        setDebugState(debug);
         setCanUndoEdit(editStatus.canUndo);
         if (executionStatus.activeTransaction) {
           recordExecutionTransaction(executionStatus.activeTransaction);
@@ -135,10 +153,16 @@ export function App() {
         setUpdateStatus(event.status);
       }
     });
+    const unsubscribeDebug = window.levi.debug.onEvent((event) => {
+      if (!disposed) {
+        setDebugState(event.state);
+      }
+    });
 
     return () => {
       disposed = true;
       unsubscribeUpdates();
+      unsubscribeDebug();
     };
   }, []);
 
@@ -329,6 +353,21 @@ export function App() {
     if (activeView === "rules") return <LazySurface label="Project Rules"><ProjectRulesPanel onOpenRuleSource={openFile} /></LazySurface>;
     if (activeView === "explorer") return <ExplorerPanel workspaceStatus={workspaceStatus} selectedPath={activeTab?.relativePath} onOpenFile={openExplorerFile} />;
     if (activeView === "search") return <SearchPanel enabled={Boolean(selectedProject)} focusSignal={searchFocusSignal} onOpenMatch={openSearchMatch} />;
+    if (activeView === "debug") {
+      return (
+        <LazySurface label="Run and Debug">
+          <RunDebugPanel
+            state={debugState}
+            workspaceAvailable={Boolean(selectedProject)}
+            onStart={startDebugging}
+            onSetBreakpoint={setDebugBreakpoint}
+            onRemoveBreakpoint={removeDebugBreakpoint}
+            onAddWatch={addDebugWatch}
+            onRemoveWatch={removeDebugWatch}
+          />
+        </LazySurface>
+      );
+    }
     if (activeView === "history") return <LazySurface label="History"><HistoryPanel transactions={executionHistory} /></LazySurface>;
     if (activeView === "settings") {
       return (
@@ -361,6 +400,30 @@ export function App() {
     setUpdateStatus(await window.levi.updates.installDownloadedUpdate());
   }
 
+  async function applyDebugState(nextState: Promise<DebugState>) {
+    setDebugState(await nextState);
+  }
+
+  async function startDebugging(configuration: DebugLaunchConfiguration) {
+    await applyDebugState(window.levi.debug.start({ configuration }));
+  }
+
+  async function setDebugBreakpoint(request: DebugSetBreakpointRequest) {
+    await applyDebugState(window.levi.debug.setBreakpoint(request));
+  }
+
+  async function removeDebugBreakpoint(breakpointId: string) {
+    await applyDebugState(window.levi.debug.removeBreakpoint({ breakpointId }));
+  }
+
+  async function addDebugWatch(expression: string) {
+    await applyDebugState(window.levi.debug.addWatch(expression));
+  }
+
+  async function removeDebugWatch(id: string) {
+    await applyDebugState(window.levi.debug.removeWatch(id));
+  }
+
   return (
     <div className="levi-shell">
       <ActivityBar activeView={activeView} onSelect={selectActivityView} />
@@ -377,6 +440,16 @@ export function App() {
         onOpenSettings={() => selectActivityView("settings")}
       />
       <main className="levi-main">
+        <DebugToolbar
+          state={debugState}
+          onContinue={() => void applyDebugState(window.levi.debug.continue())}
+          onPause={() => void applyDebugState(window.levi.debug.pause())}
+          onRestart={() => void applyDebugState(window.levi.debug.restart())}
+          onStop={() => void applyDebugState(window.levi.debug.stop())}
+          onStepOver={() => void applyDebugState(window.levi.debug.stepOver())}
+          onStepInto={() => void applyDebugState(window.levi.debug.stepInto())}
+          onStepOut={() => void applyDebugState(window.levi.debug.stepOut())}
+        />
         <div className={activeTab ? "levi-workspace-layout levi-workspace-layout-editor" : "levi-workspace-layout"}>
           {renderActiveWorkspace()}
           {activeTab ? (

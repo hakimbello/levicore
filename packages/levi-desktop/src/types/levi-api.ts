@@ -5,6 +5,13 @@ import type {
   WorkspaceWritePathRequest,
   WorkspaceWritePathResult
 } from "./workspace-tree-api";
+import type {
+  DebugEvent,
+  DebugRemoveBreakpointRequest,
+  DebugSetBreakpointRequest,
+  DebugStartRequest,
+  DebugState
+} from "../features/debugger";
 
 export type OllamaStatus = {
   ready: boolean;
@@ -803,6 +810,23 @@ export type LeviApi = {
     cancel: (transactionId: string) => Promise<ExecutionCancelResult>;
     getStatus: () => Promise<ExecutionStatus>;
     onEvent: (listener: (event: ExecutionStreamEvent) => void) => () => void;
+  };
+  debug: {
+    start: (request: DebugStartRequest) => Promise<DebugState>;
+    stop: () => Promise<DebugState>;
+    restart: () => Promise<DebugState>;
+    pause: () => Promise<DebugState>;
+    continue: () => Promise<DebugState>;
+    stepOver: () => Promise<DebugState>;
+    stepInto: () => Promise<DebugState>;
+    stepOut: () => Promise<DebugState>;
+    setBreakpoint: (request: DebugSetBreakpointRequest) => Promise<DebugState>;
+    removeBreakpoint: (request: DebugRemoveBreakpointRequest) => Promise<DebugState>;
+    getBreakpoints: () => Promise<DebugState["breakpoints"]>;
+    getState: () => Promise<DebugState>;
+    addWatch: (expression: string) => Promise<DebugState>;
+    removeWatch: (id: string) => Promise<DebugState>;
+    onEvent: (listener: (event: DebugEvent) => void) => () => void;
   };
   terminal: {
     create: (request: TerminalCreateRequest) => Promise<TerminalSession>;

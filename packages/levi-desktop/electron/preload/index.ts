@@ -17,6 +17,12 @@ import type {
   WorkspaceOpenFileRequest
 } from "../../src/types/levi-api";
 import type {
+  DebugEvent,
+  DebugRemoveBreakpointRequest,
+  DebugSetBreakpointRequest,
+  DebugStartRequest
+} from "../../src/features/debugger";
+import type {
   LeviApiWithWorkspaceTree,
   WorkspaceReadPathRequest,
   WorkspaceWritePathRequest
@@ -64,6 +70,21 @@ const IPC_CHANNELS = {
   executionCancel: "levi:execution:cancel",
   executionGetStatus: "levi:execution:get-status",
   executionEvent: "levi:execution:event",
+  debugStart: "levi:debug:start",
+  debugStop: "levi:debug:stop",
+  debugRestart: "levi:debug:restart",
+  debugPause: "levi:debug:pause",
+  debugContinue: "levi:debug:continue",
+  debugStepOver: "levi:debug:step-over",
+  debugStepInto: "levi:debug:step-into",
+  debugStepOut: "levi:debug:step-out",
+  debugSetBreakpoint: "levi:debug:set-breakpoint",
+  debugRemoveBreakpoint: "levi:debug:remove-breakpoint",
+  debugGetBreakpoints: "levi:debug:get-breakpoints",
+  debugGetState: "levi:debug:get-state",
+  debugAddWatch: "levi:debug:add-watch",
+  debugRemoveWatch: "levi:debug:remove-watch",
+  debugEvent: "levi:debug:event",
   devOpenProjectPath: "levi:dev:open-project-path",
   devInjectPlan: "levi:dev:inject-plan",
   devGetTimings: "levi:dev:get-timings",
@@ -195,6 +216,38 @@ function isExecutionStreamEvent(value: unknown): value is ExecutionStreamEvent {
   return false;
 }
 
+function isDebugState(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const state = value as { state?: unknown; breakpoints?: unknown; watches?: unknown; variables?: unknown; callStack?: unknown; console?: unknown };
+  return (
+    typeof state.state === "string" &&
+    ["Idle", "Starting", "Running", "Paused", "Stopping", "Stopped", "Terminated"].includes(state.state) &&
+    Array.isArray(state.breakpoints) &&
+    Array.isArray(state.watches) &&
+    Array.isArray(state.variables) &&
+    Array.isArray(state.callStack) &&
+    Array.isArray(state.console)
+  );
+}
+
+function isDebugEvent(value: unknown): value is DebugEvent {
+  if (!value || typeof value !== "object") return false;
+  const event = value as { type?: unknown; state?: unknown; error?: unknown; entry?: unknown };
+  if (event.type === "state") return isDebugState(event.state);
+  if (event.type === "console") return isDebugState(event.state) && typeof event.entry === "object";
+  if (event.type === "error") {
+    const error = event.error as { code?: unknown; message?: unknown; recoverable?: unknown } | undefined;
+    return (
+      isDebugState(event.state) &&
+      Boolean(error) &&
+      typeof error?.code === "string" &&
+      typeof error.message === "string" &&
+      typeof error.recoverable === "boolean"
+    );
+  }
+  return false;
+}
+
 const leviApi: LeviApiWithWorkspaceTree = {
   ollama: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.ollamaGetStatus)
@@ -283,6 +336,29 @@ const leviApi: LeviApiWithWorkspaceTree = {
       };
       ipcRenderer.on(IPC_CHANNELS.executionEvent, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.executionEvent, handler);
+    }
+  },
+  debug: {
+    start: (request: DebugStartRequest) => ipcRenderer.invoke(IPC_CHANNELS.debugStart, request),
+    stop: () => ipcRenderer.invoke(IPC_CHANNELS.debugStop),
+    restart: () => ipcRenderer.invoke(IPC_CHANNELS.debugRestart),
+    pause: () => ipcRenderer.invoke(IPC_CHANNELS.debugPause),
+    continue: () => ipcRenderer.invoke(IPC_CHANNELS.debugContinue),
+    stepOver: () => ipcRenderer.invoke(IPC_CHANNELS.debugStepOver),
+    stepInto: () => ipcRenderer.invoke(IPC_CHANNELS.debugStepInto),
+    stepOut: () => ipcRenderer.invoke(IPC_CHANNELS.debugStepOut),
+    setBreakpoint: (request: DebugSetBreakpointRequest) => ipcRenderer.invoke(IPC_CHANNELS.debugSetBreakpoint, request),
+    removeBreakpoint: (request: DebugRemoveBreakpointRequest) => ipcRenderer.invoke(IPC_CHANNELS.debugRemoveBreakpoint, request),
+    getBreakpoints: () => ipcRenderer.invoke(IPC_CHANNELS.debugGetBreakpoints),
+    getState: () => ipcRenderer.invoke(IPC_CHANNELS.debugGetState),
+    addWatch: (expression: string) => ipcRenderer.invoke(IPC_CHANNELS.debugAddWatch, expression),
+    removeWatch: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.debugRemoveWatch, id),
+    onEvent: (listener: (event: DebugEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+        if (isDebugEvent(payload)) listener(payload);
+      };
+      ipcRenderer.on(IPC_CHANNELS.debugEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.debugEvent, handler);
     }
   },
   terminal: {
