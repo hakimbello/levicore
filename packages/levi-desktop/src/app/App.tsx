@@ -54,6 +54,8 @@ const idleDebugState: DebugState = {
   exceptionBreakpoints: DEFAULT_EXCEPTION_BREAKPOINTS.map((item) => ({ ...item })),
   inlineValues: [],
   evaluationCache: [],
+  sessions: [],
+  compoundConfigurations: [],
   adapters: [],
   adapterRecommendations: []
 };
@@ -421,6 +423,8 @@ export function App() {
             onRevealAdapter={revealDebugAdapter}
             onDismissAdapterRecommendation={dismissDebugAdapterRecommendation}
             onCancelAdapterInstall={cancelDebugAdapterInstall}
+            onSelectSession={selectDebugSession}
+            onStopAll={stopAllDebugSessions}
           />
         </LazySurface>
       );
@@ -558,6 +562,14 @@ export function App() {
 
   async function cancelDebugAdapterInstall() {
     await window.levi.debug.cancelAdapterInstall();
+  }
+
+  async function selectDebugSession(sessionId: string) {
+    await applyDebugState(window.levi.debug.selectSession(sessionId));
+  }
+
+  async function stopAllDebugSessions() {
+    await applyDebugState(window.levi.debug.stopAll());
   }
 
   async function editCodeEditorBreakpoint(_line: number, request: DebugSetBreakpointRequest): Promise<void> {

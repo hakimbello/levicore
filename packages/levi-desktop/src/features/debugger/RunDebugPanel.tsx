@@ -30,6 +30,8 @@ type RunDebugPanelProps = {
   onRevealAdapter: (adapterId: string) => Promise<void>;
   onDismissAdapterRecommendation: (adapterId: string) => Promise<void>;
   onCancelAdapterInstall: () => Promise<void>;
+  onSelectSession: (sessionId: string) => Promise<void>;
+  onStopAll: () => Promise<void>;
 };
 
 function defaultLaunchConfiguration(): DebugLaunchConfiguration {
@@ -69,7 +71,9 @@ export function RunDebugPanel({
   onUninstallAdapter,
   onRevealAdapter,
   onDismissAdapterRecommendation,
-  onCancelAdapterInstall
+  onCancelAdapterInstall,
+  onSelectSession,
+  onStopAll
 }: RunDebugPanelProps) {
   const [configuration, setConfiguration] = useState<DebugLaunchConfiguration>(
     state.lastLaunchConfiguration ?? defaultLaunchConfiguration()
@@ -294,6 +298,32 @@ export function RunDebugPanel({
         </div>
         <span className={`levi-debug-badge levi-debug-state-${state.state.toLowerCase()}`}>{state.state}</span>
       </header>
+
+      {state.sessions.length > 0 ? (
+        <section className="levi-debug-section" aria-label="Debug sessions">
+          <div className="levi-debug-section-header">
+            <h2>Sessions</h2>
+            <button type="button" className="levi-button levi-button-secondary" onClick={() => void onStopAll()}>
+              Stop All
+            </button>
+          </div>
+          <div className="levi-debug-list">
+            {state.sessions.map((session) => (
+              <button
+                key={session.id}
+                type="button"
+                className={`levi-debug-row ${state.activeSessionId === session.id ? "is-active" : ""}`}
+                onClick={() => void onSelectSession(session.id)}
+              >
+                <strong>{session.name}</strong>
+                <span>
+                  {session.state} · {session.adapterId}
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {state.exceptionInfo ? (
         <section className="levi-debug-exception-panel" aria-label="Exception details">
