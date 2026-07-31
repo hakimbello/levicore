@@ -5,3 +5,5 @@ export * from "./DebugService";
 export * from "./DebugSession";
 export * from "./VariableStore";
 export * from "./WatchStore";
+export * from "./EvaluationCache";
+export * from "./variableLimits";

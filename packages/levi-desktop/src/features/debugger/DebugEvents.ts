@@ -91,8 +91,13 @@ export type DebugVariable = {
   type?: string;
   variablesReference?: number;
   evaluateName?: string;
+  namedVariables?: number;
+  indexedVariables?: number;
+  memoryReference?: string;
   children?: DebugVariable[];
   expanded?: boolean;
+  truncated?: boolean;
+  hasMoreChildren?: boolean;
 };
 
 export type DebugScope = {
@@ -140,6 +145,67 @@ export type DebugLoadedSource = {
   relativePath?: string;
 };
 
+export type DebugExceptionBreakpointFilter = "all" | "uncaught" | "userUnhandled";
+
+export type DebugExceptionBreakpoint = {
+  filter: DebugExceptionBreakpointFilter;
+  enabled: boolean;
+  label: string;
+};
+
+export type DebugExceptionInfo = {
+  type?: string;
+  message?: string;
+  description?: string;
+  stackTrace?: string;
+  module?: string;
+  threadId?: number;
+  relativePath?: string;
+  line?: number;
+};
+
+export type DebugInlineValue = {
+  name: string;
+  value: string;
+};
+
+export type DebugEvaluateResult = {
+  expression: string;
+  result: string;
+  type?: string;
+  variablesReference?: number;
+  namedVariables?: number;
+  indexedVariables?: number;
+  memoryReference?: string;
+  error?: string;
+  cached?: boolean;
+};
+
+export type DebugEvaluationCacheEntry = {
+  key: string;
+  expression: string;
+  context: "repl" | "watch" | "hover";
+  frameId?: number;
+  result: DebugEvaluateResult;
+  timestamp: string;
+};
+
+export type DebugCompletionRequest = {
+  text: string;
+  column: number;
+  frameId?: number;
+};
+
+export type DebugCompletionItem = {
+  label: string;
+  detail?: string;
+  insertText?: string;
+};
+
+export type DebugSetExceptionBreakpointsRequest = {
+  breakpoints: DebugExceptionBreakpoint[];
+};
+
 export type DebugSessionSummary = {
   id: string;
   name: string;
@@ -160,6 +226,11 @@ export type DebugState = {
   activeStackFrame?: DebugStackFrame;
   loadedSources: DebugLoadedSource[];
   console: DebugConsoleEntry[];
+  exceptionBreakpoints: DebugExceptionBreakpoint[];
+  exceptionInfo?: DebugExceptionInfo;
+  inlineValues: DebugInlineValue[];
+  lastEvaluation?: DebugEvaluateResult;
+  evaluationCache: DebugEvaluationCacheEntry[];
   lastLaunchConfiguration?: DebugLaunchConfiguration;
   error?: DebugError;
 };
@@ -167,6 +238,7 @@ export type DebugState = {
 export type DebugPersistenceState = {
   breakpoints: DebugBreakpoint[];
   watches: DebugWatchExpression[];
+  exceptionBreakpoints?: DebugExceptionBreakpoint[];
   lastLaunchConfiguration?: DebugLaunchConfiguration;
   selectedLaunchConfigurationName?: string;
 };
@@ -202,10 +274,21 @@ export type DebugEvent =
       state: DebugState;
     }
   | {
+      type: "evaluation";
+      result: DebugEvaluateResult;
+      state: DebugState;
+    }
+  | {
       type: "error";
       error: DebugError;
       state: DebugState;
     };
+
+export const DEFAULT_EXCEPTION_BREAKPOINTS: DebugExceptionBreakpoint[] = [
+  { filter: "all", enabled: false, label: "All Exceptions" },
+  { filter: "uncaught", enabled: false, label: "Uncaught Exceptions" },
+  { filter: "userUnhandled", enabled: false, label: "User-Unhandled Exceptions" }
+];
 
 export type DapProtocolMessage = {
   seq: number;

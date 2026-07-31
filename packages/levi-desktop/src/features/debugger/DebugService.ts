@@ -1,14 +1,27 @@
 import { BreakpointManager } from "./BreakpointManager";
 import { CallStackStore } from "./CallStackStore";
 import { DebugSession, type DebugTransport } from "./DebugSession";
+import { EvaluationCache } from "./EvaluationCache";
 import { VariableStore } from "./VariableStore";
 import { WatchStore } from "./WatchStore";
 import { randomId } from "./ids";
+import {
+  formatCollectionPreview,
+  MAX_INLINE_VALUES,
+  MAX_VARIABLE_CHILDREN,
+  MAX_VARIABLE_DEPTH,
+  truncateValue
+} from "./variableLimits";
 import type {
   DapProtocolMessage,
+  DebugCompletionItem,
   DebugConsoleEntry,
   DebugError,
   DebugEvent,
+  DebugExceptionBreakpoint,
+  DebugExceptionInfo,
+  DebugInlineValue,
+  DebugEvaluateResult,
   DebugLaunchConfigurationEntry,
   DebugLoadedSource,
   DebugLaunchConfiguration,
@@ -19,6 +32,7 @@ import type {
   DebugState,
   DebugVariable
 } from "./DebugEvents";
+import { DEFAULT_EXCEPTION_BREAKPOINTS } from "./DebugEvents";
 
 export type DebugAdapterHandle = {
   session: DebugSession;
@@ -48,6 +62,12 @@ export class DebugService {
   private error: DebugError | undefined;
   private launchConfigurations: DebugLaunchConfigurationEntry[] = [];
   private loadedSources: DebugLoadedSource[] = [];
+  private exceptionBreakpoints: DebugExceptionBreakpoint[] = DEFAULT_EXCEPTION_BREAKPOINTS.map((item) => ({ ...item }));
+  private exceptionInfo: DebugExceptionInfo | undefined;
+  private inlineValues: DebugInlineValue[] = [];
+  private lastEvaluation: DebugEvaluateResult | undefined;
+  private readonly evaluationCache = new EvaluationCache();
+  private evaluationGeneration = 0;
   private readonly consoleEntries: DebugConsoleEntry[] = [];
   private readonly listeners: Array<(event: DebugEvent) => void> = [];
 
@@ -56,6 +76,8 @@ export class DebugService {
   hydrate(persistence: DebugPersistenceState): void {
     this.breakpoints.replaceAll(persistence.breakpoints);
     this.watches.replaceAll(persistence.watches);
+    this.exceptionBreakpoints =
+      persistence.exceptionBreakpoints?.map((item) => ({ ...item })) ?? DEFAULT_EXCEPTION_BREAKPOINTS.map((item) => ({ ...item }));
     this.lastLaunchConfiguration = persistence.lastLaunchConfiguration;
     this.selectedLaunchConfigurationName = persistence.selectedLaunchConfigurationName ?? persistence.lastLaunchConfiguration?.name;
     this.emitState();
@@ -93,6 +115,11 @@ export class DebugService {
       activeStackFrame: this.callStack.getActiveFrame(),
       loadedSources: [...this.loadedSources],
       console: [...this.consoleEntries],
+      exceptionBreakpoints: this.exceptionBreakpoints.map((item) => ({ ...item })),
+      exceptionInfo: this.exceptionInfo ? { ...this.exceptionInfo } : undefined,
+      inlineValues: [...this.inlineValues],
+      lastEvaluation: this.lastEvaluation ? { ...this.lastEvaluation } : undefined,
+      evaluationCache: this.evaluationCache.list(),
       lastLaunchConfiguration: this.lastLaunchConfiguration,
       error: this.error
     };
@@ -156,9 +183,11 @@ export class DebugService {
         pathFormat: "path",
         linesStartAt1: true,
         columnsStartAt1: true,
-        supportsVariableType: true
+        supportsVariableType: true,
+        supportsVariablePaging: true
       });
       await this.syncBreakpoints();
+      await this.syncExceptionBreakpoints();
       await session.request(effectiveConfiguration.request, this.launchArguments(effectiveConfiguration), 15000);
       await session.request("configurationDone", {}, 10000).catch(() => undefined);
       this.setState("Running");
@@ -192,6 +221,10 @@ export class DebugService {
     this.variables.clear();
     this.callStack.clear();
     this.watches.clearValues();
+    this.exceptionInfo = undefined;
+    this.inlineValues = [];
+    this.lastEvaluation = undefined;
+    this.evaluationCache.clear();
     this.setState("Stopped");
     return this.snapshot();
   }
@@ -227,7 +260,11 @@ export class DebugService {
         recoverable: true
       });
     });
-    if (command === "continue") this.setState("Running");
+    if (command === "continue") {
+      this.exceptionInfo = undefined;
+      this.inlineValues = [];
+      this.setState("Running");
+    }
     if (command !== "pause") {
       this.variables.clear();
       this.callStack.replaceThreads(this.callStack.list().map((thread) => ({ ...thread, stopped: false, frames: [] })));
@@ -290,15 +327,19 @@ export class DebugService {
     return this.snapshot();
   }
 
-  async loadVariables(variablesReference: number): Promise<DebugState> {
+  async loadVariables(variablesReference: number, depth = 0): Promise<DebugState> {
     if (!this.session) return this.snapshot();
+    if (depth >= MAX_VARIABLE_DEPTH) {
+      this.emitState();
+      return this.snapshot();
+    }
     const existingVariable = this.variables.findVariable(variablesReference);
     if (existingVariable?.expanded) {
       this.variables.collapseVariables(variablesReference);
       this.emitState();
       return this.snapshot();
     }
-    const variables = await this.requestVariables(variablesReference);
+    const variables = await this.requestVariables(variablesReference, depth + 1);
     if (this.variables.scopeByReference(variablesReference)) {
       this.variables.replaceVariables(variablesReference, variables);
     } else {
@@ -308,24 +349,123 @@ export class DebugService {
     return this.snapshot();
   }
 
-  async evaluateExpression(expression: string, context: "repl" | "watch" | "hover" = "repl", frameId?: number): Promise<DebugState> {
+  async evaluateExpression(
+    expression: string,
+    context: "repl" | "watch" | "hover" = "repl",
+    frameId?: number
+  ): Promise<DebugState> {
+    const generation = ++this.evaluationGeneration;
+    const activeFrameId = frameId ?? this.callStack.getActiveFrame()?.id;
+    const cacheKey = this.evaluationCache.makeKey(expression, context, activeFrameId);
+    const cached = this.evaluationCache.get(cacheKey);
+    if (cached) {
+      this.lastEvaluation = { ...cached, cached: true };
+      if (context === "repl") {
+        this.addConsole("console", `${expression}\n${cached.result}`);
+      }
+      this.emit({ type: "evaluation", result: this.lastEvaluation, state: this.snapshot() });
+      this.emitState();
+      return this.snapshot();
+    }
+
     if (!this.session) {
       this.setError({ code: "IPC_FAILED", message: "No active debug session.", recoverable: true });
       return this.snapshot();
     }
+
     try {
       const body = await this.session.request("evaluate", {
         expression,
         context,
-        frameId: frameId ?? this.callStack.getActiveFrame()?.id
+        frameId: activeFrameId
       });
-      const result = (body as { result?: unknown; type?: unknown } | undefined)?.result;
-      this.addConsole("console", `${expression}\n${typeof result === "string" ? result : ""}`);
+      if (generation !== this.evaluationGeneration) {
+        return this.snapshot();
+      }
+      const payload = body as {
+        result?: unknown;
+        type?: unknown;
+        variablesReference?: unknown;
+        namedVariables?: unknown;
+        indexedVariables?: unknown;
+        memoryReference?: unknown;
+      } | undefined;
+      const resultText = typeof payload?.result === "string" ? payload.result : "";
+      const type = typeof payload?.type === "string" ? payload.type : undefined;
+      const variablesReference = typeof payload?.variablesReference === "number" ? payload.variablesReference : undefined;
+      const namedVariables = typeof payload?.namedVariables === "number" ? payload.namedVariables : undefined;
+      const indexedVariables = typeof payload?.indexedVariables === "number" ? payload.indexedVariables : undefined;
+      const memoryReference = typeof payload?.memoryReference === "string" ? payload.memoryReference : undefined;
+      const formattedResult = formatCollectionPreview(type, truncateValue(resultText), namedVariables, indexedVariables);
+      const evaluation: DebugEvaluateResult = {
+        expression,
+        result: formattedResult,
+        type,
+        variablesReference,
+        namedVariables,
+        indexedVariables,
+        memoryReference
+      };
+      this.lastEvaluation = evaluation;
+      this.evaluationCache.set(cacheKey, expression, context, activeFrameId, evaluation);
+      if (context === "repl") {
+        this.addConsole("console", `${expression}\n${formattedResult}${type ? ` (${type})` : ""}`);
+      }
+      this.emit({ type: "evaluation", result: evaluation, state: this.snapshot() });
     } catch (error) {
-      this.addConsole("error", error instanceof Error ? error.message : "Evaluation failed.");
+      if (generation !== this.evaluationGeneration) {
+        return this.snapshot();
+      }
+      const message = error instanceof Error ? error.message : "Evaluation failed.";
+      this.lastEvaluation = { expression, result: "", error: message };
+      if (context === "repl") {
+        this.addConsole("error", message);
+      }
+      this.emit({ type: "evaluation", result: this.lastEvaluation, state: this.snapshot() });
     }
     this.emitState();
     return this.snapshot();
+  }
+
+  async setExceptionBreakpoints(breakpoints: DebugExceptionBreakpoint[]): Promise<DebugState> {
+    this.exceptionBreakpoints = breakpoints.map((item) => ({ ...item }));
+    await this.persist();
+    await this.syncExceptionBreakpoints();
+    this.emitState();
+    return this.snapshot();
+  }
+
+  async refreshLoadedSources(): Promise<DebugState> {
+    await this.refreshLoadedSourcesInternal();
+    this.emitState();
+    return this.snapshot();
+  }
+
+  async getCompletions(text: string, column: number, frameId?: number): Promise<DebugCompletionItem[]> {
+    if (!this.session) return [];
+    try {
+      const body = await this.session.request("completions", {
+        frameId: frameId ?? this.callStack.getActiveFrame()?.id,
+        text,
+        column
+      }, 3000);
+      const targets = ((body as { targets?: unknown } | undefined)?.targets ?? []) as Array<{
+        label?: unknown;
+        detail?: unknown;
+        text?: unknown;
+      }>;
+      return targets.slice(0, 50).map((target) => ({
+        label: typeof target.label === "string" ? target.label : "",
+        detail: typeof target.detail === "string" ? target.detail : undefined,
+        insertText: typeof target.text === "string" ? target.text : undefined
+      })).filter((item) => item.label.length > 0);
+    } catch {
+      return [];
+    }
+  }
+
+  cancelEvaluations(): void {
+    this.evaluationGeneration += 1;
   }
 
   clearConsole(): DebugState {
@@ -353,6 +493,10 @@ export class DebugService {
     this.callStack.clear();
     this.consoleEntries.length = 0;
     this.loadedSources = [];
+    this.exceptionInfo = undefined;
+    this.inlineValues = [];
+    this.lastEvaluation = undefined;
+    this.evaluationCache.clear();
     this.state = "Idle";
     this.error = undefined;
     this.emitState();
@@ -361,14 +505,28 @@ export class DebugService {
   private handleAdapterEvent(message: DapProtocolMessage): void {
     if (message.event === "initialized") {
       void this.syncBreakpoints();
-      void this.refreshLoadedSources();
+      void this.refreshLoadedSourcesInternal();
     } else if (message.event === "stopped") {
       this.setState("Paused");
-      const body = message.body as { threadId?: unknown; reason?: unknown } | undefined;
+      const body = message.body as {
+        threadId?: unknown;
+        reason?: unknown;
+        text?: unknown;
+        description?: unknown;
+        allThreadsStopped?: unknown;
+      } | undefined;
       const threadId = typeof body?.threadId === "number" ? body.threadId : 1;
+      const reason = typeof body?.reason === "string" ? body.reason : undefined;
+      if (reason === "exception") {
+        this.exceptionInfo = this.parseExceptionInfo(body ?? {}, threadId);
+      } else {
+        this.exceptionInfo = undefined;
+      }
       void this.refreshStoppedState(threadId);
     } else if (message.event === "continued") {
       this.variables.clear();
+      this.exceptionInfo = undefined;
+      this.inlineValues = [];
       this.setState("Running");
     } else if (message.event === "terminated" || message.event === "exited") {
       this.variables.clear();
@@ -392,7 +550,7 @@ export class DebugService {
       });
       this.emitState();
     } else if (message.event === "loadedSource") {
-      void this.refreshLoadedSources();
+      void this.refreshLoadedSourcesInternal().then(() => this.emitState());
     }
   }
 
@@ -439,6 +597,7 @@ export class DebugService {
     if (activeFrame) {
       await this.refreshScopes(activeFrame.id);
       await this.evaluateWatches(activeFrame.id);
+      this.refreshInlineValues();
       this.emit({ type: "navigation", frame: activeFrame, state: this.snapshot() });
     }
     this.emitState();
@@ -494,29 +653,90 @@ export class DebugService {
         name: typeof scope.name === "string" ? scope.name : "Scope",
         variablesReference,
         expensive: scope.expensive === true,
-        variables: variablesReference > 0 && scope.expensive !== true ? await this.requestVariables(variablesReference) : []
+        variables: variablesReference > 0 && scope.expensive !== true ? await this.requestVariables(variablesReference, 1) : []
       });
     }
     this.variables.replaceScopes(hydratedScopes);
   }
 
-  private async requestVariables(variablesReference: number): Promise<DebugVariable[]> {
-    if (!this.session || variablesReference <= 0) return [];
-    const body = await this.session.request("variables", { variablesReference }, 5000).catch(() => null);
+  private async requestVariables(variablesReference: number, depth = 1): Promise<DebugVariable[]> {
+    if (!this.session || variablesReference <= 0 || depth > MAX_VARIABLE_DEPTH) return [];
+    const body = await this.session.request("variables", { variablesReference, count: MAX_VARIABLE_CHILDREN }, 5000).catch(() => null);
     const variables = ((body as { variables?: unknown } | null)?.variables ?? []) as Array<{
       name?: unknown;
       value?: unknown;
       type?: unknown;
       variablesReference?: unknown;
       evaluateName?: unknown;
+      namedVariables?: unknown;
+      indexedVariables?: unknown;
+      memoryReference?: unknown;
     }>;
-    return variables.map((variable) => ({
-      name: typeof variable.name === "string" ? variable.name : "",
-      value: typeof variable.value === "string" ? variable.value : "",
-      type: typeof variable.type === "string" ? variable.type : undefined,
-      variablesReference: typeof variable.variablesReference === "number" ? variable.variablesReference : undefined,
-      evaluateName: typeof variable.evaluateName === "string" ? variable.evaluateName : undefined
-    }));
+    const hasMore = variables.length >= MAX_VARIABLE_CHILDREN;
+    return variables.slice(0, MAX_VARIABLE_CHILDREN).map((variable) => {
+      const type = typeof variable.type === "string" ? variable.type : undefined;
+      const rawValue = typeof variable.value === "string" ? variable.value : "";
+      const namedVariables = typeof variable.namedVariables === "number" ? variable.namedVariables : undefined;
+      const indexedVariables = typeof variable.indexedVariables === "number" ? variable.indexedVariables : undefined;
+      const truncated = rawValue.length > MAX_VARIABLE_DEPTH * 512;
+      const value = formatCollectionPreview(type, truncateValue(rawValue), namedVariables, indexedVariables);
+      return {
+        name: typeof variable.name === "string" ? variable.name : "",
+        value,
+        type,
+        variablesReference: typeof variable.variablesReference === "number" ? variable.variablesReference : undefined,
+        evaluateName: typeof variable.evaluateName === "string" ? variable.evaluateName : undefined,
+        namedVariables,
+        indexedVariables,
+        memoryReference: typeof variable.memoryReference === "string" ? variable.memoryReference : undefined,
+        truncated,
+        hasMoreChildren: hasMore
+      };
+    });
+  }
+
+  private refreshInlineValues(): void {
+    const values: DebugInlineValue[] = [];
+    const seen = new Set<string>();
+    for (const scope of this.variables.list()) {
+      for (const variable of flattenVariables(scope.variables)) {
+        if (seen.has(variable.name) || values.length >= MAX_INLINE_VALUES) continue;
+        seen.add(variable.name);
+        values.push({ name: variable.name, value: variable.value });
+      }
+    }
+    this.inlineValues = values;
+  }
+
+  private parseExceptionInfo(body: Record<string, unknown>, threadId: number): DebugExceptionInfo {
+    const description = typeof body.description === "string" ? body.description : undefined;
+    const text = typeof body.text === "string" ? body.text : undefined;
+    const activeFrame = this.callStack.getActiveFrame();
+    return {
+      type: description ?? text?.split(":")[0]?.trim(),
+      message: text ?? description,
+      description,
+      stackTrace: text,
+      threadId,
+      relativePath: activeFrame?.relativePath,
+      line: activeFrame?.line,
+      module: activeFrame?.sourceName
+    };
+  }
+
+  private async syncExceptionBreakpoints(): Promise<void> {
+    if (!this.session) return;
+    const enabled = this.exceptionBreakpoints.filter((item) => item.enabled);
+    if (enabled.length === 0) return;
+    await this.session
+      .request("setExceptionBreakpoints", {
+        filters: enabled.map((item) => item.filter),
+        exceptionOptions: enabled.map((item) => ({
+          path: [{ names: ["*"] }],
+          breakMode: "always" as const
+        }))
+      })
+      .catch(() => undefined);
   }
 
   private async evaluateWatches(frameId = this.callStack.getActiveFrame()?.id): Promise<void> {
@@ -536,7 +756,7 @@ export class DebugService {
     }
   }
 
-  private async refreshLoadedSources(): Promise<void> {
+  private async refreshLoadedSourcesInternal(): Promise<void> {
     if (!this.session) return;
     const body = await this.session.request("loadedSources", {}, 5000).catch(() => null);
     const sources = ((body as { sources?: unknown } | null)?.sources ?? []) as Array<{ name?: unknown; path?: unknown }>;
@@ -588,6 +808,7 @@ export class DebugService {
     await this.options.onDidChangePersistence?.({
       breakpoints: this.breakpoints.list(),
       watches: this.watches.list(),
+      exceptionBreakpoints: this.exceptionBreakpoints.map((item) => ({ ...item })),
       lastLaunchConfiguration: this.lastLaunchConfiguration,
       selectedLaunchConfigurationName: this.selectedLaunchConfigurationName
     });
@@ -602,4 +823,15 @@ export class DebugService {
       listener(event);
     }
   }
+}
+
+function flattenVariables(variables: DebugVariable[]): DebugVariable[] {
+  const result: DebugVariable[] = [];
+  for (const variable of variables) {
+    result.push(variable);
+    if (variable.children?.length) {
+      result.push(...flattenVariables(variable.children));
+    }
+  }
+  return result;
 }
