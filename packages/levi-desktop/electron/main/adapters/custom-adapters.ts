@@ -1,6 +1,6 @@
 import path from "node:path";
-import type { DebugAdapterRequestType, TrustedCustomAdapterDefinition } from "./types";
-import { normalizeAdapterId } from "./registry";
+import type { DebugAdapterRequestType, TrustedCustomAdapterDefinition } from "../../../src/features/debugger/adapters/types";
+import { normalizeAdapterId } from "../../../src/features/debugger/adapters/registry";
 
 const ADAPTER_ID_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
 const MAX_ARGS = 64;

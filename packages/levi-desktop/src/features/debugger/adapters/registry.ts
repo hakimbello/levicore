@@ -74,7 +74,7 @@ export const BUILTIN_ADAPTER_REGISTRY: DebugAdapterDefinition[] = [
     id: "chrome",
     displayName: "Chrome / Edge",
     languages: ["javascript", "typescript"],
-    requestTypes: ["attach"],
+    requestTypes: ["launch", "attach"],
     capabilities: { conditionalBreakpoints: true },
     discoveryRules: [
       { kind: "workspace-relative", relativePaths: [JS_DEBUG_ENTRY, JS_DEBUG_LEGACY_ENTRY] },

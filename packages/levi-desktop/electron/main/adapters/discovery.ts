@@ -5,8 +5,8 @@ import type {
   DebugAdapterDiscoveryResult,
   DebugAdapterDiscoverySource,
   TrustedCustomAdapterDefinition
-} from "./types";
-import { JS_DEBUG_ENTRY, JS_DEBUG_LEGACY_ENTRY } from "./registry";
+} from "../../../src/features/debugger/adapters/types";
+import { JS_DEBUG_ENTRY, JS_DEBUG_LEGACY_ENTRY } from "../../../src/features/debugger/adapters/registry";
 
 function envAdapterPath(context: DebugAdapterBuildContext, suffix: string): string | undefined {
   const key = `LEVI_DEBUG_ADAPTER_${suffix}`;
@@ -26,13 +26,6 @@ function envAdapterArgs(context: DebugAdapterBuildContext, suffix: string): stri
   } catch {
     return [];
   }
-}
-
-async function firstExisting(context: DebugAdapterBuildContext, candidates: string[]): Promise<string | undefined> {
-  for (const candidate of candidates) {
-    if (await context.fileExists(candidate)) return candidate;
-  }
-  return undefined;
 }
 
 async function discoverFromWorkspace(
@@ -76,12 +69,18 @@ async function discoverFromLeviManaged(
     return { executablePath: node, entryPath: absolute, source: "levi-managed" };
   }
   if (definition.launchCommand.launcher === "python") {
-    return { executablePath: absolute, source: "levi-managed" };
+    const managedPython = path.resolve(context.leviAdapterRoot, "python/current/python.exe");
+    if (await context.fileExists(managedPython)) {
+      return { executablePath: managedPython, entryPath: absolute, source: "levi-managed" };
+    }
+    const systemPython = await findPathExecutable(context, ["python", "python3", "python.exe", "python3.exe"]);
+    if (!systemPython) return null;
+    return { executablePath: systemPython, entryPath: absolute, source: "levi-managed" };
   }
   return { executablePath: absolute, source: "levi-managed" };
 }
 
-async function discoverJsDebugEntry(context: DebugAdapterBuildContext): Promise<string | undefined> {
+export async function discoverJsDebugEntry(context: DebugAdapterBuildContext): Promise<string | undefined> {
   const workspaceHit = await discoverFromWorkspace(context, [JS_DEBUG_ENTRY, JS_DEBUG_LEGACY_ENTRY]);
   if (workspaceHit?.entryPath) return workspaceHit.entryPath;
   const managedHit = await discoverFromLeviManaged(context, "node/current/entry.js", {
@@ -89,6 +88,10 @@ async function discoverJsDebugEntry(context: DebugAdapterBuildContext): Promise<
     launchCommand: { launcher: "node" }
   } as DebugAdapterDefinition);
   return managedHit?.entryPath;
+}
+
+export async function discoverNodeRuntime(context: DebugAdapterBuildContext): Promise<string | undefined> {
+  return findPathExecutable(context, ["node", "node.exe"]);
 }
 
 export async function discoverAdapter(
@@ -146,13 +149,35 @@ export async function discoverAdapter(
   }
 
   for (const rule of definition.discoveryRules) {
+    if (rule.kind === "environment") {
+      const suffix = rule.variableSuffix.toUpperCase();
+      const envEntry = envAdapterPath(context, suffix);
+      if (envEntry && (await context.fileExists(envEntry))) {
+        const node = await findPathExecutable(context, ["node", "node.exe"]);
+        if (node && envEntry.endsWith(".js")) {
+          return {
+            adapterId: definition.id,
+            state: "installed",
+            executablePath: node,
+            entryPath: envEntry,
+            source: "environment",
+            launcher: "node"
+          };
+        }
+        return {
+          adapterId: definition.id,
+          state: "installed",
+          executablePath: envEntry,
+          source: "environment",
+          launcher: definition.launchCommand.launcher
+        };
+      }
+    }
     if (rule.kind === "workspace-relative") {
       const hit = await discoverFromWorkspace(context, rule.relativePaths);
       if (hit) {
         const launcher =
-          hit.entryPath && definition.launchCommand.launcher === "node"
-            ? "node"
-            : definition.launchCommand.launcher;
+          hit.entryPath && definition.launchCommand.launcher === "node" ? "node" : definition.launchCommand.launcher;
         return {
           adapterId: definition.id,
           state: "installed",
@@ -177,21 +202,23 @@ export async function discoverAdapter(
       }
     }
     if (rule.kind === "path-name") {
+      if (definition.id === "node" || definition.id === "chrome") {
+        const entryPath = await discoverJsDebugEntry(context);
+        const node = await discoverNodeRuntime(context);
+        if (entryPath && node) {
+          return {
+            adapterId: definition.id,
+            state: "installed",
+            executablePath: node,
+            entryPath,
+            source: "path",
+            launcher: "node"
+          };
+        }
+        continue;
+      }
       const executable = await findPathExecutable(context, rule.names);
       if (executable) {
-        if (definition.id === "node" || definition.id === "chrome") {
-          const entryPath = await discoverJsDebugEntry(context);
-          if (entryPath) {
-            return {
-              adapterId: definition.id,
-              state: "installed",
-              executablePath: executable,
-              entryPath,
-              source: "path",
-              launcher: "node"
-            };
-          }
-        }
         if (definition.id === "python") {
           return {
             adapterId: definition.id,

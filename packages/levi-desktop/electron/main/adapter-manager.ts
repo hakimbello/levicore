@@ -26,13 +26,14 @@ import {
   type DebugLaunchAdapterDiagnostic,
   type DebugAdapterRecommendation,
   type TrustedCustomAdapterDefinition
-} from "../../src/features/debugger/adapters";
+} from "./adapters";
 import type { DebugLaunchConfiguration } from "../../src/features/debugger/DebugEvents";
 import {
   AdapterInstallCancelledError,
   installAdapterOption,
   uninstallManagedAdapter
 } from "./adapter-installer";
+import { runAdapterDiagnostics } from "./adapter-diagnostics";
 
 const ADAPTER_STATE_FILE = "state.json";
 const WORKSPACE_CUSTOM_ADAPTERS = path.join(".levi", "debug-adapters.json");
@@ -61,6 +62,7 @@ export class AdapterManager {
   private progressListeners: AdapterProgressListener[] = [];
   private lastStatuses: DebugAdapterStatus[] = [];
   private lastRecommendations: DebugAdapterRecommendation[] = [];
+  private lastDiagnostics: Record<string, { passed: boolean; checks: Array<{ name: string; passed: boolean; message?: string }> }> = {};
 
   constructor(
     private readonly getWorkspaceRoot: () => string | null,
@@ -127,6 +129,10 @@ export class AdapterManager {
 
   getRecommendations(): DebugAdapterRecommendation[] {
     return this.lastRecommendations.map((item) => ({ ...item }));
+  }
+
+  getDiagnostics(): Record<string, { passed: boolean; checks: Array<{ name: string; passed: boolean; message?: string }> }> {
+    return { ...this.lastDiagnostics };
   }
 
   async scanAdapters(): Promise<DebugAdapterStatus[]> {
@@ -228,6 +234,20 @@ export class AdapterManager {
     await this.scanAdapters();
     const status = this.getStatuses().find((item) => item.id === adapterId);
     if (!status) throw new Error(`Adapter "${adapterId}" is not registered.`);
+    const definition = getAdapterDefinition(adapterId);
+    if (!definition) return status;
+    const configuration = { type: adapterId, request: "launch" as const, name: "Diagnostic" };
+    const resolved = await this.resolveLaunchAdapter(configuration);
+    const diagnostic = await runAdapterDiagnostics({
+      definition,
+      status,
+      resolved: resolved.command,
+      versionCompatible: status.state !== "incompatible"
+    });
+    this.lastDiagnostics[adapterId] = { passed: diagnostic.passed, checks: diagnostic.checks };
+    if (!diagnostic.passed) {
+      throw new Error(diagnostic.checks.find((item) => !item.passed)?.message ?? "Adapter diagnostic failed.");
+    }
     return status;
   }
 

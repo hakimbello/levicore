@@ -3,17 +3,19 @@ import os from "node:os";
 import path from "node:path";
 import {
   BUILTIN_ADAPTER_REGISTRY,
-  discoverAdapter,
   getAdapterDefinition,
   isVersionCompatible,
   parseVersionOutput,
-  recommendAdapters,
   resolveConfigurationAdapterId,
-  validateCustomAdapterDefinition,
-  validateCustomAdapterFile,
-  containsShellInjection,
   compareVersions
 } from "../src/features/debugger/adapters";
+import {
+  discoverAdapter,
+  recommendAdapters,
+  validateCustomAdapterDefinition,
+  validateCustomAdapterFile,
+  containsShellInjection
+} from "../electron/main/adapters";
 import { sanitizeArchiveEntry, isArchiveSizeAllowed } from "../electron/main/adapter-installer";
 
 describe("debug adapter registry", () => {

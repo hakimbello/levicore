@@ -1,6 +1,6 @@
 import path from "node:path";
-import type { DebugAdapterRecommendation } from "./types";
-import { BUILTIN_ADAPTER_REGISTRY } from "./registry";
+import type { DebugAdapterRecommendation } from "../../../src/features/debugger/adapters/types";
+import { BUILTIN_ADAPTER_REGISTRY } from "../../../src/features/debugger/adapters/registry";
 
 type RecommendationContext = {
   workspaceRoot?: string;
