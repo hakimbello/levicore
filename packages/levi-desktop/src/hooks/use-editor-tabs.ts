@@ -93,7 +93,7 @@ export function useEditorTabs(workspacePath?: string) {
       if (existing) {
         return current.map((tab) => tab.id === id
           ? existing.dirty
-            ? { ...tab, lineStart: file.lineStart, language: file.language }
+            ? { ...tab, lineStart: file.lineStart, columnStart: file.columnStart, language: file.language }
             : { ...tab, ...file, savedContent: file.content, dirty: false }
           : tab);
       }

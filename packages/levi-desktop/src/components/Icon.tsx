@@ -18,7 +18,8 @@ export type IconName =
   | "step-over"
   | "step-into"
   | "step-out"
-  | "layers";
+  | "layers"
+  | "tasks";
 
 type IconProps = {
   name: IconName;
@@ -45,7 +46,8 @@ const paths: Record<IconName, string> = {
   "step-over": "M4 12a8 8 0 0 1 13.7-5.7L20 9M20 4v5h-5M8 17h8",
   "step-into": "M12 4v12M8 12l4 4 4-4M6 20h12",
   "step-out": "M12 20V8M8 12l4-4 4 4M6 4h12",
-  layers: "M12 4l8 4-8 4-8-4 8-4zM4 12l8 4 8-4M4 16l8 4 8-4"
+  layers: "M12 4l8 4-8 4-8-4 8-4zM4 12l8 4 8-4M4 16l8 4 8-4",
+  tasks: "M4 6h16M4 12h10M4 18h7M18 10v8M15 13l3-3 3 3"
 };
 
 export function Icon({ name, className }: IconProps) {

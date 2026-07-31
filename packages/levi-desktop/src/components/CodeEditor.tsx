@@ -10,6 +10,7 @@ type CodeEditorProps = {
   language?: string;
   relativePath?: string;
   lineStart?: number;
+  columnStart?: number;
   readOnly?: boolean;
   breakpoints?: DebugBreakpoint[];
   activeExecutionLine?: number;
@@ -66,6 +67,7 @@ export function CodeEditor({
   language = "typescript",
   relativePath,
   lineStart = 1,
+  columnStart = 1,
   readOnly = true,
   breakpoints = [],
   activeExecutionLine,
@@ -150,7 +152,7 @@ export function CodeEditor({
     monacoRef.current = monaco;
     editor.updateOptions({ readOnly, domReadOnly: readOnly });
     editor.revealLineInCenter(lineStart);
-    editor.setPosition({ lineNumber: lineStart, column: 1 });
+    editor.setPosition({ lineNumber: lineStart, column: columnStart });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => onSave?.());
     editor.onMouseDown((event) => {
       const targetType = event.target.type;
@@ -198,10 +200,11 @@ export function CodeEditor({
     const editor = editorRef.current;
     if (!editor) return;
     const lineNumber = Math.max(1, Math.min(lineStart, editor.getModel()?.getLineCount() ?? lineStart));
+    const column = Math.max(1, columnStart);
     editor.revealLineInCenter(lineNumber);
-    editor.setPosition({ lineNumber, column: 1 });
+    editor.setPosition({ lineNumber, column });
     editor.focus();
-  }, [lineStart]);
+  }, [columnStart, lineStart]);
 
   useEffect(() => {
     const editor = editorRef.current;

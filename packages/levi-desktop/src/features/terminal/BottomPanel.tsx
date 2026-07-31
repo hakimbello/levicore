@@ -4,7 +4,10 @@ import { LazySurface } from "../../components/LazySurface";
 import type { DebugConsoleEntry, DebugEvaluateResult } from "../debugger/DebugEvents";
 import type { SelectedProject } from "../../types/levi-api";
 import { DebugConsolePanel } from "./DebugConsolePanel";
+import { ProblemsPanel } from "../tasks/ProblemsPanel";
+import { OutputPanel } from "../tasks/OutputPanel";
 import { useTerminalLayout } from "./useTerminalLayout";
+import type { TaskOutputEntry, TaskProblem } from "../../types/task-api";
 
 const TerminalSplitView = lazy(async () => {
   const module = await import("./TerminalSplitView");
@@ -17,6 +20,9 @@ type BottomPanelProps = {
   debugLastEvaluation?: DebugEvaluateResult;
   onEvaluateDebug: (expression: string) => Promise<unknown>;
   onClearDebugConsole: () => Promise<void>;
+  problems: TaskProblem[];
+  output: TaskOutputEntry[];
+  onOpenProblem: (problem: TaskProblem) => void;
 };
 
 const MIN_PANEL_HEIGHT = 120;
@@ -27,7 +33,10 @@ export function BottomPanel({
   debugConsole,
   debugLastEvaluation,
   onEvaluateDebug,
-  onClearDebugConsole
+  onClearDebugConsole,
+  problems,
+  output,
+  onOpenProblem
 }: BottomPanelProps) {
   const defaultCwd = selectedProject?.path ?? "LeviCore";
   const {
@@ -256,16 +265,8 @@ export function BottomPanel({
               </LazySurface>
             </>
           ) : null}
-          {layout.panelTab === "problems" ? (
-            <div className="levi-bottom-placeholder-panel">
-              <p className="levi-bottom-placeholder">Problems view is scheduled for a later milestone.</p>
-            </div>
-          ) : null}
-          {layout.panelTab === "output" ? (
-            <div className="levi-bottom-placeholder-panel">
-              <p className="levi-bottom-placeholder">Output channels are scheduled for a later milestone.</p>
-            </div>
-          ) : null}
+          {layout.panelTab === "problems" ? <ProblemsPanel problems={problems} onOpenProblem={onOpenProblem} /> : null}
+          {layout.panelTab === "output" ? <OutputPanel entries={output} /> : null}
           {layout.panelTab === "debug-console" ? (
             <DebugConsolePanel
               consoleEntries={debugConsole}

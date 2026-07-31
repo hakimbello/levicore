@@ -1,6 +1,7 @@
 import { BottomPanel } from "./BottomPanel";
 import type { DebugConsoleEntry, DebugEvaluateResult } from "../debugger/DebugEvents";
 import type { SelectedProject } from "../../types/levi-api";
+import type { TaskOutputEntry, TaskProblem } from "../../types/task-api";
 
 type TerminalPanelProps = {
   selectedProject: SelectedProject | null;
@@ -8,6 +9,9 @@ type TerminalPanelProps = {
   debugLastEvaluation?: DebugEvaluateResult;
   onEvaluateDebug?: (expression: string) => Promise<unknown>;
   onClearDebugConsole?: () => Promise<void>;
+  problems?: TaskProblem[];
+  output?: TaskOutputEntry[];
+  onOpenProblem?: (problem: TaskProblem) => void;
 };
 
 export function TerminalPanel({
@@ -15,7 +19,10 @@ export function TerminalPanel({
   debugConsole = [],
   debugLastEvaluation,
   onEvaluateDebug = async () => undefined,
-  onClearDebugConsole = async () => undefined
+  onClearDebugConsole = async () => undefined,
+  problems = [],
+  output = [],
+  onOpenProblem = () => undefined
 }: TerminalPanelProps) {
   return (
     <BottomPanel
@@ -24,6 +31,9 @@ export function TerminalPanel({
       debugLastEvaluation={debugLastEvaluation}
       onEvaluateDebug={onEvaluateDebug}
       onClearDebugConsole={onClearDebugConsole}
+      problems={problems}
+      output={output}
+      onOpenProblem={onOpenProblem}
     />
   );
 }

@@ -1,6 +1,6 @@
 import { Icon } from "./Icon";
 
-export type ActivityView = "home" | "explorer" | "search" | "debug" | "source-control" | "terminal" | "history" | "rules" | "settings";
+export type ActivityView = "home" | "explorer" | "search" | "debug" | "source-control" | "terminal" | "tasks" | "history" | "rules" | "settings";
 
 type ActivityBarProps = {
   activeView: ActivityView;
@@ -19,6 +19,7 @@ const activityItems: ActivityItem[] = [
   { view: "home", label: "Levi AI", icon: "chat" },
   { view: "search", label: "Search", icon: "search" },
   { view: "debug", label: "Run and Debug", icon: "debug" },
+  { view: "tasks", label: "Tasks", icon: "tasks" },
   { view: "source-control", label: "Source Control", icon: "source-control" },
   { view: "terminal", label: "Terminal", icon: "terminal" },
   { view: "rules", label: "Project Rules", icon: "layers" },

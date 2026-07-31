@@ -8,8 +8,11 @@ import { DebugToolbar } from "../features/debugger/DebugToolbar";
 import { Home } from "../features/home/Home";
 import { SearchPanel } from "../features/search/SearchPanel";
 import { BottomPanel } from "../features/terminal/BottomPanel";
+import { TasksPanel } from "../features/tasks/TasksPanel";
+import { useTasks } from "../features/tasks/useTasks";
 import { type EditorTab, useEditorTabs } from "../hooks/use-editor-tabs";
 import type { EditApplyResult, EditUndoResult, ExecutionPublicTransaction, OllamaStatus, SelectedProject, UpdateStatus, WorkspaceStatus } from "../types/levi-api";
+import type { TaskProblem } from "../types/task-api";
 import type { DebugLaunchConfiguration, DebugSetBreakpointRequest, DebugStackFrame, DebugState, DebugExceptionBreakpoint, DebugAdapterInstallRequest } from "../features/debugger";
 import { DEFAULT_EXCEPTION_BREAKPOINTS } from "../features/debugger";
 import type { WorkspaceReadPathResult } from "../types/workspace-tree-api";
@@ -102,6 +105,7 @@ export function App() {
   const [conflictTabId, setConflictTabId] = useState<string | null>(null);
   const lastOpenedDebugFrameRef = useRef<string | null>(null);
   const tabButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const tasks = useTasks(Boolean(selectedProject));
   const {
     tabs,
     activeTabId,
@@ -360,10 +364,34 @@ export function App() {
     setCanUndoEdit(false);
   }
 
-  async function openSearchMatch(relativePath: string, lineNumber: number) {
+  async function openSearchMatch(relativePath: string, lineNumber: number, columnStart = 1) {
     const file = await window.levi.workspace.readPath({ relativePath });
-    openFile({ sourceId: `WORKSPACE:${file.relativePath}`, relativePath: file.relativePath, content: file.content, language: file.language, lineStart: lineNumber, readOnly: false });
+    openFile({ sourceId: `WORKSPACE:${file.relativePath}`, relativePath: file.relativePath, content: file.content, language: file.language, lineStart: lineNumber, columnStart, readOnly: false });
     setCanUndoEdit(false);
+  }
+
+  async function openTaskProblem(problem: TaskProblem) {
+    if (!problem.relativePath) return;
+    await openSearchMatch(problem.relativePath, problem.line, problem.column);
+  }
+
+  async function revealTaskTerminal(_terminalSessionId?: string) {
+    const layout = await window.levi.terminal.getLayout();
+    await window.levi.terminal.setLayout({
+      ...layout,
+      panelTab: "terminal",
+      panelVisible: true
+    });
+  }
+
+  async function runTask(taskId: string) {
+    await tasks.runTask(taskId);
+    const layout = await window.levi.terminal.getLayout();
+    await window.levi.terminal.setLayout({
+      ...layout,
+      panelTab: "output",
+      panelVisible: true
+    });
   }
 
   function openAppliedEdit(result: EditApplyResult) {
@@ -425,6 +453,31 @@ export function App() {
             onCancelAdapterInstall={cancelDebugAdapterInstall}
             onSelectSession={selectDebugSession}
             onStopAll={stopAllDebugSessions}
+          />
+        </LazySurface>
+      );
+    }
+    if (activeView === "tasks") {
+      return (
+        <LazySurface label="Tasks">
+          <TasksPanel
+            enabled={Boolean(selectedProject)}
+            detected={tasks.list.detected}
+            recent={tasks.list.recent}
+            running={tasks.list.running}
+            failed={tasks.list.failed}
+            pinned={tasks.list.pinned}
+            onRunTask={async (taskId) => {
+              await runTask(taskId);
+            }}
+            onCancelRun={async (runId) => {
+              await tasks.cancelRun(runId);
+            }}
+            onPinTask={tasks.pinTask}
+            onRunAgain={async (entry) => {
+              await tasks.runAgain(entry);
+            }}
+            onRevealTerminal={revealTaskTerminal}
           />
         </LazySurface>
       );
@@ -671,6 +724,7 @@ export function App() {
                     language={activeTab.language}
                     relativePath={activeTab.relativePath}
                     lineStart={activeTab.lineStart}
+                    columnStart={activeTab.columnStart ?? 1}
                     readOnly={!activeTabEditable}
                     breakpoints={debugState.breakpoints.filter((breakpoint) => breakpoint.relativePath === activeTab.relativePath)}
                     activeExecutionLine={debugState.activeStackFrame?.relativePath === activeTab.relativePath ? debugState.activeStackFrame.line : undefined}
@@ -698,6 +752,9 @@ export function App() {
           debugLastEvaluation={debugState.lastEvaluation}
           onEvaluateDebug={evaluateDebugExpression}
           onClearDebugConsole={clearDebugConsole}
+          problems={tasks.problems}
+          output={tasks.output}
+          onOpenProblem={openTaskProblem}
         />
       </main>
     </div>

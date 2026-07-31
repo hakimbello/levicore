@@ -2091,6 +2091,116 @@ textarea:focus-visible,
   font-size: var(--levi-font-size-caption);
 }
 
+.levi-tasks-panel,
+.levi-problems-panel,
+.levi-output-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: var(--levi-space-16);
+  overflow: auto;
+}
+
+.levi-tasks-header h2,
+.levi-tasks-section h3 {
+  margin: 0 0 var(--levi-space-12);
+  color: var(--levi-color-primaryText);
+}
+
+.levi-tasks-section {
+  margin-bottom: var(--levi-space-24);
+}
+
+.levi-tasks-list {
+  display: grid;
+  gap: var(--levi-space-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.levi-tasks-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--levi-space-12);
+  padding: var(--levi-space-12);
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-card);
+  background: var(--levi-color-surface);
+}
+
+.levi-tasks-meta {
+  color: var(--levi-color-mutedText);
+  font-size: var(--levi-font-size-caption);
+}
+
+.levi-tasks-actions {
+  display: flex;
+  gap: var(--levi-space-8);
+}
+
+.levi-problems-list {
+  display: grid;
+  gap: var(--levi-space-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.levi-problems-open {
+  display: grid;
+  gap: var(--levi-space-4);
+  width: 100%;
+  padding: var(--levi-space-12);
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-card);
+  background: var(--levi-color-surface);
+  text-align: left;
+  cursor: pointer;
+}
+
+.levi-problems-error {
+  border-color: color-mix(in srgb, var(--levi-color-danger) 24%, var(--levi-color-border));
+}
+
+.levi-problems-warning {
+  border-color: color-mix(in srgb, var(--levi-color-warning) 24%, var(--levi-color-border));
+}
+
+.levi-problems-location,
+.levi-problems-severity {
+  color: var(--levi-color-mutedText);
+  font-size: var(--levi-font-size-caption);
+}
+
+.levi-output-toolbar {
+  display: flex;
+  gap: var(--levi-space-12);
+  margin-bottom: var(--levi-space-12);
+}
+
+.levi-output-filter,
+.levi-output-toolbar input {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--levi-space-4);
+}
+
+.levi-output-stream {
+  flex: 1;
+  overflow: auto;
+}
+
+.levi-output-entry {
+  margin: 0 0 var(--levi-space-8);
+  white-space: pre-wrap;
+  font-family: var(--levi-font-mono);
+  font-size: var(--levi-font-size-caption);
+}
+
 .levi-lazy-error {
   display: grid;
   gap: var(--levi-space-8);
