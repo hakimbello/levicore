@@ -12,7 +12,10 @@ import type {
   ProjectRulesStreamEvent,
   TerminalCreateRequest,
   TerminalDataEvent,
+  TerminalLayoutState,
+  TerminalRenameRequest,
   TerminalResizeRequest,
+  TerminalSplitRequest,
   UpdateStatusEvent,
   WorkspaceOpenFileRequest
 } from "../../src/types/levi-api";
@@ -126,6 +129,14 @@ const IPC_CHANNELS = {
   terminalWrite: "levi:terminal:write",
   terminalResize: "levi:terminal:resize",
   terminalDispose: "levi:terminal:dispose",
+  terminalKill: "levi:terminal:kill",
+  terminalRename: "levi:terminal:rename",
+  terminalList: "levi:terminal:list",
+  terminalSplit: "levi:terminal:split",
+  terminalRestart: "levi:terminal:restart",
+  terminalGetLayout: "levi:terminal:get-layout",
+  terminalSetLayout: "levi:terminal:set-layout",
+  terminalRevealCwd: "levi:terminal:reveal-cwd",
   terminalData: "levi:terminal:data",
   conversationStart: "levi:conversation:start",
   conversationCancel: "levi:conversation:cancel",
@@ -447,6 +458,14 @@ const leviApi: LeviApiWithWorkspaceTree = {
     write: (id: string, data: string) => ipcRenderer.invoke(IPC_CHANNELS.terminalWrite, id, data),
     resize: (request: TerminalResizeRequest) => ipcRenderer.invoke(IPC_CHANNELS.terminalResize, request),
     dispose: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.terminalDispose, id),
+    kill: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.terminalKill, id),
+    rename: (request: TerminalRenameRequest) => ipcRenderer.invoke(IPC_CHANNELS.terminalRename, request),
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.terminalList),
+    split: (request: TerminalSplitRequest) => ipcRenderer.invoke(IPC_CHANNELS.terminalSplit, request),
+    restart: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.terminalRestart, id),
+    getLayout: () => ipcRenderer.invoke(IPC_CHANNELS.terminalGetLayout),
+    setLayout: (layout: TerminalLayoutState) => ipcRenderer.invoke(IPC_CHANNELS.terminalSetLayout, layout),
+    revealCwd: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.terminalRevealCwd, id),
     onData: (listener: (event: TerminalDataEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
         if (isTerminalDataEvent(payload)) listener(payload);

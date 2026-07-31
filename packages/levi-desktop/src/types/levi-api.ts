@@ -37,17 +37,64 @@ export type SelectedProject = {
 export type TerminalSession = {
   id: string;
   cwd: string;
+  name: string;
+  shellKind: string;
+};
+
+export type TerminalSessionMetadata = {
+  id: string;
+  name: string;
+  cwd: string;
+  shellKind: string;
+  alive: boolean;
+  createdAt: string;
 };
 
 export type TerminalCreateRequest = {
   cols: number;
   rows: number;
+  name?: string;
+  cwd?: string;
 };
 
 export type TerminalResizeRequest = {
   id: string;
   cols: number;
   rows: number;
+};
+
+export type TerminalRenameRequest = {
+  id: string;
+  name: string;
+};
+
+export type TerminalSplitRequest = {
+  sourceId: string;
+  direction: "horizontal" | "vertical";
+  cols: number;
+  rows: number;
+  cwd?: string;
+};
+
+export type TerminalSplitNode =
+  | { type: "pane"; tabId: string }
+  | { type: "split"; direction: "horizontal" | "vertical"; children: [TerminalSplitNode, TerminalSplitNode] };
+
+export type TerminalLayoutTab = {
+  id: string;
+  name: string;
+  cwd: string;
+  sessionId?: string;
+};
+
+export type TerminalLayoutState = {
+  tabs: TerminalLayoutTab[];
+  activeTabId: string | null;
+  panelTab: "terminal" | "problems" | "output" | "debug-console";
+  panelVisible: boolean;
+  panelMaximized: boolean;
+  panelHeightPx: number;
+  splitLayout: TerminalSplitNode | null;
 };
 
 export type TerminalDataEvent = {
@@ -868,6 +915,14 @@ export type LeviApi = {
     write: (id: string, data: string) => Promise<void>;
     resize: (request: TerminalResizeRequest) => Promise<void>;
     dispose: (id: string) => Promise<void>;
+    kill: (id: string) => Promise<TerminalSessionMetadata>;
+    rename: (request: TerminalRenameRequest) => Promise<TerminalSessionMetadata>;
+    list: () => Promise<TerminalSessionMetadata[]>;
+    split: (request: TerminalSplitRequest) => Promise<TerminalSession>;
+    restart: (id: string) => Promise<TerminalSession>;
+    getLayout: () => Promise<TerminalLayoutState>;
+    setLayout: (layout: TerminalLayoutState) => Promise<TerminalLayoutState>;
+    revealCwd: (id: string) => Promise<string>;
     onData: (listener: (event: TerminalDataEvent) => void) => () => void;
   };
   conversation: {
