@@ -1,0 +1,13 @@
+{
+  "trustedCustomAdapters": [],
+  "installationMetadata": {},
+  "discoveryCache": {
+    "python": {
+      "executablePath": "C:\\Python314\\python.exe",
+      "version": "3.14.5",
+      "executableMtimeMs": 1778427754000,
+      "cachedAt": "2026-07-31T14:31:08.181Z"
+    }
+  },
+  "dismissedRecommendations": []
+}

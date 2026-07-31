@@ -377,6 +377,8 @@ function createDefaultApi(): LeviApi {
       start: vi.fn(async (request) => ({
         state: "Stopped" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -398,6 +400,25 @@ function createDefaultApi(): LeviApi {
       stop: vi.fn(async () => ({
         state: "Stopped" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        loadedSources: [],
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
+      })),
+      stopAll: vi.fn(async () => ({
+        state: "Stopped" as const,
+        launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -413,6 +434,8 @@ function createDefaultApi(): LeviApi {
       restart: vi.fn(async () => ({
         state: "Stopped" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -428,6 +451,8 @@ function createDefaultApi(): LeviApi {
       pause: vi.fn(async () => ({
         state: "Paused" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -443,6 +468,8 @@ function createDefaultApi(): LeviApi {
       continue: vi.fn(async () => ({
         state: "Running" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -458,6 +485,8 @@ function createDefaultApi(): LeviApi {
       stepOver: vi.fn(async () => ({
         state: "Paused" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -473,6 +502,8 @@ function createDefaultApi(): LeviApi {
       stepInto: vi.fn(async () => ({
         state: "Paused" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -488,6 +519,8 @@ function createDefaultApi(): LeviApi {
       stepOut: vi.fn(async () => ({
         state: "Paused" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -503,6 +536,8 @@ function createDefaultApi(): LeviApi {
       setBreakpoint: vi.fn(async (request) => ({
         state: "Idle" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: request.toggle
           ? [
               {
@@ -531,6 +566,8 @@ function createDefaultApi(): LeviApi {
       removeBreakpoint: vi.fn(async () => ({
         state: "Idle" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -544,6 +581,23 @@ function createDefaultApi(): LeviApi {
         adapterRecommendations: []
       })),
       getBreakpoints: vi.fn(async () => []),
+      selectSession: vi.fn(async () => ({
+        state: "Running" as const,
+        launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        loadedSources: [],
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
+      })),
       getState: vi.fn(async () => ({
         state: "Idle" as const,
         launchConfigurations: [
@@ -561,6 +615,8 @@ function createDefaultApi(): LeviApi {
             }
           }
         ],
+        compoundConfigurations: [],
+        sessions: [],
         selectedLaunchConfigurationName: "Node Launch",
         breakpoints: [],
         watches: [],
@@ -577,6 +633,8 @@ function createDefaultApi(): LeviApi {
       selectConfiguration: vi.fn(async (name) => ({
         state: "Idle" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         selectedLaunchConfigurationName: name,
         breakpoints: [],
         watches: [],
@@ -593,6 +651,8 @@ function createDefaultApi(): LeviApi {
       createLaunchConfig: vi.fn(async () => ({
         state: "Idle" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -608,6 +668,8 @@ function createDefaultApi(): LeviApi {
       addWatch: vi.fn(async (expression) => ({
         state: "Idle" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [
           {
@@ -631,6 +693,8 @@ function createDefaultApi(): LeviApi {
       updateWatch: vi.fn(async (request) => ({
         state: "Idle" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [
           {
@@ -654,6 +718,8 @@ function createDefaultApi(): LeviApi {
       removeWatch: vi.fn(async () => ({
         state: "Idle" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -669,6 +735,8 @@ function createDefaultApi(): LeviApi {
       loadVariables: vi.fn(async () => ({
         state: "Paused" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -684,6 +752,8 @@ function createDefaultApi(): LeviApi {
       evaluate: vi.fn(async (request) => ({
         state: "Paused" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -710,6 +780,8 @@ function createDefaultApi(): LeviApi {
       clearConsole: vi.fn(async () => ({
         state: "Paused" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -725,6 +797,8 @@ function createDefaultApi(): LeviApi {
       selectStackFrame: vi.fn(async () => ({
         state: "Paused" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -740,6 +814,8 @@ function createDefaultApi(): LeviApi {
       setExceptionBreakpoints: vi.fn(async () => ({
         state: "Idle" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -755,6 +831,8 @@ function createDefaultApi(): LeviApi {
       refreshLoadedSources: vi.fn(async () => ({
         state: "Running" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -773,6 +851,8 @@ function createDefaultApi(): LeviApi {
       scanAdapters: vi.fn(async () => ({
         state: "Idle" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -788,6 +868,8 @@ function createDefaultApi(): LeviApi {
       getAdapterStatus: vi.fn(async () => ({
         state: "Idle" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -803,6 +885,8 @@ function createDefaultApi(): LeviApi {
       installAdapter: vi.fn(async () => ({
         state: "Idle" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -818,6 +902,8 @@ function createDefaultApi(): LeviApi {
       updateAdapter: vi.fn(async () => ({
         state: "Idle" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -833,6 +919,8 @@ function createDefaultApi(): LeviApi {
       uninstallAdapter: vi.fn(async () => ({
         state: "Idle" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -848,6 +936,8 @@ function createDefaultApi(): LeviApi {
       validateAdapter: vi.fn(async () => ({
         state: "Idle" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -863,6 +953,8 @@ function createDefaultApi(): LeviApi {
       registerCustomAdapter: vi.fn(async () => ({
         state: "Idle" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -878,6 +970,8 @@ function createDefaultApi(): LeviApi {
       revokeCustomAdapter: vi.fn(async () => ({
         state: "Idle" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],
@@ -893,6 +987,8 @@ function createDefaultApi(): LeviApi {
       dismissAdapterRecommendation: vi.fn(async () => ({
         state: "Idle" as const,
         launchConfigurations: [],
+        compoundConfigurations: [],
+        sessions: [],
         breakpoints: [],
         watches: [],
         variables: [],

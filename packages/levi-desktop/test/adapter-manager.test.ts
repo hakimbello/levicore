@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { getAdapterDefinition, discoverAdapter } from "../src/features/debugger/adapters";
+import { discoverAdapter, getAdapterDefinition } from "../electron/main/adapters";
 import { AdapterManager } from "../electron/main/adapter-manager";
 import {
   AdapterInstallCancelledError,
