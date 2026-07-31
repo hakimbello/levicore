@@ -1,6 +1,7 @@
-import { FormEvent, KeyboardEvent, useEffect, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useState, type ChangeEvent, type ReactNode } from "react";
 import { Icon } from "../../components/Icon";
-import type { DebugLaunchConfiguration, DebugSetBreakpointRequest, DebugStackFrame, DebugState, DebugVariable } from "./DebugEvents";
+import type { DebugLaunchConfiguration, DebugSetBreakpointRequest, DebugStackFrame, DebugState, DebugVariable, DebugExceptionBreakpoint } from "./DebugEvents";
+import { MAX_VARIABLE_TREE_RENDER } from "./variableLimits";
 
 type RunDebugPanelProps = {
   state: DebugState;
@@ -8,6 +9,7 @@ type RunDebugPanelProps = {
   onStart: (configuration: DebugLaunchConfiguration) => Promise<void>;
   onSetBreakpoint: (request: DebugSetBreakpointRequest) => Promise<void>;
   onRemoveBreakpoint: (breakpointId: string) => Promise<void>;
+  onEditBreakpoint: (breakpointId: string, request: DebugSetBreakpointRequest) => Promise<void>;
   onAddWatch: (expression: string) => Promise<void>;
   onUpdateWatch: (id: string, expression: string) => Promise<void>;
   onRemoveWatch: (id: string) => Promise<void>;
@@ -17,6 +19,11 @@ type RunDebugPanelProps = {
   onSelectConfiguration: (name: string) => Promise<void>;
   onCreateLaunchConfig: () => Promise<void>;
   onOpenFrame: (threadId: number, frame: DebugStackFrame) => Promise<void>;
+  onSetExceptionBreakpoints: (breakpoints: DebugExceptionBreakpoint[]) => Promise<void>;
+  onRefreshLoadedSources: () => Promise<void>;
+  onOpenSource: (relativePath: string) => Promise<void>;
+  onContinueFromException: () => Promise<void>;
+  onGetCompletions: (text: string, column: number) => Promise<Array<{ label: string; insertText?: string }>>;
 };
 
 function defaultLaunchConfiguration(): DebugLaunchConfiguration {
@@ -44,7 +51,13 @@ export function RunDebugPanel({
   onClearConsole,
   onSelectConfiguration,
   onCreateLaunchConfig,
-  onOpenFrame
+  onOpenFrame,
+  onEditBreakpoint,
+  onSetExceptionBreakpoints,
+  onRefreshLoadedSources,
+  onOpenSource,
+  onContinueFromException,
+  onGetCompletions
 }: RunDebugPanelProps) {
   const [configuration, setConfiguration] = useState<DebugLaunchConfiguration>(
     state.lastLaunchConfiguration ?? defaultLaunchConfiguration()
@@ -53,6 +66,7 @@ export function RunDebugPanel({
   const [breakpointLine, setBreakpointLine] = useState("1");
   const [condition, setCondition] = useState("");
   const [logMessage, setLogMessage] = useState("");
+  const [hitCondition, setHitCondition] = useState("");
   const [watchExpression, setWatchExpression] = useState("");
   const [editingWatchId, setEditingWatchId] = useState<string | null>(null);
   const [editingWatchExpression, setEditingWatchExpression] = useState("");
@@ -60,6 +74,12 @@ export function RunDebugPanel({
   const [consoleHistory, setConsoleHistory] = useState<string[]>([]);
   const [consoleHistoryIndex, setConsoleHistoryIndex] = useState<number | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [editingBreakpointId, setEditingBreakpointId] = useState<string | null>(null);
+  const [editBpCondition, setEditBpCondition] = useState("");
+  const [editBpHitCondition, setEditBpHitCondition] = useState("");
+  const [editBpLogMessage, setEditBpLogMessage] = useState("");
+  const [completionItems, setCompletionItems] = useState<Array<{ label: string; insertText?: string }>>([]);
+  const [variableRenderLimit, setVariableRenderLimit] = useState(MAX_VARIABLE_TREE_RENDER);
 
   useEffect(() => {
     if (state.lastLaunchConfiguration) {
@@ -103,6 +123,7 @@ export function RunDebugPanel({
         line,
         condition: condition.trim() || undefined,
         logMessage: logMessage.trim() || undefined,
+        hitCondition: hitCondition.trim() || undefined,
         toggle: true
       });
     } catch (error) {
@@ -136,22 +157,93 @@ export function RunDebugPanel({
     setConsoleExpression("");
   }
 
-  function navigateConsoleHistory(event: KeyboardEvent<HTMLInputElement>) {
+  function navigateConsoleHistory(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (consoleHistory.length === 0) return;
     if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-    event.preventDefault();
-    const nextIndex =
-      event.key === "ArrowUp"
-        ? Math.min((consoleHistoryIndex ?? -1) + 1, consoleHistory.length - 1)
-        : Math.max((consoleHistoryIndex ?? 0) - 1, -1);
-    setConsoleHistoryIndex(nextIndex === -1 ? null : nextIndex);
-    setConsoleExpression(nextIndex === -1 ? "" : consoleHistory[nextIndex] ?? "");
+    if (event.key === "ArrowUp" && event.currentTarget.selectionStart === 0) {
+      event.preventDefault();
+      const nextIndex = Math.min((consoleHistoryIndex ?? -1) + 1, consoleHistory.length - 1);
+      setConsoleHistoryIndex(nextIndex);
+      setConsoleExpression(consoleHistory[nextIndex] ?? "");
+    }
+    if (event.key === "ArrowDown" && event.currentTarget.selectionStart === event.currentTarget.value.length) {
+      event.preventDefault();
+      const nextIndex = Math.max((consoleHistoryIndex ?? 0) - 1, -1);
+      setConsoleHistoryIndex(nextIndex === -1 ? null : nextIndex);
+      setConsoleExpression(nextIndex === -1 ? "" : consoleHistory[nextIndex] ?? "");
+    }
   }
 
-  function renderVariables(variables: DebugVariable[], depth = 0) {
-    return variables.map((variable) => {
+  async function handleConsoleInput(event: ChangeEvent<HTMLTextAreaElement>) {
+    const next = event.target.value;
+    setConsoleExpression(next);
+    setConsoleHistoryIndex(null);
+    const lastLine = next.split("\n").pop() ?? "";
+    if (lastLine.trim().length > 1 && state.state === "Paused") {
+      const items = await onGetCompletions(lastLine, lastLine.length);
+      setCompletionItems(items);
+    } else {
+      setCompletionItems([]);
+    }
+  }
+
+  function copyConsoleOutput(output: string) {
+    void navigator.clipboard.writeText(output);
+  }
+
+  function copyExceptionDetails() {
+    const info = state.exceptionInfo;
+    if (!info) return;
+    const text = [info.type, info.message, info.stackTrace, info.module ? `Module: ${info.module}` : ""].filter(Boolean).join("\n");
+    void navigator.clipboard.writeText(text);
+  }
+
+  function copyEvaluationResult() {
+    const result = state.lastEvaluation;
+    if (!result) return;
+    void navigator.clipboard.writeText(result.error ? result.error : `${result.result}${result.type ? ` (${result.type})` : ""}`);
+  }
+
+  function startEditBreakpoint(breakpointId: string) {
+    const breakpoint = state.breakpoints.find((item) => item.id === breakpointId);
+    if (!breakpoint) return;
+    setEditingBreakpointId(breakpointId);
+    setEditBpCondition(breakpoint.condition ?? "");
+    setEditBpHitCondition(breakpoint.hitCondition ?? "");
+    setEditBpLogMessage(breakpoint.logMessage ?? "");
+  }
+
+  async function submitBreakpointEdit(event: FormEvent) {
+    event.preventDefault();
+    if (!editingBreakpointId) return;
+    const breakpoint = state.breakpoints.find((item) => item.id === editingBreakpointId);
+    if (!breakpoint) return;
+    await onEditBreakpoint(editingBreakpointId, {
+      relativePath: breakpoint.relativePath,
+      line: breakpoint.line,
+      column: breakpoint.column,
+      enabled: breakpoint.enabled,
+      condition: editBpCondition.trim() || undefined,
+      hitCondition: editBpHitCondition.trim() || undefined,
+      logMessage: editBpLogMessage.trim() || undefined
+    });
+    setEditingBreakpointId(null);
+  }
+
+  function renderVariables(variables: DebugVariable[], depth = 0, renderedCount = { value: 0 }): ReactNode {
+    const nodes: React.ReactNode[] = [];
+    for (const variable of variables) {
+      if (renderedCount.value >= variableRenderLimit) {
+        nodes.push(
+          <button key={`more-${depth}`} type="button" className="levi-debug-show-more" onClick={() => setVariableRenderLimit((limit) => limit + MAX_VARIABLE_TREE_RENDER)}>
+            Show more variables…
+          </button>
+        );
+        return nodes;
+      }
+      renderedCount.value += 1;
       const expandable = Boolean(variable.variablesReference && variable.variablesReference > 0);
-      return (
+      nodes.push(
         <div key={`${depth}-${variable.name}-${variable.evaluateName ?? variable.variablesReference ?? ""}`} className="levi-debug-variable" style={{ paddingLeft: depth * 14 }}>
           <button
             type="button"
@@ -162,11 +254,22 @@ export function RunDebugPanel({
           >
             {expandable ? variable.expanded ? "v" : ">" : ""}
           </button>
-          <span><strong>{variable.name}</strong>: {variable.value}{variable.type ? ` (${variable.type})` : ""}</span>
-          {variable.children?.length ? <div className="levi-debug-variable-children">{renderVariables(variable.children, depth + 1)}</div> : null}
+          <span>
+            <strong>{variable.name}</strong>: {variable.value}
+            {variable.type ? ` (${variable.type})` : ""}
+            {variable.truncated ? " …" : ""}
+            {variable.hasMoreChildren ? " [lazy]" : ""}
+          </span>
+          {variable.evaluateName ? (
+            <button type="button" className="levi-debug-evaluate-name" onClick={() => void onEvaluate(variable.evaluateName ?? variable.name)} aria-label={`Evaluate ${variable.name}`}>
+              ⧉
+            </button>
+          ) : null}
+          {variable.children?.length ? <div className="levi-debug-variable-children">{renderVariables(variable.children, depth + 1, renderedCount)}</div> : null}
         </div>
       );
-    });
+    }
+    return nodes;
   }
 
   return (
@@ -179,6 +282,34 @@ export function RunDebugPanel({
         </div>
         <span className={`levi-debug-badge levi-debug-state-${state.state.toLowerCase()}`}>{state.state}</span>
       </header>
+
+      {state.exceptionInfo ? (
+        <section className="levi-debug-exception-panel" aria-label="Exception details">
+          <div className="levi-debug-section-header">
+            <h2>Exception</h2>
+            <div className="levi-debug-inline-actions">
+              <button type="button" className="levi-button levi-button-secondary" onClick={() => void onContinueFromException()}>
+                Continue
+              </button>
+              <button type="button" className="levi-button levi-button-secondary" onClick={copyExceptionDetails}>
+                Copy Exception
+              </button>
+            </div>
+          </div>
+          <div className="levi-debug-exception-body">
+            <strong>{state.exceptionInfo.type ?? "Exception"}</strong>
+            <p>{state.exceptionInfo.message ?? state.exceptionInfo.description}</p>
+            {state.exceptionInfo.module ? <small>Module: {state.exceptionInfo.module}</small> : null}
+            {state.exceptionInfo.threadId ? <small>Thread: {state.exceptionInfo.threadId}</small> : null}
+            {state.exceptionInfo.relativePath ? (
+              <small>
+                {state.exceptionInfo.relativePath}:{state.exceptionInfo.line ?? 1}
+              </small>
+            ) : null}
+            {state.exceptionInfo.stackTrace ? <pre className="levi-debug-exception-stack">{state.exceptionInfo.stackTrace}</pre> : null}
+          </div>
+        </section>
+      ) : null}
 
       <div className="levi-debug-grid">
         <section className="levi-debug-section" aria-label="Launch configuration">
@@ -270,6 +401,10 @@ export function RunDebugPanel({
               <span>Logpoint</span>
               <input value={logMessage} onChange={(event) => setLogMessage(event.target.value)} />
             </label>
+            <label>
+              <span>Hit count</span>
+              <input value={hitCondition} onChange={(event) => setHitCondition(event.target.value)} placeholder=">= 5" />
+            </label>
             <button type="submit" className="levi-button levi-button-secondary" disabled={!workspaceAvailable}>
               <Icon name="plus" />
               <span>Toggle Breakpoint</span>
@@ -295,14 +430,50 @@ export function RunDebugPanel({
                   }
                   aria-label={`${breakpoint.enabled ? "Disable" : "Enable"} breakpoint ${breakpoint.relativePath}:${breakpoint.line}`}
                 />
-                <div>
-                  <strong>{breakpoint.relativePath}:{breakpoint.line}</strong>
-                  <span>{breakpoint.condition ? `if ${breakpoint.condition}` : breakpoint.logMessage ? `log ${breakpoint.logMessage}` : breakpoint.verified === false ? breakpoint.message ?? "Unverified" : "Enabled"}</span>
-                </div>
+                {editingBreakpointId === breakpoint.id ? (
+                  <form className="levi-debug-inline-form levi-debug-breakpoint-edit" onSubmit={(event) => void submitBreakpointEdit(event)}>
+                    <input aria-label="Condition" value={editBpCondition} onChange={(event) => setEditBpCondition(event.target.value)} placeholder="Condition" />
+                    <input aria-label="Hit count" value={editBpHitCondition} onChange={(event) => setEditBpHitCondition(event.target.value)} placeholder="Hit count" />
+                    <input aria-label="Log message" value={editBpLogMessage} onChange={(event) => setEditBpLogMessage(event.target.value)} placeholder="Log message" />
+                    <button type="submit" className="levi-icon-button" aria-label="Save breakpoint"><Icon name="refresh" /></button>
+                    <button type="button" className="levi-icon-button" onClick={() => setEditingBreakpointId(null)} aria-label="Cancel edit"><Icon name="close" /></button>
+                  </form>
+                ) : (
+                  <div>
+                    <strong>{breakpoint.relativePath}:{breakpoint.line}</strong>
+                    <span>
+                      {breakpoint.condition ? `if ${breakpoint.condition}` : breakpoint.logMessage ? `log ${breakpoint.logMessage}` : breakpoint.hitCondition ? `hit ${breakpoint.hitCondition}` : breakpoint.verified === false ? breakpoint.message ?? "Unverified" : "Enabled"}
+                    </span>
+                  </div>
+                )}
+                <button type="button" className="levi-icon-button" onClick={() => startEditBreakpoint(breakpoint.id)} aria-label={`Edit breakpoint ${breakpoint.relativePath}:${breakpoint.line}`}>
+                  <Icon name="settings" />
+                </button>
                 <button type="button" className="levi-icon-button" onClick={() => void onRemoveBreakpoint(breakpoint.id)} aria-label={`Remove breakpoint ${breakpoint.relativePath}:${breakpoint.line}`}>
                   <Icon name="close" />
                 </button>
               </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="levi-debug-section" aria-label="Exception breakpoints">
+          <h2>Exception Breakpoints</h2>
+          <div className="levi-debug-list">
+            {state.exceptionBreakpoints.map((breakpoint) => (
+              <label key={breakpoint.filter} className="levi-debug-checkbox levi-debug-exception-toggle">
+                <input
+                  type="checkbox"
+                  checked={breakpoint.enabled}
+                  onChange={(event) => {
+                    const next = state.exceptionBreakpoints.map((item) =>
+                      item.filter === breakpoint.filter ? { ...item, enabled: event.target.checked } : item
+                    );
+                    void onSetExceptionBreakpoints(next);
+                  }}
+                />
+                <span>{breakpoint.label}</span>
+              </label>
             ))}
           </div>
         </section>
@@ -324,6 +495,15 @@ export function RunDebugPanel({
               {renderVariables(scope.variables)}
             </div>
           ))}
+          {state.lastEvaluation ? (
+            <div className="levi-debug-evaluation-result">
+              <strong>Last evaluation</strong>
+              <span>{state.lastEvaluation.error ?? `${state.lastEvaluation.result}${state.lastEvaluation.type ? ` (${state.lastEvaluation.type})` : ""}`}</span>
+              <button type="button" className="levi-button levi-button-secondary" onClick={copyEvaluationResult}>
+                Copy
+              </button>
+            </div>
+          ) : null}
         </section>
 
         <section className="levi-debug-section" aria-label="Watch">
@@ -389,30 +569,102 @@ export function RunDebugPanel({
           ))}
         </section>
 
+        <section className="levi-debug-section" aria-label="Loaded Sources">
+          <div className="levi-debug-section-header">
+            <h2>Loaded Sources</h2>
+            <button type="button" className="levi-button levi-button-secondary" onClick={() => void onRefreshLoadedSources()}>
+              <Icon name="refresh" />
+              <span>Refresh</span>
+            </button>
+          </div>
+          {state.loadedSources.length === 0 ? <p className="levi-debug-empty">Loaded sources appear after the debug session starts.</p> : null}
+          <div className="levi-debug-list">
+            {state.loadedSources.map((source, index) => (
+              <div key={`${source.relativePath ?? source.name ?? index}`} className="levi-debug-row">
+                <div>
+                  <strong>{source.name ?? source.relativePath ?? "Unknown source"}</strong>
+                  {source.relativePath ? <span>{source.relativePath}</span> : <span>Disassembly / external source</span>}
+                </div>
+                {source.relativePath ? (
+                  <button type="button" className="levi-icon-button" onClick={() => void onOpenSource(source.relativePath!)} aria-label={`Open ${source.relativePath}`}>
+                    <Icon name="files" />
+                  </button>
+                ) : (
+                  <button type="button" className="levi-icon-button" disabled aria-label="Disassembly view unavailable">
+                    <Icon name="files" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+
         <section className="levi-debug-section levi-debug-console" aria-label="Debug Console">
           <div className="levi-debug-section-header">
             <h2>Debug Console</h2>
-            <button type="button" className="levi-button levi-button-secondary" onClick={() => void onClearConsole()}>
-              <Icon name="close" />
-              <span>Clear</span>
-            </button>
+            <div className="levi-debug-inline-actions">
+              {state.lastEvaluation ? (
+                <button type="button" className="levi-button levi-button-secondary" onClick={copyEvaluationResult}>
+                  Copy Result
+                </button>
+              ) : null}
+              <button type="button" className="levi-button levi-button-secondary" onClick={() => void onClearConsole()}>
+                <Icon name="close" />
+                <span>Clear</span>
+              </button>
+            </div>
           </div>
-          <form className="levi-debug-inline-form" onSubmit={(event) => void evaluateConsole(event)}>
-            <input
+          <form className="levi-debug-console-form" onSubmit={(event) => void evaluateConsole(event)}>
+            <textarea
+              className="levi-debug-console-input"
               value={consoleExpression}
-              onChange={(event) => {
-                setConsoleExpression(event.target.value);
-                setConsoleHistoryIndex(null);
+              onChange={(event) => void handleConsoleInput(event)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void evaluateConsole(event);
+                } else {
+                  navigateConsoleHistory(event);
+                }
               }}
-              onKeyDown={navigateConsoleHistory}
-              placeholder="Evaluate expression"
+              placeholder="Evaluate expression (Shift+Enter for newline)"
+              rows={3}
             />
             <button type="submit" className="levi-icon-button" aria-label="Evaluate Expression"><Icon name="send" /></button>
           </form>
-          {state.console.length === 0 ? <p className="levi-debug-empty">Adapter output and debug console messages will appear here.</p> : null}
-          {state.console.map((entry) => (
-            <pre key={entry.id} className={`levi-debug-console-entry levi-debug-console-${entry.category}`}>{entry.output}</pre>
-          ))}
+          {completionItems.length > 0 ? (
+            <div className="levi-debug-completions" role="listbox" aria-label="Completions">
+              {completionItems.map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  className="levi-debug-completion-item"
+                  onClick={() => {
+                    setConsoleExpression((current) => {
+                      const lines = current.split("\n");
+                      const last = lines.pop() ?? "";
+                      lines.push(`${last}${item.insertText ?? item.label}`);
+                      return lines.join("\n");
+                    });
+                    setCompletionItems([]);
+                  }}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div className="levi-debug-console-output">
+            {state.console.length === 0 ? <p className="levi-debug-empty">Adapter output and debug console messages will appear here.</p> : null}
+            {state.console.map((entry) => (
+              <div key={entry.id} className="levi-debug-console-row">
+                <pre className={`levi-debug-console-entry levi-debug-console-${entry.category}`}>{entry.output}</pre>
+                <button type="button" className="levi-button levi-button-secondary levi-debug-copy-output" onClick={() => copyConsoleOutput(entry.output)} aria-label="Copy console output">
+                  Copy
+                </button>
+              </div>
+            ))}
+          </div>
         </section>
       </div>
     </section>

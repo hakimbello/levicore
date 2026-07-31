@@ -10,7 +10,8 @@ import { SearchPanel } from "../features/search/SearchPanel";
 import { TerminalPanel } from "../features/terminal/TerminalPanel";
 import { type EditorTab, useEditorTabs } from "../hooks/use-editor-tabs";
 import type { EditApplyResult, EditUndoResult, ExecutionPublicTransaction, OllamaStatus, SelectedProject, UpdateStatus, WorkspaceStatus } from "../types/levi-api";
-import type { DebugLaunchConfiguration, DebugSetBreakpointRequest, DebugStackFrame, DebugState } from "../features/debugger";
+import type { DebugLaunchConfiguration, DebugSetBreakpointRequest, DebugStackFrame, DebugState, DebugExceptionBreakpoint } from "../features/debugger";
+import { DEFAULT_EXCEPTION_BREAKPOINTS } from "../features/debugger";
 import type { WorkspaceReadPathResult } from "../types/workspace-tree-api";
 import "../styles/editor-tabs.css";
 
@@ -49,7 +50,10 @@ const idleDebugState: DebugState = {
   variables: [],
   callStack: [],
   loadedSources: [],
-  console: []
+  console: [],
+  exceptionBreakpoints: DEFAULT_EXCEPTION_BREAKPOINTS.map((item) => ({ ...item })),
+  inlineValues: [],
+  evaluationCache: []
 };
 const FILE_CONFLICT_CODE = "WORKSPACE_FILE_CONFLICT";
 
@@ -396,11 +400,19 @@ export function App() {
             onUpdateWatch={updateDebugWatch}
             onRemoveWatch={removeDebugWatch}
             onLoadVariables={loadDebugVariables}
-            onEvaluate={evaluateDebugExpression}
+            onEvaluate={async (expression) => {
+              await evaluateDebugExpression(expression);
+            }}
             onClearConsole={clearDebugConsole}
             onSelectConfiguration={selectDebugConfiguration}
             onCreateLaunchConfig={createDebugLaunchConfig}
             onOpenFrame={openDebugFrame}
+            onEditBreakpoint={editDebugBreakpoint}
+            onSetExceptionBreakpoints={setDebugExceptionBreakpoints}
+            onRefreshLoadedSources={refreshDebugLoadedSources}
+            onOpenSource={openDebugSource}
+            onContinueFromException={continueFromDebugException}
+            onGetCompletions={getDebugCompletions}
           />
         </LazySurface>
       );
@@ -469,8 +481,55 @@ export function App() {
     await applyDebugState(window.levi.debug.loadVariables({ variablesReference }));
   }
 
-  async function evaluateDebugExpression(expression: string) {
+  async function evaluateDebugExpression(expression: string, context: "repl" | "watch" | "hover" = "repl", frameId?: number) {
+    await applyDebugState(window.levi.debug.evaluate({ expression, context, frameId }));
+    return debugState.lastEvaluation;
+  }
+
+  async function evaluateDebugHover(expression: string, frameId?: number) {
+    const state = await window.levi.debug.evaluate({ expression, context: "hover", frameId });
+    setDebugState(state);
+    return state.lastEvaluation;
+  }
+
+  async function evaluateDebugSelection(expression: string): Promise<void> {
     await applyDebugState(window.levi.debug.evaluate({ expression, context: "repl" }));
+  }
+
+  async function editDebugBreakpoint(_breakpointId: string, request: DebugSetBreakpointRequest) {
+    await applyDebugState(window.levi.debug.setBreakpoint(request));
+  }
+
+  async function setDebugExceptionBreakpoints(breakpoints: DebugExceptionBreakpoint[]) {
+    await applyDebugState(window.levi.debug.setExceptionBreakpoints({ breakpoints }));
+  }
+
+  async function refreshDebugLoadedSources() {
+    await applyDebugState(window.levi.debug.refreshLoadedSources());
+  }
+
+  async function openDebugSource(relativePath: string) {
+    const file = await window.levi.workspace.readPath({ relativePath });
+    openFile({
+      sourceId: `WORKSPACE:${file.relativePath}`,
+      relativePath: file.relativePath,
+      content: file.content,
+      language: file.language,
+      lineStart: 1,
+      readOnly: false
+    });
+  }
+
+  async function continueFromDebugException() {
+    await applyDebugState(window.levi.debug.continue());
+  }
+
+  async function getDebugCompletions(text: string, column: number) {
+    return window.levi.debug.getCompletions({ text, column, frameId: debugState.activeStackFrame?.id });
+  }
+
+  async function editCodeEditorBreakpoint(_line: number, request: DebugSetBreakpointRequest): Promise<void> {
+    await applyDebugState(window.levi.debug.setBreakpoint(request));
   }
 
   async function clearDebugConsole() {
@@ -571,7 +630,16 @@ export function App() {
                     readOnly={!activeTabEditable}
                     breakpoints={debugState.breakpoints.filter((breakpoint) => breakpoint.relativePath === activeTab.relativePath)}
                     activeExecutionLine={debugState.activeStackFrame?.relativePath === activeTab.relativePath ? debugState.activeStackFrame.line : undefined}
+                    exceptionLine={
+                      debugState.exceptionInfo?.relativePath === activeTab.relativePath ? debugState.exceptionInfo.line : undefined
+                    }
+                    debugPaused={debugState.state === "Paused"}
+                    activeFrameId={debugState.activeStackFrame?.id}
+                    inlineValues={debugState.inlineValues}
                     onToggleBreakpoint={(line) => void setDebugBreakpoint({ relativePath: activeTab.relativePath, line, toggle: true })}
+                    onEditBreakpoint={(line, request) => editCodeEditorBreakpoint(line, request)}
+                    onEvaluateHover={(expression, frameId) => evaluateDebugHover(expression, frameId)}
+                    onEvaluateSelection={(expression) => evaluateDebugSelection(expression)}
                     onChange={(content) => updateContent(activeTab.id, content)}
                     onSave={() => void saveActiveTab()}
                   />

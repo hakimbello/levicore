@@ -1523,6 +1523,168 @@ textarea:focus-visible,
   transform: translate(-50%, -50%);
 }
 
+.levi-code-editor-host {
+  position: relative;
+  height: 100%;
+}
+
+.levi-debug-breakpoint-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 240px;
+  padding: var(--levi-space-12);
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-md);
+  background: var(--levi-color-surfaceElevated);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--levi-color-primaryText) 12%, transparent);
+}
+
+.levi-debug-breakpoint-menu form {
+  display: grid;
+  gap: var(--levi-space-8);
+}
+
+.levi-debug-breakpoint-menu-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--levi-space-8);
+}
+
+.levi-debug-conditional-breakpoint::after,
+.levi-debug-logpoint::after {
+  background: var(--levi-color-accent);
+}
+
+.levi-debug-logpoint::after {
+  border-radius: 2px;
+}
+
+.levi-debug-exception-line {
+  background: color-mix(in srgb, var(--levi-color-danger) 16%, transparent);
+}
+
+.levi-debug-exception-glyph::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--levi-color-danger);
+  content: "";
+  transform: translate(-50%, -50%);
+}
+
+.levi-debug-exception-panel {
+  margin-bottom: var(--levi-space-16);
+  padding: var(--levi-space-16);
+  border: 1px solid color-mix(in srgb, var(--levi-color-danger) 40%, var(--levi-color-border));
+  border-radius: var(--levi-radius-md);
+  background: color-mix(in srgb, var(--levi-color-danger) 6%, var(--levi-color-surfaceElevated));
+}
+
+.levi-debug-exception-body {
+  display: grid;
+  gap: var(--levi-space-8);
+}
+
+.levi-debug-exception-stack {
+  margin: 0;
+  padding: var(--levi-space-8);
+  overflow: auto;
+  font-family: var(--levi-font-mono);
+  font-size: var(--levi-font-size-small);
+  border-radius: var(--levi-radius-sm);
+  background: var(--levi-color-surface);
+}
+
+.levi-debug-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--levi-space-8);
+}
+
+.levi-debug-console-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--levi-space-8);
+  align-items: start;
+}
+
+.levi-debug-console-input {
+  width: 100%;
+  min-height: 72px;
+  padding: var(--levi-space-8);
+  font-family: var(--levi-font-mono);
+  font-size: var(--levi-font-size-small);
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-sm);
+  background: var(--levi-color-surface);
+  color: var(--levi-color-primaryText);
+  resize: vertical;
+}
+
+.levi-debug-console-output {
+  display: grid;
+  gap: var(--levi-space-8);
+  max-height: 280px;
+  overflow: auto;
+}
+
+.levi-debug-console-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--levi-space-8);
+  align-items: start;
+}
+
+.levi-debug-completions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--levi-space-4);
+}
+
+.levi-debug-completion-item {
+  padding: 2px 8px;
+  font-family: var(--levi-font-mono);
+  font-size: var(--levi-font-size-small);
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-sm);
+  background: var(--levi-color-surface);
+}
+
+.levi-debug-evaluation-result,
+.levi-debug-show-more,
+.levi-debug-evaluate-name {
+  font-size: var(--levi-font-size-small);
+}
+
+.levi-debug-evaluate-name {
+  margin-left: var(--levi-space-4);
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  color: var(--levi-color-accent);
+  cursor: pointer;
+}
+
+.levi-debug-breakpoint-edit {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto auto;
+  gap: var(--levi-space-4);
+}
+
+.levi-debug-exception-toggle {
+  padding: var(--levi-space-4) 0;
+}
+
+.levi-debug-inline-value {
+  margin-left: 8px;
+  color: var(--levi-color-mutedText);
+  font-style: italic;
+}
+
 .levi-settings-group {
   display: grid;
   gap: var(--levi-space-12);
