@@ -29,13 +29,43 @@ export type DebugLaunchConfiguration = {
   name: string;
   adapterId?: string;
   program?: string;
+  module?: string;
   cwd?: string;
   args?: string[];
   env?: Record<string, string>;
+  envFile?: string;
   stopOnEntry?: boolean;
   console?: "internalConsole" | "integratedTerminal";
+  internalConsoleOptions?: "neverOpen" | "openOnSessionStart" | "openOnFirstSessionStart";
   runtimeArgs?: string[];
+  runtimeExecutable?: string;
+  runtimeVersion?: string;
+  sourceMaps?: boolean;
+  outFiles?: string[];
+  skipFiles?: string[];
+  justMyCode?: boolean;
+  port?: number;
+  host?: string;
+  url?: string;
+  webRoot?: string;
+  browserExecutablePath?: string;
+  python?: string;
+  preLaunchTask?: string;
+  postDebugTask?: string;
   dap?: Record<string, unknown>;
+};
+
+export type DebugCompoundConfiguration = {
+  name: string;
+  configurations: string[];
+  stopAll?: boolean;
+};
+
+export type DebugCompoundConfigurationEntry = {
+  name: string;
+  configurations: string[];
+  stopAll?: boolean;
+  source: DebugLaunchConfigurationSource;
 };
 
 export type DebugStartRequest = {
@@ -229,12 +259,34 @@ export type DebugSessionSummary = {
   name: string;
   type: string;
   startedAt: string;
+  adapterId?: string;
+  state?: DebugSessionState;
+};
+
+export type DebugManagedSession = {
+  id: string;
+  name: string;
+  configurationName: string;
+  adapterId: string;
+  state: DebugSessionState;
+  startedAt: string;
+  variables: DebugScope[];
+  callStack: DebugThread[];
+  activeThreadId?: number;
+  activeStackFrame?: DebugStackFrame;
+  console: DebugConsoleEntry[];
+  loadedSources: DebugLoadedSource[];
+  exceptionInfo?: DebugExceptionInfo;
+  inlineValues: DebugInlineValue[];
 };
 
 export type DebugState = {
   state: DebugSessionState;
   session?: DebugSessionSummary;
+  sessions: DebugManagedSession[];
+  activeSessionId?: string;
   launchConfigurations: DebugLaunchConfigurationEntry[];
+  compoundConfigurations: DebugCompoundConfigurationEntry[];
   selectedLaunchConfigurationName?: string;
   breakpoints: DebugBreakpoint[];
   watches: DebugWatchExpression[];
@@ -255,6 +307,7 @@ export type DebugState = {
   adapterRecommendations: DebugAdapterRecommendation[];
   adapterInstallProgress?: DebugAdapterInstallProgress;
   launchAdapterDiagnostic?: DebugLaunchAdapterDiagnostic;
+  adapterDiagnostics?: Record<string, { passed: boolean; checks: Array<{ name: string; passed: boolean; message?: string }> }>;
 };
 
 export type DebugPersistenceState = {

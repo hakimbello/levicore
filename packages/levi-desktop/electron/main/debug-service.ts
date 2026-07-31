@@ -27,9 +27,21 @@ import {
   type DebugAdapterInstallRequest,
   type DebugAdapterRegisterCustomRequest,
   type DebugAdapterUninstallRequest
-} from "../../src/features/debugger/adapters";
+} from "./adapters";
 import type { DebugLaunchAdapterDiagnostic, DebugAdapterInstallProgress } from "../../src/features/debugger/DebugEvents";
 import { AdapterManager } from "./adapter-manager";
+import { loadEnvFile, mergeLaunchEnvironment } from "./env-file";
+import { buildDapLaunchArguments } from "./launch-args";
+import {
+  findCompound,
+  findLaunchConfiguration,
+  parseCompoundConfigurations,
+  runDebugTaskBoundary,
+  validateCompoundStart
+} from "./debug-tasks";
+import { buildPythonAdapterEnvironment, discoverBrowserExecutable, resolvePythonInterpreter } from "./python-interpreter";
+import { runAdapterDiagnostics } from "./adapter-diagnostics";
+import type { DebugCompoundConfiguration, DebugCompoundConfigurationEntry } from "../../src/features/debugger/DebugEvents";
 
 const DEBUG_STATE_FILE = path.join(".levi", "debug-state.json");
 const LEVI_LAUNCH_FILE = path.join(".levi", "launch.json");
@@ -79,10 +91,20 @@ const DEFAULT_LAUNCH_CONFIGURATIONS: DebugLaunchConfiguration[] = [
   },
   {
     type: "chrome",
+    request: "launch",
+    name: "Chrome Launch",
+    adapterId: "chrome",
+    url: "http://localhost:3000",
+    webRoot: "${workspaceFolder}",
+    console: "internalConsole"
+  },
+  {
+    type: "chrome",
     request: "attach",
     name: "Chrome Attach",
     adapterId: "chrome",
-    dap: { port: 9222, webRoot: "${workspaceFolder}" }
+    port: 9222,
+    webRoot: "${workspaceFolder}"
   }
 ];
 
@@ -170,6 +192,15 @@ export function validateDebugStartRequest(value: unknown): DebugStartRequest {
   }
   const program = configuration.program === undefined ? undefined : assertSafeRelativePath(configuration.program, "program");
   const cwd = configuration.cwd === undefined ? undefined : assertSafeRelativePath(configuration.cwd, "cwd");
+  const envFile = configuration.envFile === undefined ? undefined : assertSafeRelativePath(configuration.envFile, "envFile");
+  const moduleName = assertSmallString(configuration.module, "module");
+  const url = assertSmallString(configuration.url, "url");
+  const webRoot = configuration.webRoot === undefined ? undefined : assertSafeRelativePath(configuration.webRoot, "webRoot");
+  const port = configuration.port === undefined ? undefined : Number(configuration.port);
+  if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65535)) {
+    throw new Error("port must be between 1 and 65535.");
+  }
+  const host = assertSmallString(configuration.host, "host");
   return {
     configurationName,
     configuration: {
@@ -178,7 +209,9 @@ export function validateDebugStartRequest(value: unknown): DebugStartRequest {
       name: assertSmallString(configuration.name, "name", true) as string,
       adapterId: assertSmallString(configuration.adapterId, "adapterId"),
       program,
+      module: moduleName,
       cwd,
+      envFile,
       args: assertStringArray(configuration.args, "args"),
       env: sanitizeEnvironment(configuration.env),
       stopOnEntry: typeof configuration.stopOnEntry === "boolean" ? configuration.stopOnEntry : undefined,
@@ -186,7 +219,27 @@ export function validateDebugStartRequest(value: unknown): DebugStartRequest {
         configuration.console === "internalConsole" || configuration.console === "integratedTerminal"
           ? configuration.console
           : undefined,
+      internalConsoleOptions:
+        configuration.internalConsoleOptions === "neverOpen" ||
+        configuration.internalConsoleOptions === "openOnSessionStart" ||
+        configuration.internalConsoleOptions === "openOnFirstSessionStart"
+          ? configuration.internalConsoleOptions
+          : undefined,
       runtimeArgs: assertStringArray(configuration.runtimeArgs, "runtimeArgs"),
+      runtimeExecutable: assertSmallString(configuration.runtimeExecutable, "runtimeExecutable"),
+      runtimeVersion: assertSmallString(configuration.runtimeVersion, "runtimeVersion"),
+      sourceMaps: typeof configuration.sourceMaps === "boolean" ? configuration.sourceMaps : undefined,
+      outFiles: assertStringArray(configuration.outFiles, "outFiles"),
+      skipFiles: assertStringArray(configuration.skipFiles, "skipFiles"),
+      justMyCode: typeof configuration.justMyCode === "boolean" ? configuration.justMyCode : undefined,
+      port,
+      host,
+      url,
+      webRoot,
+      browserExecutablePath: assertSmallString(configuration.browserExecutablePath, "browserExecutablePath"),
+      python: assertSmallString(configuration.python, "python"),
+      preLaunchTask: assertSmallString(configuration.preLaunchTask, "preLaunchTask"),
+      postDebugTask: assertSmallString(configuration.postDebugTask, "postDebugTask"),
       dap: sanitizeDapArguments(configuration.dap)
     }
   };
@@ -381,9 +434,11 @@ function validateDebugAdapterRegisterCustomRequest(value: unknown): DebugAdapter
 export class DesktopDebugService {
   private workspaceRoot: string | null = null;
   private adapterProcess: ChildProcessWithoutNullStreams | null = null;
+  private readonly adapterProcesses = new Map<string, ChildProcessWithoutNullStreams>();
   private readonly service: CoreDebugService;
   private lastLaunchDiagnostic: DebugLaunchAdapterDiagnostic | undefined;
   private lastInstallProgress: DebugAdapterInstallProgress | undefined;
+  private compoundConfigurations: DebugCompoundConfiguration[] = [];
   private adapterListeners: Array<(event: DebugEvent) => void> = [];
 
   constructor(
@@ -429,8 +484,128 @@ export class DesktopDebugService {
       adapters: this.adapterManager.getStatuses(),
       adapterRecommendations: this.adapterManager.getRecommendations(),
       launchAdapterDiagnostic: this.lastLaunchDiagnostic,
-      adapterInstallProgress: this.lastInstallProgress
+      adapterInstallProgress: this.lastInstallProgress,
+      adapterDiagnostics: this.adapterManager.getDiagnostics(),
+      compoundConfigurations: this.compoundConfigurations.map((entry) => ({ ...entry, source: ".levi/launch.json" as const }))
     };
+  }
+
+  private async prepareLaunchConfiguration(configuration: DebugLaunchConfiguration, root: string): Promise<DebugLaunchConfiguration> {
+    const preLaunch = runDebugTaskBoundary(configuration.preLaunchTask, "preLaunch");
+    if (!preLaunch.supported || !preLaunch.success) {
+      throw new Error(preLaunch.message ?? "preLaunchTask is not supported.");
+    }
+    let env = configuration.env;
+    if (configuration.envFile) {
+      const envFileValues = await loadEnvFile(root, configuration.envFile, (target) => fs.readFile(target, "utf8"));
+      env = mergeLaunchEnvironment(process.env, envFileValues, configuration.env);
+    }
+    const resolvedPaths = this.resolveWorkspacePaths({ ...configuration, env }, root);
+    const adapterId = configuration.adapterId ?? configuration.type;
+    const browserExecutable =
+      adapterId === "chrome" || configuration.type.includes("chrome") || configuration.type === "msedge"
+        ? await discoverBrowserExecutable(resolvedPaths, async (target) => {
+            try {
+              await fs.access(target);
+              return true;
+            } catch {
+              return false;
+            }
+          })
+        : undefined;
+    const pythonInterpreter =
+      configuration.type === "python" || configuration.adapterId === "python"
+        ? await resolvePythonInterpreter(root, resolvedPaths, async (target) => {
+            try {
+              await fs.access(target);
+              return true;
+            } catch {
+              return false;
+            }
+          })
+        : undefined;
+    const dapLaunch = buildDapLaunchArguments(resolvedPaths, {
+      browserExecutable,
+      nodeRuntime: resolvedPaths.runtimeExecutable
+    });
+    return {
+      ...resolvedPaths,
+      python: pythonInterpreter ?? resolvedPaths.python,
+      env,
+      dap: { ...dapLaunch.arguments, ...(resolvedPaths.dap ?? {}) }
+    };
+  }
+
+  async start(rawRequest: unknown): Promise<DebugState> {
+    const root = await this.ensureWorkspace();
+    const request = validateDebugStartRequest(rawRequest);
+    const configurationName = request.configurationName ?? request.configuration?.name;
+    const compound = configurationName ? findCompound(this.compoundConfigurations, configurationName) : undefined;
+    if (compound) {
+      validateCompoundStart(compound, this.compoundConfigurations);
+      const configs = compound.configurations
+        .map((name) => findLaunchConfiguration(this.service.snapshot().launchConfigurations, name))
+        .filter((item): item is DebugLaunchConfiguration => Boolean(item));
+      if (configs.length !== compound.configurations.length) {
+        throw new Error("Compound configuration references unknown launch configurations.");
+      }
+      const prepared = [];
+      for (const config of configs) {
+        prepared.push(await this.prepareLaunchConfiguration(config, root));
+      }
+      await this.service.startCompound(prepared);
+      return this.enrichedState();
+    }
+
+    const configuration =
+      request.configuration ??
+      this.service.snapshot().launchConfigurations.find((entry) => entry.name === request.configurationName)?.configuration ??
+      this.service.snapshot().launchConfigurations.find((entry) => entry.name === this.service.snapshot().selectedLaunchConfigurationName)?.configuration;
+    if (!configuration) {
+      throw new Error("No debug configuration is selected.");
+    }
+    const resolved = await this.adapterManager.resolveLaunchAdapter(configuration);
+    this.lastLaunchDiagnostic = resolved.diagnostic;
+    if (!resolved.command) {
+      this.service.rememberLaunchConfiguration(configuration);
+      this.service.setError({
+        code: "MISSING_ADAPTER",
+        message: resolved.diagnostic?.message ?? `Missing debug adapter for "${configuration.adapterId ?? configuration.type}".`,
+        recoverable: true
+      });
+      return this.enrichedState();
+    }
+    try {
+      const effectiveConfiguration = await this.prepareLaunchConfiguration(configuration, root);
+      await this.service.start(configuration, effectiveConfiguration);
+    } catch (error) {
+      this.service.rememberLaunchConfiguration(configuration);
+      this.service.setError({
+        code: "LAUNCH_FAILED",
+        message: error instanceof Error ? error.message : "Debug launch failed.",
+        recoverable: true
+      });
+    }
+    return this.enrichedState();
+  }
+
+  stop(): Promise<DebugState> {
+    return this.wrapState(async () => {
+      await this.service.stop();
+      this.killAdapter();
+    });
+  }
+
+  stopAll(): Promise<DebugState> {
+    return this.wrapState(async () => {
+      await this.service.stopAll();
+      this.killAllAdapters();
+    });
+  }
+
+  selectSession(sessionId: unknown): Promise<DebugState> {
+    const id = assertSmallString(sessionId, "session id", true) as string;
+    return this.wrapState(async () => this.service.selectSession(id));
   }
 
   async ensureWorkspace(): Promise<string> {
@@ -456,36 +631,6 @@ export class DesktopDebugService {
   private async wrapState(action: () => Promise<unknown>): Promise<DebugState> {
     await action();
     return this.enrichedState();
-  }
-
-  async start(rawRequest: unknown): Promise<DebugState> {
-    const root = await this.ensureWorkspace();
-    const request = validateDebugStartRequest(rawRequest);
-    const configuration =
-      request.configuration ??
-      this.service.snapshot().launchConfigurations.find((entry) => entry.name === request.configurationName)?.configuration ??
-      this.service.snapshot().launchConfigurations.find((entry) => entry.name === this.service.snapshot().selectedLaunchConfigurationName)?.configuration;
-    if (!configuration) {
-      throw new Error("No debug configuration is selected.");
-    }
-    const resolved = await this.adapterManager.resolveLaunchAdapter(configuration);
-    this.lastLaunchDiagnostic = resolved.diagnostic;
-    if (!resolved.command) {
-      this.service.rememberLaunchConfiguration(configuration);
-      this.service.setError({
-        code: "MISSING_ADAPTER",
-        message: resolved.diagnostic?.message ?? `Missing debug adapter for "${configuration.adapterId ?? configuration.type}".`,
-        recoverable: true
-      });
-      return this.enrichedState();
-    }
-    const effectiveConfiguration = this.resolveWorkspacePaths(configuration, root);
-    await this.service.start(configuration, effectiveConfiguration);
-    return this.enrichedState();
-  }
-
-  stop(): Promise<DebugState> {
-    return this.wrapState(() => this.service.stop());
   }
 
   restart(): Promise<DebugState> {
@@ -673,8 +818,8 @@ export class DesktopDebugService {
   }
 
   async dispose(): Promise<void> {
-    await this.service.stop();
-    this.killAdapter();
+    await this.service.stopAll();
+    this.killAllAdapters();
   }
 
   private async load(): Promise<void> {
@@ -707,7 +852,24 @@ export class DesktopDebugService {
       ...(await this.readLaunchFile(path.join(this.workspaceRoot, VSCODE_LAUNCH_FILE), ".vscode/launch.json")),
       ...(await this.readLaunchFile(path.join(this.workspaceRoot, LEVI_LAUNCH_FILE), ".levi/launch.json"))
     ];
-    this.service.setLaunchConfigurations(configs.length > 0 ? configs : this.detectLaunchConfigurations());
+    const launchEntries = configs.length > 0 ? configs : this.detectLaunchConfigurations();
+    this.service.setLaunchConfigurations(launchEntries);
+    const compoundEntries: DebugCompoundConfigurationEntry[] = [];
+    for (const source of [".vscode/launch.json", ".levi/launch.json"] as const) {
+      try {
+        const filePath = path.join(this.workspaceRoot, source === ".vscode/launch.json" ? VSCODE_LAUNCH_FILE : LEVI_LAUNCH_FILE);
+        const raw = await fs.readFile(filePath, "utf8");
+        const parsed = JSON.parse(stripJsonComments(raw)) as { compounds?: unknown };
+        const names = new Set(launchEntries.map((entry) => entry.name));
+        for (const compound of parseCompoundConfigurations(parsed.compounds, names, source)) {
+          compoundEntries.push({ ...compound, source });
+        }
+        this.compoundConfigurations = compoundEntries.map(({ source: _source, ...rest }) => rest);
+      } catch {
+        // ignore missing launch files
+      }
+    }
+    this.service.setCompoundConfigurations(compoundEntries);
   }
 
   private async ensureLeviLaunchFile(root: string): Promise<void> {
@@ -808,33 +970,44 @@ export class DesktopDebugService {
     if (!resolved.command) {
       throw new Error(resolved.diagnostic?.message ?? `Missing debug adapter for "${configuration.adapterId ?? configuration.type}".`);
     }
-    const adapter: AdapterConfig = {
-      command: resolved.command.command,
-      args: resolved.command.args,
-      env: resolved.command.launcher === "python" ? { PYTHONPATH: path.dirname(resolved.command.entryPath ?? root) } : undefined
-    };
+    if (resolved.command.entryPath) {
+      try {
+        await fs.access(resolved.command.entryPath);
+      } catch {
+        throw new Error("Adapter DAP entry point was not found.");
+      }
+    }
+    const metadata = this.adapterManager.getStatuses().find((item) => item.id === (configuration.adapterId ?? configuration.type));
+    const managedPath = metadata?.installPath;
+    const spawnEnv =
+      resolved.command.launcher === "python"
+        ? buildPythonAdapterEnvironment({
+            leviAdapterRoot: this.adapterManager.getManagedRoot(),
+            existingEnv: { ...process.env, ...(configuration.env ?? {}) },
+            managedInstallPath: managedPath
+          })
+        : { ...process.env, ...(configuration.env ?? {}) };
+
     try {
-      await fs.access(adapter.command);
+      await fs.access(resolved.command.command);
     } catch {
       throw new Error(`Debug adapter executable is not available for "${configuration.adapterId ?? configuration.type}".`);
     }
-    this.killAdapter();
-    const child = spawn(adapter.command, adapter.args, {
-      cwd: root,
+
+    const child = spawn(resolved.command.command, resolved.command.args, {
+      cwd: configuration.cwd ?? root,
       shell: false,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        ...(adapter.env ?? {}),
-        ...(configuration.env ?? {})
-      }
+      env: spawnEnv
     });
     this.adapterProcess = child;
+    const sessionKey = `${configuration.name}:${Date.now()}`;
+    this.adapterProcesses.set(sessionKey, child);
 
     child.stderr.on("data", (chunk: Buffer) => {
       const message = chunk.toString("utf8").trim();
-      if (message) {
+      if (message && !/(password|secret|token|key)=/i.test(message)) {
         this.service.setError({
           code: "ADAPTER_CRASH",
           message,
@@ -843,6 +1016,7 @@ export class DesktopDebugService {
       }
     });
     child.on("exit", (code, signal) => {
+      this.adapterProcesses.delete(sessionKey);
       if (this.adapterProcess !== child) return;
       this.adapterProcess = null;
       this.service.setState("Terminated");
@@ -863,6 +1037,7 @@ export class DesktopDebugService {
         return () => child.stdout.off("data", handler);
       },
       dispose: () => {
+        this.adapterProcesses.delete(sessionKey);
         if (this.adapterProcess === child) {
           this.adapterProcess = null;
         }
@@ -875,6 +1050,14 @@ export class DesktopDebugService {
     if (this.adapterProcess && !this.adapterProcess.killed) {
       this.adapterProcess.kill();
     }
+    this.adapterProcess = null;
+  }
+
+  private killAllAdapters(): void {
+    for (const child of this.adapterProcesses.values()) {
+      if (!child.killed) child.kill();
+    }
+    this.adapterProcesses.clear();
     this.adapterProcess = null;
   }
 }
