@@ -22,8 +22,10 @@ import type {
   DebugLoadVariablesRequest,
   DebugRemoveBreakpointRequest,
   DebugSetBreakpointRequest,
+  DebugSetExceptionBreakpointsRequest,
   DebugStartRequest,
-  DebugUpdateWatchRequest
+  DebugUpdateWatchRequest,
+  DebugCompletionRequest
 } from "../../src/features/debugger";
 import type {
   LeviApiWithWorkspaceTree,
@@ -94,6 +96,10 @@ const IPC_CHANNELS = {
   debugEvaluate: "levi:debug:evaluate",
   debugClearConsole: "levi:debug:clear-console",
   debugSelectStackFrame: "levi:debug:select-stack-frame",
+  debugSetExceptionBreakpoints: "levi:debug:set-exception-breakpoints",
+  debugRefreshLoadedSources: "levi:debug:refresh-loaded-sources",
+  debugCompletions: "levi:debug:completions",
+  debugCancelEvaluations: "levi:debug:cancel-evaluations",
   debugEvent: "levi:debug:event",
   devOpenProjectPath: "levi:dev:open-project-path",
   devInjectPlan: "levi:dev:inject-plan",
@@ -228,7 +234,17 @@ function isExecutionStreamEvent(value: unknown): value is ExecutionStreamEvent {
 
 function isDebugState(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
-  const state = value as { state?: unknown; breakpoints?: unknown; watches?: unknown; variables?: unknown; callStack?: unknown; console?: unknown };
+  const state = value as {
+    state?: unknown;
+    breakpoints?: unknown;
+    watches?: unknown;
+    variables?: unknown;
+    callStack?: unknown;
+    console?: unknown;
+    exceptionBreakpoints?: unknown;
+    inlineValues?: unknown;
+    evaluationCache?: unknown;
+  };
   return (
     typeof state.state === "string" &&
     ["Idle", "Starting", "Running", "Paused", "Stopping", "Stopped", "Terminated"].includes(state.state) &&
@@ -238,16 +254,20 @@ function isDebugState(value: unknown): boolean {
     Array.isArray(state.callStack) &&
     Array.isArray((state as { launchConfigurations?: unknown }).launchConfigurations) &&
     Array.isArray((state as { loadedSources?: unknown }).loadedSources) &&
-    Array.isArray(state.console)
+    Array.isArray(state.console) &&
+    Array.isArray(state.exceptionBreakpoints) &&
+    Array.isArray(state.inlineValues) &&
+    Array.isArray(state.evaluationCache)
   );
 }
 
 function isDebugEvent(value: unknown): value is DebugEvent {
   if (!value || typeof value !== "object") return false;
-  const event = value as { type?: unknown; state?: unknown; error?: unknown; entry?: unknown };
+  const event = value as { type?: unknown; state?: unknown; error?: unknown; entry?: unknown; result?: unknown };
   if (event.type === "state") return isDebugState(event.state);
   if (event.type === "console") return isDebugState(event.state) && typeof event.entry === "object";
   if (event.type === "navigation") return isDebugState(event.state) && typeof (event as { frame?: unknown }).frame === "object";
+  if (event.type === "evaluation") return isDebugState(event.state) && typeof event.result === "object";
   if (event.type === "error") {
     const error = event.error as { code?: unknown; message?: unknown; recoverable?: unknown } | undefined;
     return (
@@ -373,6 +393,11 @@ const leviApi: LeviApiWithWorkspaceTree = {
     evaluate: (request: DebugEvaluateRequest) => ipcRenderer.invoke(IPC_CHANNELS.debugEvaluate, request),
     clearConsole: () => ipcRenderer.invoke(IPC_CHANNELS.debugClearConsole),
     selectStackFrame: (request: { threadId: number; frameId: number }) => ipcRenderer.invoke(IPC_CHANNELS.debugSelectStackFrame, request),
+    setExceptionBreakpoints: (request: DebugSetExceptionBreakpointsRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.debugSetExceptionBreakpoints, request),
+    refreshLoadedSources: () => ipcRenderer.invoke(IPC_CHANNELS.debugRefreshLoadedSources),
+    getCompletions: (request: DebugCompletionRequest) => ipcRenderer.invoke(IPC_CHANNELS.debugCompletions, request),
+    cancelEvaluations: () => ipcRenderer.invoke(IPC_CHANNELS.debugCancelEvaluations),
     onEvent: (listener: (event: DebugEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
         if (isDebugEvent(payload)) listener(payload);

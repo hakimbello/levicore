@@ -11,9 +11,12 @@ import type {
   DebugLoadVariablesRequest,
   DebugRemoveBreakpointRequest,
   DebugSetBreakpointRequest,
+  DebugSetExceptionBreakpointsRequest,
   DebugStartRequest,
   DebugState,
-  DebugUpdateWatchRequest
+  DebugUpdateWatchRequest,
+  DebugCompletionRequest,
+  DebugCompletionItem
 } from "../features/debugger";
 
 export type OllamaStatus = {
@@ -836,6 +839,10 @@ export type LeviApi = {
     evaluate: (request: DebugEvaluateRequest) => Promise<DebugState>;
     clearConsole: () => Promise<DebugState>;
     selectStackFrame: (request: { threadId: number; frameId: number }) => Promise<DebugState>;
+    setExceptionBreakpoints: (request: DebugSetExceptionBreakpointsRequest) => Promise<DebugState>;
+    refreshLoadedSources: () => Promise<DebugState>;
+    getCompletions: (request: DebugCompletionRequest) => Promise<DebugCompletionItem[]>;
+    cancelEvaluations: () => Promise<void>;
     onEvent: (listener: (event: DebugEvent) => void) => () => void;
   };
   terminal: {

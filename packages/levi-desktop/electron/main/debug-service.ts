@@ -12,10 +12,16 @@ import type {
   DebugPersistenceState,
   DebugRemoveBreakpointRequest,
   DebugSetBreakpointRequest,
+  DebugSetExceptionBreakpointsRequest,
   DebugStartRequest,
   DebugState,
-  DebugUpdateWatchRequest
+  DebugUpdateWatchRequest,
+  DebugCompletionRequest,
+  DebugCompletionItem,
+  DebugExceptionBreakpoint,
+  DebugExceptionBreakpointFilter
 } from "../../src/features/debugger/DebugEvents";
+import { DEFAULT_EXCEPTION_BREAKPOINTS } from "../../src/features/debugger/DebugEvents";
 
 const DEBUG_STATE_FILE = path.join(".levi", "debug-state.json");
 const LEVI_LAUNCH_FILE = path.join(".levi", "launch.json");
@@ -199,6 +205,45 @@ function validateDebugEvaluateRequest(value: unknown): DebugEvaluateRequest {
   };
 }
 
+function validateDebugCompletionRequest(value: unknown): DebugCompletionRequest {
+  if (!isPlainObject(value)) throw new Error("Completion request is invalid.");
+  const column = Number(value.column);
+  if (!Number.isInteger(column) || column < 0 || column > 100000) {
+    throw new Error("Completion column is invalid.");
+  }
+  const frameId = value.frameId === undefined ? undefined : Number(value.frameId);
+  if (frameId !== undefined && (!Number.isInteger(frameId) || frameId < 0)) {
+    throw new Error("Frame id is invalid.");
+  }
+  return {
+    text: assertSmallString(value.text, "text", true) as string,
+    column,
+    frameId
+  };
+}
+
+function validateDebugSetExceptionBreakpointsRequest(value: unknown): DebugSetExceptionBreakpointsRequest {
+  if (!isPlainObject(value)) throw new Error("Exception breakpoint request is invalid.");
+  if (!Array.isArray(value.breakpoints) || value.breakpoints.length > 8) {
+    throw new Error("Exception breakpoints are invalid.");
+  }
+  const allowed = new Set(["all", "uncaught", "userUnhandled"]);
+  const breakpoints = value.breakpoints.map((item) => {
+    if (!isPlainObject(item)) throw new Error("Exception breakpoint entry is invalid.");
+    const filter = item.filter;
+    if (filter !== "all" && filter !== "uncaught" && filter !== "userUnhandled") {
+      throw new Error("Exception breakpoint filter is invalid.");
+    }
+    if (!allowed.has(filter)) throw new Error("Exception breakpoint filter is invalid.");
+    return {
+      filter: filter as DebugExceptionBreakpointFilter,
+      enabled: item.enabled === true,
+      label: assertSmallString(item.label, "label", true) as string
+    };
+  });
+  return { breakpoints };
+}
+
 function validateLoadVariablesRequest(value: unknown): DebugLoadVariablesRequest {
   if (!isPlainObject(value)) throw new Error("Variable load request is invalid.");
   const variablesReference = Number(value.variablesReference);
@@ -251,15 +296,22 @@ export function validateDebugRemoveBreakpointRequest(value: unknown): DebugRemov
 function emptyPersistence(): DebugPersistenceState {
   return {
     breakpoints: [],
-    watches: []
+    watches: [],
+    exceptionBreakpoints: DEFAULT_EXCEPTION_BREAKPOINTS.map((item) => ({ ...item }))
   };
 }
 
 function coercePersistence(value: unknown): DebugPersistenceState {
   if (!isPlainObject(value)) return emptyPersistence();
+  const exceptionBreakpoints = Array.isArray(value.exceptionBreakpoints)
+    ? (value.exceptionBreakpoints as DebugExceptionBreakpoint[])
+        .filter((item) => item && typeof item.filter === "string" && typeof item.enabled === "boolean")
+        .slice(0, 8)
+    : DEFAULT_EXCEPTION_BREAKPOINTS.map((item) => ({ ...item }));
   return {
     breakpoints: Array.isArray(value.breakpoints) ? (value.breakpoints as DebugPersistenceState["breakpoints"]) : [],
     watches: Array.isArray(value.watches) ? (value.watches as DebugPersistenceState["watches"]) : [],
+    exceptionBreakpoints,
     lastLaunchConfiguration: isPlainObject(value.lastLaunchConfiguration)
       ? validateDebugStartRequest({ configuration: value.lastLaunchConfiguration }).configuration
       : undefined,
@@ -408,6 +460,27 @@ export class DesktopDebugService {
     await this.ensureWorkspace();
     const request = validateDebugEvaluateRequest(rawRequest);
     return this.service.evaluateExpression(request.expression, request.context, request.frameId);
+  }
+
+  async setExceptionBreakpoints(rawRequest: unknown): Promise<DebugState> {
+    await this.ensureWorkspace();
+    const request = validateDebugSetExceptionBreakpointsRequest(rawRequest);
+    return this.service.setExceptionBreakpoints(request.breakpoints);
+  }
+
+  async refreshLoadedSources(): Promise<DebugState> {
+    await this.ensureWorkspace();
+    return this.service.refreshLoadedSources();
+  }
+
+  async getCompletions(rawRequest: unknown): Promise<DebugCompletionItem[]> {
+    await this.ensureWorkspace();
+    const request = validateDebugCompletionRequest(rawRequest);
+    return this.service.getCompletions(request.text, request.column, request.frameId);
+  }
+
+  cancelEvaluations(): void {
+    this.service.cancelEvaluations();
   }
 
   async clearConsole(): Promise<DebugState> {

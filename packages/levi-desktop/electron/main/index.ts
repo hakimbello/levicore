@@ -2075,6 +2075,22 @@ function registerIpc(): void {
     assertNoIpcArgs(args);
     return debugService.selectStackFrame(request);
   });
+  ipcMain.handle(IPC_CHANNELS.debugSetExceptionBreakpoints, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.setExceptionBreakpoints(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.debugRefreshLoadedSources, async (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.refreshLoadedSources();
+  });
+  ipcMain.handle(IPC_CHANNELS.debugCompletions, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.getCompletions(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.debugCancelEvaluations, (_event, ...args) => {
+    assertNoIpcArgs(args);
+    debugService.cancelEvaluations();
+  });
   ipcMain.handle(IPC_CHANNELS.editsPropose, (event, rawRequest) => {
     const eventWindow = BrowserWindow.fromWebContents(event.sender);
     if (!eventWindow) {
