@@ -1070,6 +1070,50 @@ function createDefaultApi(): LeviApi {
       revealCwd: vi.fn(async () => "C:\\Users\\developer\\Project"),
       onData: vi.fn(() => () => undefined)
     },
+    tasks: {
+      list: vi.fn(async () => ({
+        detected: [
+          {
+            id: "builtin:build",
+            label: "Build",
+            source: "builtin" as const,
+            group: "build" as const,
+            command: "npm.cmd",
+            args: ["run", "build"],
+            problemMatchers: ["$tsc"]
+          }
+        ],
+        recent: [],
+        running: [],
+        failed: [],
+        pinned: []
+      })),
+      run: vi.fn(async () => ({
+        id: "run-1",
+        taskId: "builtin:build",
+        label: "Build",
+        status: "running" as const,
+        terminalSessionId: "terminal-1",
+        startedAt: new Date().toISOString()
+      })),
+      cancel: vi.fn(async () => ({
+        id: "run-1",
+        taskId: "builtin:build",
+        label: "Build",
+        status: "cancelled" as const
+      })),
+      history: vi.fn(async () => []),
+      problems: vi.fn(async () => []),
+      output: vi.fn(async () => []),
+      pin: vi.fn(async (_request) => ({
+        detected: [],
+        recent: [],
+        running: [],
+        failed: [],
+        pinned: ["builtin:build"]
+      })),
+      onEvent: vi.fn(() => () => undefined)
+    },
     conversation: {
       start: vi.fn(async () => ({
         requestId: "conversation-1"

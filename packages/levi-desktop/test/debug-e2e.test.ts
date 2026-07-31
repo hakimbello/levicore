@@ -62,8 +62,8 @@ describe("debug launch integration failures", () => {
     ).toThrow(/recursive/i);
   });
 
-  it("reports unsupported preLaunchTask diagnostics", () => {
-    const result = runDebugTaskBoundary("build", "preLaunch");
+  it("reports unsupported preLaunchTask diagnostics", async () => {
+    const result = await runDebugTaskBoundary("build", "preLaunch");
     expect(result.supported).toBe(false);
     expect(result.message).toMatch(/task runner/i);
   });

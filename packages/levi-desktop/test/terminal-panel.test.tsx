@@ -38,6 +38,9 @@ describe("BottomPanel renderer integration", () => {
         debugConsole={[]}
         onEvaluateDebug={vi.fn(async () => undefined)}
         onClearDebugConsole={vi.fn(async () => undefined)}
+        problems={[]}
+        output={[]}
+        onOpenProblem={vi.fn()}
       />
     );
 
@@ -59,6 +62,9 @@ describe("BottomPanel renderer integration", () => {
         debugConsole={[{ id: "1", timestamp: "now", category: "stdout", output: "hello" }]}
         onEvaluateDebug={vi.fn(async () => undefined)}
         onClearDebugConsole={vi.fn(async () => undefined)}
+        problems={[]}
+        output={[]}
+        onOpenProblem={vi.fn()}
       />
     );
 

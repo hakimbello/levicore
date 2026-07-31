@@ -116,6 +116,8 @@ describe("Levi desktop Home", () => {
     await user.tab();
     expect(screen.getByRole("button", { name: "Run and Debug" })).toHaveFocus();
     await user.tab();
+    expect(screen.getByRole("button", { name: "Tasks" })).toHaveFocus();
+    await user.tab();
     expect(screen.getByRole("button", { name: "Source Control" })).toHaveFocus();
     await waitForInitialBridge();
   });
