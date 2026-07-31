@@ -12,6 +12,14 @@ import type {
 } from "../src/types/levi-api";
 import type { DebugEvent } from "../src/features/debugger";
 
+class ResizeObserverMock {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+
 vi.mock("../src/monaco-setup", () => ({
   loader: {
     config: vi.fn()
@@ -1013,11 +1021,53 @@ function createDefaultApi(): LeviApi {
     terminal: {
       create: vi.fn(async () => ({
         id: "terminal-1",
-        cwd: "C:\\Users\\developer\\Project"
+        cwd: "C:\\Users\\developer\\Project",
+        name: "Terminal 1",
+        shellKind: "powershell"
       })),
       write: vi.fn(async () => undefined),
       resize: vi.fn(async () => undefined),
       dispose: vi.fn(async () => undefined),
+      kill: vi.fn(async () => ({
+        id: "terminal-1",
+        name: "Terminal 1",
+        cwd: "C:\\Users\\developer\\Project",
+        shellKind: "powershell",
+        alive: false,
+        createdAt: new Date().toISOString()
+      })),
+      rename: vi.fn(async () => ({
+        id: "terminal-1",
+        name: "Terminal 1",
+        cwd: "C:\\Users\\developer\\Project",
+        shellKind: "powershell",
+        alive: true,
+        createdAt: new Date().toISOString()
+      })),
+      list: vi.fn(async () => []),
+      split: vi.fn(async () => ({
+        id: "terminal-2",
+        cwd: "C:\\Users\\developer\\Project",
+        name: "Terminal 2",
+        shellKind: "powershell"
+      })),
+      restart: vi.fn(async () => ({
+        id: "terminal-3",
+        cwd: "C:\\Users\\developer\\Project",
+        name: "Terminal 1",
+        shellKind: "powershell"
+      })),
+      getLayout: vi.fn(async () => ({
+        tabs: [{ id: "tab-1", name: "Terminal 1", cwd: "C:\\Users\\developer\\Project" }],
+        activeTabId: "tab-1",
+        panelTab: "terminal" as const,
+        panelVisible: false,
+        panelMaximized: false,
+        panelHeightPx: 280,
+        splitLayout: { type: "pane" as const, tabId: "tab-1" }
+      })),
+      setLayout: vi.fn(async (layout) => layout),
+      revealCwd: vi.fn(async () => "C:\\Users\\developer\\Project"),
       onData: vi.fn(() => () => undefined)
     },
     conversation: {

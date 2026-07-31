@@ -12,6 +12,14 @@ vi.mock("@xterm/xterm", () => {
     write = vi.fn();
     dispose = vi.fn();
     onData = vi.fn(() => ({ dispose: vi.fn() }));
+    onSelectionChange = vi.fn(() => ({ dispose: vi.fn() }));
+    attachCustomKeyEventHandler = vi.fn();
+    getSelection = vi.fn(() => "");
+    hasSelection = vi.fn(() => false);
+    clearSelection = vi.fn();
+    scrollToLine = vi.fn();
+    select = vi.fn();
+    buffer = { active: { length: 0, getLine: vi.fn() } };
   }
   return { Terminal: MockTerminal };
 });
@@ -260,8 +268,13 @@ describe("Levi desktop Home", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(screen.getByRole("button", { name: "Expand" }));
+    await waitFor(() => expect(window.levi.terminal.getLayout).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "Show" }));
 
-    await waitFor(() => expect(window.levi.terminal.create).toHaveBeenCalledWith({ cols: 96, rows: 10 }));
+    await waitFor(() =>
+      expect(window.levi.terminal.create).toHaveBeenCalledWith(
+        expect.objectContaining({ cols: 96, rows: 10, cwd: expect.any(String) })
+      )
+    );
   });
 });

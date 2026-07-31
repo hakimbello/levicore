@@ -50,8 +50,8 @@ describe("Levi desktop lazy loading", () => {
   it("loads xterm only through the terminal host module", () => {
     const hostSource = readSource("src/features/terminal/TerminalHost.tsx");
     expect(hostSource).toMatch(/@xterm\/xterm/);
-    const panelSource = readSource("src/features/terminal/TerminalPanel.tsx");
-    expect(panelSource).toMatch(/import\("\.\/TerminalHost"\)/);
+    const panelSource = readSource("src/features/terminal/BottomPanel.tsx");
+    expect(panelSource).toMatch(/import\("\.\/TerminalSplitView"\)/);
   });
 
   it("lazy-loads planning, execution, and diff review panels from Home", () => {
