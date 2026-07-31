@@ -7,10 +7,13 @@ import type {
 } from "./workspace-tree-api";
 import type {
   DebugEvent,
+  DebugEvaluateRequest,
+  DebugLoadVariablesRequest,
   DebugRemoveBreakpointRequest,
   DebugSetBreakpointRequest,
   DebugStartRequest,
-  DebugState
+  DebugState,
+  DebugUpdateWatchRequest
 } from "../features/debugger";
 
 export type OllamaStatus = {
@@ -824,8 +827,15 @@ export type LeviApi = {
     removeBreakpoint: (request: DebugRemoveBreakpointRequest) => Promise<DebugState>;
     getBreakpoints: () => Promise<DebugState["breakpoints"]>;
     getState: () => Promise<DebugState>;
+    selectConfiguration: (name: string) => Promise<DebugState>;
+    createLaunchConfig: () => Promise<DebugState>;
     addWatch: (expression: string) => Promise<DebugState>;
+    updateWatch: (request: DebugUpdateWatchRequest) => Promise<DebugState>;
     removeWatch: (id: string) => Promise<DebugState>;
+    loadVariables: (request: DebugLoadVariablesRequest) => Promise<DebugState>;
+    evaluate: (request: DebugEvaluateRequest) => Promise<DebugState>;
+    clearConsole: () => Promise<DebugState>;
+    selectStackFrame: (request: { threadId: number; frameId: number }) => Promise<DebugState>;
     onEvent: (listener: (event: DebugEvent) => void) => () => void;
   };
   terminal: {

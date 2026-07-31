@@ -58,4 +58,18 @@ export class WatchStore {
     this.expressions.set(id, updated);
     return updated;
   }
+
+  updateExpression(id: string, expression: string): DebugWatchExpression | null {
+    const watch = this.expressions.get(id);
+    if (!watch) return null;
+    const updated = { ...watch, expression, value: undefined, error: undefined, updatedAt: now() };
+    this.expressions.set(id, updated);
+    return updated;
+  }
+
+  clearValues(): void {
+    for (const [id, watch] of this.expressions) {
+      this.expressions.set(id, { ...watch, value: undefined, error: undefined, updatedAt: now() });
+    }
+  }
 }

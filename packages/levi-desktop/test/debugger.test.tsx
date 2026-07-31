@@ -1,7 +1,10 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { BreakpointManager, DebugSession, WatchStore, encodeDapMessage } from "../src/features/debugger";
-import { validateDebugSetBreakpointRequest, validateDebugStartRequest } from "../electron/main/debug-service";
+import { BreakpointManager, DebugService, DebugSession, VariableStore, WatchStore, encodeDapMessage } from "../src/features/debugger";
+import { DesktopDebugService, validateDebugSetBreakpointRequest, validateDebugStartRequest } from "../electron/main/debug-service";
 import { App } from "../src/app/App";
 
 vi.mock("@xterm/xterm", () => {
@@ -77,6 +80,13 @@ describe("DAP debugger foundation", () => {
     const watch = watches.add("count");
     watches.setValue(watch.id, "4");
     expect(watches.list()[0]).toMatchObject({ expression: "count", value: "4" });
+
+    const variables = new VariableStore();
+    variables.replaceScopes([{ name: "Local", variablesReference: 1, expensive: false, variables: [{ name: "obj", value: "{...}", variablesReference: 2 }] }]);
+    variables.setExpanded(2, [{ name: "child", value: "1" }]);
+    expect(variables.list()[0].variables[0]).toMatchObject({ expanded: true, children: [{ name: "child", value: "1" }] });
+    variables.collapseVariables(2);
+    expect(variables.list()[0].variables[0]).toMatchObject({ expanded: false, children: [] });
   });
 
   it("validates debug IPC requests as workspace-relative and adapter-id based", () => {
@@ -111,6 +121,105 @@ describe("DAP debugger foundation", () => {
       }).configuration
     ).toMatchObject({ type: "node", program: "src/main.ts", args: ["--inspect"] });
   });
+
+  it("hydrates threads, stack frames, scopes, variables, watches, and console output from DAP", async () => {
+    let dataListener: ((data: string) => void) | undefined;
+    let responseSeq = 100;
+    const service = new DebugService({
+      createAdapter: async () => ({
+        onData: (listener) => {
+          dataListener = listener;
+          return () => undefined;
+        },
+        write: (message) => {
+          const payload = JSON.parse(message.slice(message.indexOf("\r\n\r\n") + 4)) as { seq: number; command: string };
+          const bodies: Record<string, unknown> = {
+            initialize: {},
+            launch: {},
+            configurationDone: {},
+            threads: { threads: [{ id: 7, name: "Main Thread" }] },
+            stackTrace: {
+              stackFrames: [
+                {
+                  id: 42,
+                  name: "main",
+                  source: { path: "C:/repo/src/main.ts", name: "main.ts" },
+                  line: 12,
+                  column: 3
+                }
+              ]
+            },
+            scopes: { scopes: [{ name: "Local", variablesReference: 8, expensive: false }] },
+            variables: { variables: [{ name: "count", value: "4", type: "number", variablesReference: 0 }] },
+            evaluate: { result: "4" },
+            setBreakpoints: { breakpoints: [{ line: 12, verified: true }] },
+            loadedSources: { sources: [{ name: "main.ts", path: "C:/repo/src/main.ts" }] }
+          };
+          dataListener?.(
+            encodeDapMessage({
+              seq: responseSeq++,
+              type: "response",
+              request_seq: payload.seq,
+              command: payload.command,
+              success: true,
+              body: bodies[payload.command] ?? {}
+            })
+          );
+        },
+        dispose: vi.fn()
+      }),
+      resolveSourcePath: (relativePath) => `C:/repo/${relativePath}`,
+      relativizeSourcePath: (sourcePath) => sourcePath.replace("C:/repo/", "")
+    });
+    await service.addWatch("count");
+    await service.start({ type: "node", request: "launch", name: "Node Launch", program: "src/main.ts" });
+
+    dataListener?.(
+      encodeDapMessage({
+        seq: responseSeq++,
+        type: "event",
+        event: "stopped",
+        body: { threadId: 7, reason: "breakpoint" }
+      })
+    );
+    dataListener?.(
+      encodeDapMessage({
+        seq: responseSeq++,
+        type: "event",
+        event: "output",
+        body: { category: "stdout", output: "hello\n" }
+      })
+    );
+
+    await waitFor(() => expect(service.snapshot().activeStackFrame?.relativePath).toBe("src/main.ts"));
+    expect(service.snapshot().variables[0]).toMatchObject({ name: "Local", variables: [{ name: "count", value: "4" }] });
+    expect(service.snapshot().watches[0]).toMatchObject({ expression: "count", value: "4" });
+    expect(service.snapshot().console[0]).toMatchObject({ category: "stdout", output: "hello\n" });
+  });
+
+  it("creates and loads workspace launch.json configurations with VS Code-compatible names", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "levi-debug-launch-"));
+    const service = new DesktopDebugService(() => root);
+
+    const state = await service.getState();
+
+    expect(state.launchConfigurations.map((entry) => entry.name)).toEqual(
+      expect.arrayContaining(["Node Launch", "Node Attach", "Python Launch", "Chrome Attach"])
+    );
+    await expect(fs.readFile(path.join(root, ".levi", "launch.json"), "utf8")).resolves.toContain("Node Launch");
+
+    const vscodeRoot = await fs.mkdtemp(path.join(os.tmpdir(), "levi-debug-vscode-launch-"));
+    await fs.mkdir(path.join(vscodeRoot, ".vscode"), { recursive: true });
+    await fs.writeFile(
+      path.join(vscodeRoot, ".vscode", "launch.json"),
+      JSON.stringify({ version: "0.2.0", configurations: [{ type: "node", request: "launch", name: "Workspace App", program: "${workspaceFolder}/app.js" }] }),
+      "utf8"
+    );
+    const vscodeService = new DesktopDebugService(() => vscodeRoot);
+    const vscodeState = await vscodeService.getState();
+
+    expect(vscodeState.launchConfigurations[0]).toMatchObject({ name: "Workspace App", source: ".vscode/launch.json" });
+  });
 });
 
 describe("Run and Debug view", () => {
@@ -126,8 +235,10 @@ describe("Run and Debug view", () => {
     expect(await screen.findByRole("region", { name: "Run and Debug" })).toBeInTheDocument();
 
     const launch = screen.getByRole("region", { name: "Launch configuration" });
-    await user.clear(within(launch).getByLabelText("Program"));
-    await user.type(within(launch).getByLabelText("Program"), "src/main.ts");
+    const programInput = within(launch).getByLabelText("Program");
+    await waitFor(() => expect(programInput).toHaveValue("src/main.ts"));
+    await user.clear(programInput);
+    await user.type(programInput, "src/main.ts");
     await user.click(within(launch).getByRole("button", { name: "Start Debugging" }));
     await waitFor(() =>
       expect(window.levi.debug.start).toHaveBeenCalledWith({

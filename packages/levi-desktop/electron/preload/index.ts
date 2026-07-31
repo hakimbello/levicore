@@ -18,9 +18,12 @@ import type {
 } from "../../src/types/levi-api";
 import type {
   DebugEvent,
+  DebugEvaluateRequest,
+  DebugLoadVariablesRequest,
   DebugRemoveBreakpointRequest,
   DebugSetBreakpointRequest,
-  DebugStartRequest
+  DebugStartRequest,
+  DebugUpdateWatchRequest
 } from "../../src/features/debugger";
 import type {
   LeviApiWithWorkspaceTree,
@@ -82,8 +85,15 @@ const IPC_CHANNELS = {
   debugRemoveBreakpoint: "levi:debug:remove-breakpoint",
   debugGetBreakpoints: "levi:debug:get-breakpoints",
   debugGetState: "levi:debug:get-state",
+  debugSelectConfiguration: "levi:debug:select-configuration",
+  debugCreateLaunchConfig: "levi:debug:create-launch-config",
   debugAddWatch: "levi:debug:add-watch",
+  debugUpdateWatch: "levi:debug:update-watch",
   debugRemoveWatch: "levi:debug:remove-watch",
+  debugLoadVariables: "levi:debug:load-variables",
+  debugEvaluate: "levi:debug:evaluate",
+  debugClearConsole: "levi:debug:clear-console",
+  debugSelectStackFrame: "levi:debug:select-stack-frame",
   debugEvent: "levi:debug:event",
   devOpenProjectPath: "levi:dev:open-project-path",
   devInjectPlan: "levi:dev:inject-plan",
@@ -226,6 +236,8 @@ function isDebugState(value: unknown): boolean {
     Array.isArray(state.watches) &&
     Array.isArray(state.variables) &&
     Array.isArray(state.callStack) &&
+    Array.isArray((state as { launchConfigurations?: unknown }).launchConfigurations) &&
+    Array.isArray((state as { loadedSources?: unknown }).loadedSources) &&
     Array.isArray(state.console)
   );
 }
@@ -235,6 +247,7 @@ function isDebugEvent(value: unknown): value is DebugEvent {
   const event = value as { type?: unknown; state?: unknown; error?: unknown; entry?: unknown };
   if (event.type === "state") return isDebugState(event.state);
   if (event.type === "console") return isDebugState(event.state) && typeof event.entry === "object";
+  if (event.type === "navigation") return isDebugState(event.state) && typeof (event as { frame?: unknown }).frame === "object";
   if (event.type === "error") {
     const error = event.error as { code?: unknown; message?: unknown; recoverable?: unknown } | undefined;
     return (
@@ -351,8 +364,15 @@ const leviApi: LeviApiWithWorkspaceTree = {
     removeBreakpoint: (request: DebugRemoveBreakpointRequest) => ipcRenderer.invoke(IPC_CHANNELS.debugRemoveBreakpoint, request),
     getBreakpoints: () => ipcRenderer.invoke(IPC_CHANNELS.debugGetBreakpoints),
     getState: () => ipcRenderer.invoke(IPC_CHANNELS.debugGetState),
+    selectConfiguration: (name: string) => ipcRenderer.invoke(IPC_CHANNELS.debugSelectConfiguration, name),
+    createLaunchConfig: () => ipcRenderer.invoke(IPC_CHANNELS.debugCreateLaunchConfig),
     addWatch: (expression: string) => ipcRenderer.invoke(IPC_CHANNELS.debugAddWatch, expression),
+    updateWatch: (request: DebugUpdateWatchRequest) => ipcRenderer.invoke(IPC_CHANNELS.debugUpdateWatch, request),
     removeWatch: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.debugRemoveWatch, id),
+    loadVariables: (request: DebugLoadVariablesRequest) => ipcRenderer.invoke(IPC_CHANNELS.debugLoadVariables, request),
+    evaluate: (request: DebugEvaluateRequest) => ipcRenderer.invoke(IPC_CHANNELS.debugEvaluate, request),
+    clearConsole: () => ipcRenderer.invoke(IPC_CHANNELS.debugClearConsole),
+    selectStackFrame: (request: { threadId: number; frameId: number }) => ipcRenderer.invoke(IPC_CHANNELS.debugSelectStackFrame, request),
     onEvent: (listener: (event: DebugEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
         if (isDebugEvent(payload)) listener(payload);

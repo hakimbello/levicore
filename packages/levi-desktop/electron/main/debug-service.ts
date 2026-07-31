@@ -5,15 +5,21 @@ import { DebugService as CoreDebugService } from "../../src/features/debugger/De
 import type { DebugTransport } from "../../src/features/debugger/DebugSession";
 import type {
   DebugEvent,
+  DebugEvaluateRequest,
+  DebugLaunchConfigurationEntry,
   DebugLaunchConfiguration,
+  DebugLoadVariablesRequest,
   DebugPersistenceState,
   DebugRemoveBreakpointRequest,
   DebugSetBreakpointRequest,
   DebugStartRequest,
-  DebugState
+  DebugState,
+  DebugUpdateWatchRequest
 } from "../../src/features/debugger/DebugEvents";
 
 const DEBUG_STATE_FILE = path.join(".levi", "debug-state.json");
+const LEVI_LAUNCH_FILE = path.join(".levi", "launch.json");
+const VSCODE_LAUNCH_FILE = path.join(".vscode", "launch.json");
 const MAX_STRING_LENGTH = 4000;
 const MAX_ARGS = 64;
 
@@ -31,6 +37,39 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 function normalizeSlashes(value: string): string {
   return value.replace(/\\/g, "/");
 }
+
+const DEFAULT_LAUNCH_CONFIGURATIONS: DebugLaunchConfiguration[] = [
+  {
+    type: "node",
+    request: "launch",
+    name: "Node Launch",
+    adapterId: "node",
+    program: "${workspaceFolder}/src/index.js",
+    console: "internalConsole"
+  },
+  {
+    type: "node",
+    request: "attach",
+    name: "Node Attach",
+    adapterId: "node",
+    dap: { port: 9229 }
+  },
+  {
+    type: "python",
+    request: "launch",
+    name: "Python Launch",
+    adapterId: "python",
+    program: "${workspaceFolder}/main.py",
+    console: "internalConsole"
+  },
+  {
+    type: "chrome",
+    request: "attach",
+    name: "Chrome Attach",
+    adapterId: "chrome",
+    dap: { port: 9222, webRoot: "${workspaceFolder}" }
+  }
+];
 
 function assertSafeRelativePath(value: unknown, fieldName: string): string {
   if (typeof value !== "string" || value.length === 0 || value.length > 500 || value.includes("\0")) {
@@ -95,7 +134,14 @@ function sanitizeEnvironment(value: unknown): Record<string, string> | undefined
 }
 
 export function validateDebugStartRequest(value: unknown): DebugStartRequest {
-  if (!isPlainObject(value) || !isPlainObject(value.configuration)) {
+  if (!isPlainObject(value)) {
+    throw new Error("Debug start request is invalid.");
+  }
+  const configurationName = assertSmallString(value.configurationName, "configurationName");
+  if (configurationName && value.configuration === undefined) {
+    return { configurationName };
+  }
+  if (!isPlainObject(value.configuration)) {
     throw new Error("Debug start request is invalid.");
   }
   const configuration = value.configuration;
@@ -110,6 +156,7 @@ export function validateDebugStartRequest(value: unknown): DebugStartRequest {
   const program = configuration.program === undefined ? undefined : assertSafeRelativePath(configuration.program, "program");
   const cwd = configuration.cwd === undefined ? undefined : assertSafeRelativePath(configuration.cwd, "cwd");
   return {
+    configurationName,
     configuration: {
       type,
       request,
@@ -128,6 +175,37 @@ export function validateDebugStartRequest(value: unknown): DebugStartRequest {
       dap: sanitizeDapArguments(configuration.dap)
     }
   };
+}
+
+function validateDebugUpdateWatchRequest(value: unknown): DebugUpdateWatchRequest {
+  if (!isPlainObject(value)) throw new Error("Watch update request is invalid.");
+  return {
+    id: assertSmallString(value.id, "watch id", true) as string,
+    expression: assertSmallString(value.expression, "watch expression", true) as string
+  };
+}
+
+function validateDebugEvaluateRequest(value: unknown): DebugEvaluateRequest {
+  if (!isPlainObject(value)) throw new Error("Evaluate request is invalid.");
+  const context = value.context === "watch" || value.context === "hover" ? value.context : "repl";
+  const frameId = value.frameId === undefined ? undefined : Number(value.frameId);
+  if (frameId !== undefined && (!Number.isInteger(frameId) || frameId < 0)) {
+    throw new Error("Frame id is invalid.");
+  }
+  return {
+    expression: assertSmallString(value.expression, "expression", true) as string,
+    context,
+    frameId
+  };
+}
+
+function validateLoadVariablesRequest(value: unknown): DebugLoadVariablesRequest {
+  if (!isPlainObject(value)) throw new Error("Variable load request is invalid.");
+  const variablesReference = Number(value.variablesReference);
+  if (!Number.isInteger(variablesReference) || variablesReference < 1) {
+    throw new Error("Variables reference is invalid.");
+  }
+  return { variablesReference };
 }
 
 export function validateDebugSetBreakpointRequest(value: unknown): DebugSetBreakpointRequest {
@@ -184,8 +262,30 @@ function coercePersistence(value: unknown): DebugPersistenceState {
     watches: Array.isArray(value.watches) ? (value.watches as DebugPersistenceState["watches"]) : [],
     lastLaunchConfiguration: isPlainObject(value.lastLaunchConfiguration)
       ? validateDebugStartRequest({ configuration: value.lastLaunchConfiguration }).configuration
-      : undefined
+      : undefined,
+    selectedLaunchConfigurationName: assertSmallString(value.selectedLaunchConfigurationName, "selectedLaunchConfigurationName")
   };
+}
+
+function stripJsonComments(value: string): string {
+  return value
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+}
+
+function launchFilePayload(configurations = DEFAULT_LAUNCH_CONFIGURATIONS): string {
+  return JSON.stringify({ version: "0.2.0", configurations }, null, 2);
+}
+
+function substituteWorkspaceFolder(value: Record<string, unknown> | undefined, root: string): Record<string, unknown> | undefined {
+  if (!value) return undefined;
+  const substitute = (item: unknown): unknown => {
+    if (typeof item === "string") return item.replace(/\$\{workspaceFolder\}/g, root);
+    if (Array.isArray(item)) return item.map(substitute);
+    if (isPlainObject(item)) return Object.fromEntries(Object.entries(item).map(([key, child]) => [key, substitute(child)]));
+    return item;
+  };
+  return substitute(value) as Record<string, unknown>;
 }
 
 export class DesktopDebugService {
@@ -196,6 +296,8 @@ export class DesktopDebugService {
   constructor(private readonly getWorkspaceRoot: WorkspaceProvider) {
     this.service = new CoreDebugService({
       createAdapter: (configuration) => this.createAdapter(configuration),
+      resolveSourcePath: (relativePath) => this.resolveSourcePath(relativePath),
+      relativizeSourcePath: (sourcePath) => this.relativeSourcePath(sourcePath),
       onDidChangePersistence: (state) => this.persist(state)
     });
   }
@@ -213,6 +315,7 @@ export class DesktopDebugService {
     if (this.workspaceRoot !== realRoot) {
       this.workspaceRoot = realRoot;
       await this.load();
+      await this.refreshLaunchConfigurations();
     }
     return realRoot;
   }
@@ -223,9 +326,17 @@ export class DesktopDebugService {
   }
 
   async start(rawRequest: unknown): Promise<DebugState> {
-    await this.ensureWorkspace();
+    const root = await this.ensureWorkspace();
     const request = validateDebugStartRequest(rawRequest);
-    return this.service.start(request.configuration);
+    const configuration =
+      request.configuration ??
+      this.service.snapshot().launchConfigurations.find((entry) => entry.name === request.configurationName)?.configuration ??
+      this.service.snapshot().launchConfigurations.find((entry) => entry.name === this.service.snapshot().selectedLaunchConfigurationName)?.configuration;
+    if (!configuration) {
+      throw new Error("No debug configuration is selected.");
+    }
+    const effectiveConfiguration = this.resolveWorkspacePaths(configuration, root);
+    return this.service.start(configuration, effectiveConfiguration);
   }
 
   stop(): Promise<DebugState> {
@@ -233,7 +344,9 @@ export class DesktopDebugService {
   }
 
   restart(): Promise<DebugState> {
-    return this.service.restart();
+    const configuration = this.service.snapshot().lastLaunchConfiguration;
+    if (!configuration) return this.service.restart();
+    return this.start({ configuration });
   }
 
   pause(): Promise<DebugState> {
@@ -279,6 +392,52 @@ export class DesktopDebugService {
     return this.service.removeWatch(id);
   }
 
+  async updateWatch(rawRequest: unknown): Promise<DebugState> {
+    await this.ensureWorkspace();
+    const request = validateDebugUpdateWatchRequest(rawRequest);
+    return this.service.updateWatch(request.id, request.expression);
+  }
+
+  async loadVariables(rawRequest: unknown): Promise<DebugState> {
+    await this.ensureWorkspace();
+    const request = validateLoadVariablesRequest(rawRequest);
+    return this.service.loadVariables(request.variablesReference);
+  }
+
+  async evaluate(rawRequest: unknown): Promise<DebugState> {
+    await this.ensureWorkspace();
+    const request = validateDebugEvaluateRequest(rawRequest);
+    return this.service.evaluateExpression(request.expression, request.context, request.frameId);
+  }
+
+  async clearConsole(): Promise<DebugState> {
+    await this.ensureWorkspace();
+    return this.service.clearConsole();
+  }
+
+  async selectConfiguration(rawName: unknown): Promise<DebugState> {
+    await this.ensureWorkspace();
+    const name = assertSmallString(rawName, "configuration name", true) as string;
+    return this.service.selectLaunchConfiguration(name);
+  }
+
+  async createLaunchConfig(): Promise<DebugState> {
+    const root = await this.ensureWorkspace();
+    await this.ensureLeviLaunchFile(root);
+    await this.refreshLaunchConfigurations();
+    return this.service.snapshot();
+  }
+
+  async selectStackFrame(rawRequest: unknown): Promise<DebugState> {
+    if (!isPlainObject(rawRequest)) throw new Error("Stack frame request is invalid.");
+    const threadId = Number(rawRequest.threadId);
+    const frameId = Number(rawRequest.frameId);
+    if (!Number.isInteger(threadId) || !Number.isInteger(frameId)) {
+      throw new Error("Stack frame request is invalid.");
+    }
+    return this.service.selectStackFrame(threadId, frameId);
+  }
+
   async dispose(): Promise<void> {
     await this.service.stop();
     this.killAdapter();
@@ -304,10 +463,78 @@ export class DesktopDebugService {
     await fs.writeFile(filePath, JSON.stringify(state, null, 2), "utf8");
   }
 
+  private async refreshLaunchConfigurations(): Promise<void> {
+    if (!this.workspaceRoot) {
+      this.service.setLaunchConfigurations([]);
+      return;
+    }
+    await this.ensureLeviLaunchFile(this.workspaceRoot);
+    const configs = [
+      ...(await this.readLaunchFile(path.join(this.workspaceRoot, VSCODE_LAUNCH_FILE), ".vscode/launch.json")),
+      ...(await this.readLaunchFile(path.join(this.workspaceRoot, LEVI_LAUNCH_FILE), ".levi/launch.json"))
+    ];
+    this.service.setLaunchConfigurations(configs.length > 0 ? configs : this.detectLaunchConfigurations());
+  }
+
+  private async ensureLeviLaunchFile(root: string): Promise<void> {
+    const leviLaunchPath = path.join(root, LEVI_LAUNCH_FILE);
+    const vscodeLaunchPath = path.join(root, VSCODE_LAUNCH_FILE);
+    try {
+      await fs.access(leviLaunchPath);
+      return;
+    } catch {
+      try {
+        await fs.access(vscodeLaunchPath);
+        return;
+      } catch {
+        await fs.mkdir(path.dirname(leviLaunchPath), { recursive: true });
+        await fs.writeFile(leviLaunchPath, launchFilePayload(), "utf8");
+      }
+    }
+  }
+
+  private async readLaunchFile(filePath: string, source: DebugLaunchConfigurationEntry["source"]): Promise<DebugLaunchConfigurationEntry[]> {
+    try {
+      const raw = await fs.readFile(filePath, "utf8");
+      const parsed = JSON.parse(stripJsonComments(raw)) as { configurations?: unknown };
+      const configurations = Array.isArray(parsed.configurations) ? parsed.configurations : [];
+      return configurations
+        .map((configuration, index): DebugLaunchConfigurationEntry | null => {
+          try {
+            const validated = validateDebugStartRequest({ configuration }).configuration;
+            if (!validated) return null;
+            return {
+              id: `${source}:${validated.name}`,
+              name: validated.name,
+              configuration: validated,
+              source,
+              default: index === 0
+            } satisfies DebugLaunchConfigurationEntry;
+          } catch {
+            return null;
+          }
+        })
+        .filter((entry): entry is DebugLaunchConfigurationEntry => entry !== null);
+    } catch {
+      return [];
+    }
+  }
+
+  private detectLaunchConfigurations(): DebugLaunchConfigurationEntry[] {
+    return DEFAULT_LAUNCH_CONFIGURATIONS.map((configuration, index) => ({
+      id: `detected:${configuration.name}`,
+      name: configuration.name,
+      configuration,
+      source: "detected",
+      default: index === 0
+    }));
+  }
+
   private resolveWorkspacePaths(configuration: DebugLaunchConfiguration, root: string): DebugLaunchConfiguration {
     const resolvePath = (relativePath: string | undefined) => {
       if (!relativePath) return undefined;
-      const absolute = path.resolve(root, relativePath);
+      const substituted = relativePath.replace(/\$\{workspaceFolder\}/g, root);
+      const absolute = path.isAbsolute(substituted) ? path.resolve(substituted) : path.resolve(root, substituted);
       const relative = path.relative(root, absolute);
       if (relative.startsWith("..") || path.isAbsolute(relative)) {
         throw new Error("Debug paths must stay inside the workspace.");
@@ -317,8 +544,27 @@ export class DesktopDebugService {
     return {
       ...configuration,
       program: resolvePath(configuration.program),
-      cwd: resolvePath(configuration.cwd) ?? root
+      cwd: resolvePath(configuration.cwd) ?? root,
+      args: configuration.args?.map((arg) => arg.replace(/\$\{workspaceFolder\}/g, root)),
+      runtimeArgs: configuration.runtimeArgs?.map((arg) => arg.replace(/\$\{workspaceFolder\}/g, root)),
+      dap: substituteWorkspaceFolder(configuration.dap, root)
     };
+  }
+
+  private resolveSourcePath(relativePath: string): string {
+    if (!this.workspaceRoot) return relativePath;
+    return path.resolve(this.workspaceRoot, relativePath);
+  }
+
+  private relativeSourcePath(sourcePath: string): string | undefined {
+    if (!this.workspaceRoot) return normalizeSlashes(sourcePath);
+    const normalizedPath = sourcePath.replace(/\$\{workspaceFolder\}/g, this.workspaceRoot);
+    const absolute = path.isAbsolute(normalizedPath) ? path.resolve(normalizedPath) : path.resolve(this.workspaceRoot, normalizedPath);
+    const relative = path.relative(this.workspaceRoot, absolute);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      return undefined;
+    }
+    return normalizeSlashes(relative);
   }
 
   private resolveAdapter(configuration: DebugLaunchConfiguration): AdapterConfig | null {
@@ -345,6 +591,11 @@ export class DesktopDebugService {
     const adapter = this.resolveAdapter(configuration);
     if (!adapter) {
       throw new Error(`Missing debug adapter for "${configuration.adapterId ?? configuration.type}".`);
+    }
+    try {
+      await fs.access(adapter.command);
+    } catch {
+      throw new Error(`Debug adapter executable is not available for "${configuration.adapterId ?? configuration.type}".`);
     }
     this.killAdapter();
     const child = spawn(adapter.command, adapter.args, {

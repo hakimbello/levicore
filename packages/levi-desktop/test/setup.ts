@@ -376,12 +376,14 @@ function createDefaultApi(): LeviApi {
     debug: {
       start: vi.fn(async (request) => ({
         state: "Stopped" as const,
+        launchConfigurations: [],
         breakpoints: [],
         watches: [],
         variables: [],
         callStack: [],
+        loadedSources: [],
         console: [],
-        lastLaunchConfiguration: request.configuration,
+        lastLaunchConfiguration: request.configuration ?? undefined,
         error: {
           code: "MISSING_ADAPTER" as const,
           message: "Missing debug adapter for \"node\".",
@@ -390,62 +392,77 @@ function createDefaultApi(): LeviApi {
       })),
       stop: vi.fn(async () => ({
         state: "Stopped" as const,
+        launchConfigurations: [],
         breakpoints: [],
         watches: [],
         variables: [],
         callStack: [],
+        loadedSources: [],
         console: []
       })),
       restart: vi.fn(async () => ({
         state: "Stopped" as const,
+        launchConfigurations: [],
         breakpoints: [],
         watches: [],
         variables: [],
         callStack: [],
+        loadedSources: [],
         console: []
       })),
       pause: vi.fn(async () => ({
         state: "Paused" as const,
+        launchConfigurations: [],
         breakpoints: [],
         watches: [],
         variables: [],
         callStack: [],
+        loadedSources: [],
         console: []
       })),
       continue: vi.fn(async () => ({
         state: "Running" as const,
+        launchConfigurations: [],
         breakpoints: [],
         watches: [],
         variables: [],
         callStack: [],
+        loadedSources: [],
         console: []
       })),
       stepOver: vi.fn(async () => ({
         state: "Paused" as const,
+        launchConfigurations: [],
         breakpoints: [],
         watches: [],
         variables: [],
         callStack: [],
+        loadedSources: [],
         console: []
       })),
       stepInto: vi.fn(async () => ({
         state: "Paused" as const,
+        launchConfigurations: [],
         breakpoints: [],
         watches: [],
         variables: [],
         callStack: [],
+        loadedSources: [],
         console: []
       })),
       stepOut: vi.fn(async () => ({
         state: "Paused" as const,
+        launchConfigurations: [],
         breakpoints: [],
         watches: [],
         variables: [],
         callStack: [],
+        loadedSources: [],
         console: []
       })),
       setBreakpoint: vi.fn(async (request) => ({
         state: "Idle" as const,
+        launchConfigurations: [],
         breakpoints: request.toggle
           ? [
               {
@@ -463,27 +480,69 @@ function createDefaultApi(): LeviApi {
         watches: [],
         variables: [],
         callStack: [],
+        loadedSources: [],
         console: []
       })),
       removeBreakpoint: vi.fn(async () => ({
         state: "Idle" as const,
+        launchConfigurations: [],
         breakpoints: [],
         watches: [],
         variables: [],
         callStack: [],
+        loadedSources: [],
         console: []
       })),
       getBreakpoints: vi.fn(async () => []),
       getState: vi.fn(async () => ({
         state: "Idle" as const,
+        launchConfigurations: [
+          {
+            id: ".levi/launch.json:Node Launch",
+            name: "Node Launch",
+            source: ".levi/launch.json" as const,
+            default: true,
+            configuration: {
+              type: "node",
+              request: "launch" as const,
+              name: "Node Launch",
+              adapterId: "node",
+              program: "src/main.ts"
+            }
+          }
+        ],
+        selectedLaunchConfigurationName: "Node Launch",
         breakpoints: [],
         watches: [],
         variables: [],
         callStack: [],
+        loadedSources: [],
+        console: []
+      })),
+      selectConfiguration: vi.fn(async (name) => ({
+        state: "Idle" as const,
+        launchConfigurations: [],
+        selectedLaunchConfigurationName: name,
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        loadedSources: [],
+        console: []
+      })),
+      createLaunchConfig: vi.fn(async () => ({
+        state: "Idle" as const,
+        launchConfigurations: [],
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        loadedSources: [],
         console: []
       })),
       addWatch: vi.fn(async (expression) => ({
         state: "Idle" as const,
+        launchConfigurations: [],
         breakpoints: [],
         watches: [
           {
@@ -496,14 +555,82 @@ function createDefaultApi(): LeviApi {
         ],
         variables: [],
         callStack: [],
+        loadedSources: [],
+        console: []
+      })),
+      updateWatch: vi.fn(async (request) => ({
+        state: "Idle" as const,
+        launchConfigurations: [],
+        breakpoints: [],
+        watches: [
+          {
+            id: request.id,
+            expression: request.expression,
+            enabled: true,
+            createdAt: "2026-07-31T00:00:00.000Z",
+            updatedAt: "2026-07-31T00:00:00.000Z"
+          }
+        ],
+        variables: [],
+        callStack: [],
+        loadedSources: [],
         console: []
       })),
       removeWatch: vi.fn(async () => ({
         state: "Idle" as const,
+        launchConfigurations: [],
         breakpoints: [],
         watches: [],
         variables: [],
         callStack: [],
+        loadedSources: [],
+        console: []
+      })),
+      loadVariables: vi.fn(async () => ({
+        state: "Paused" as const,
+        launchConfigurations: [],
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        loadedSources: [],
+        console: []
+      })),
+      evaluate: vi.fn(async (request) => ({
+        state: "Paused" as const,
+        launchConfigurations: [],
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        loadedSources: [],
+        console: [
+          {
+            id: "console-1",
+            timestamp: "2026-07-31T00:00:00.000Z",
+            category: "console" as const,
+            output: request.expression
+          }
+        ]
+      })),
+      clearConsole: vi.fn(async () => ({
+        state: "Paused" as const,
+        launchConfigurations: [],
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        loadedSources: [],
+        console: []
+      })),
+      selectStackFrame: vi.fn(async () => ({
+        state: "Paused" as const,
+        launchConfigurations: [],
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        loadedSources: [],
         console: []
       })),
       onEvent: vi.fn((listener: (event: DebugEvent) => void) => {

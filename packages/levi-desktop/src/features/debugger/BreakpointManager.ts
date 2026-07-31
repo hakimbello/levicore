@@ -88,10 +88,32 @@ export class BreakpointManager {
       if (!breakpoint) continue;
       this.breakpoints.set(breakpoint.id, {
         ...breakpoint,
+        line: line.line,
         verified: line.verified,
         message: line.message,
         updatedAt: now()
       });
     }
+  }
+
+  updateAdapterBreakpoint(match: {
+    relativePath?: string;
+    line?: number;
+    verified?: boolean;
+    message?: string;
+  }): void {
+    if (!match.relativePath || typeof match.line !== "number") return;
+    const breakpoint = this.list().find((item) => item.relativePath === match.relativePath);
+    if (!breakpoint) return;
+    const updated = {
+      ...breakpoint,
+      id: makeBreakpointId(match.relativePath, match.line, breakpoint.column),
+      line: match.line,
+      verified: match.verified,
+      message: match.message,
+      updatedAt: now()
+    };
+    this.breakpoints.delete(breakpoint.id);
+    this.breakpoints.set(updated.id, updated);
   }
 }

@@ -1269,19 +1269,22 @@ textarea:focus-visible,
 }
 
 .levi-debug-form label,
+.levi-debug-config-picker label,
 .levi-debug-inline-form {
   display: grid;
   min-width: 0;
   gap: var(--levi-space-4);
 }
 
-.levi-debug-form span {
+.levi-debug-form span,
+.levi-debug-config-picker span {
   color: var(--levi-color-mutedText);
   font-size: var(--levi-font-size-caption);
 }
 
 .levi-debug-form input,
 .levi-debug-form select,
+.levi-debug-config-picker select,
 .levi-debug-inline-form input {
   width: 100%;
   min-height: var(--levi-layout-clickTarget);
@@ -1291,6 +1294,14 @@ textarea:focus-visible,
   border-radius: var(--levi-radius-input);
   color: var(--levi-color-primaryText);
   background: var(--levi-color-surface);
+}
+
+.levi-debug-config-picker,
+.levi-debug-section-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--levi-space-12);
 }
 
 .levi-debug-checkbox {
@@ -1324,14 +1335,16 @@ textarea:focus-visible,
 }
 
 .levi-debug-row div,
-.levi-debug-scope {
+.levi-debug-scope,
+.levi-debug-watch-value {
   display: grid;
   min-width: 0;
   gap: var(--levi-space-4);
 }
 
 .levi-debug-row strong,
-.levi-debug-scope strong {
+.levi-debug-scope strong,
+.levi-debug-watch-value strong {
   overflow: hidden;
   color: var(--levi-color-primaryText);
   font-family: var(--levi-font-mono);
@@ -1341,12 +1354,90 @@ textarea:focus-visible,
 }
 
 .levi-debug-row span,
-.levi-debug-scope span {
+.levi-debug-scope span,
+.levi-debug-scope small,
+.levi-debug-watch-value span {
   overflow: hidden;
   color: var(--levi-color-mutedText);
   font-size: var(--levi-font-size-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.levi-debug-watch-value,
+.levi-debug-frame,
+.levi-debug-scope-header {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.levi-debug-scope-header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--levi-space-12);
+}
+
+.levi-debug-variable {
+  display: grid;
+  grid-template-columns: var(--levi-space-20) minmax(0, 1fr);
+  align-items: start;
+  min-width: 0;
+  gap: var(--levi-space-4);
+  color: var(--levi-color-secondaryText);
+  font-size: var(--levi-font-size-caption);
+}
+
+.levi-debug-variable span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.levi-debug-variable-children {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: var(--levi-space-4);
+}
+
+.levi-debug-expand {
+  width: var(--levi-space-20);
+  min-height: var(--levi-space-20);
+  padding: 0;
+  border: 0;
+  color: var(--levi-color-mutedText);
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--levi-font-mono);
+  font-size: var(--levi-font-size-caption);
+}
+
+.levi-debug-expand:disabled {
+  cursor: default;
+}
+
+.levi-debug-frame {
+  display: grid;
+  gap: var(--levi-space-2);
+  padding: var(--levi-space-6) var(--levi-space-8);
+  border-radius: var(--levi-radius-sm);
+}
+
+.levi-debug-frame:hover,
+.levi-debug-frame-active {
+  background: var(--levi-color-accentSoft);
+}
+
+.levi-debug-frame span {
+  color: var(--levi-color-primaryText);
+}
+
+.levi-debug-frame small {
+  color: var(--levi-color-mutedText);
 }
 
 .levi-debug-toggle {
@@ -1383,6 +1474,53 @@ textarea:focus-visible,
 .levi-debug-console-stderr,
 .levi-debug-console-error {
   color: var(--levi-color-danger);
+}
+
+.levi-debug-breakpoint,
+.levi-debug-breakpoint-disabled,
+.levi-debug-breakpoint-unverified,
+.levi-debug-current-glyph {
+  position: relative;
+}
+
+.levi-debug-breakpoint::after,
+.levi-debug-breakpoint-disabled::after,
+.levi-debug-breakpoint-unverified::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--levi-radius-round);
+  background: var(--levi-color-danger);
+  content: "";
+  transform: translate(-50%, -50%);
+}
+
+.levi-debug-breakpoint-disabled::after {
+  opacity: 0.38;
+}
+
+.levi-debug-breakpoint-unverified::after {
+  border: 1px solid var(--levi-color-danger);
+  background: transparent;
+}
+
+.levi-debug-current-line {
+  background: color-mix(in srgb, var(--levi-color-warning) 18%, transparent);
+}
+
+.levi-debug-current-glyph::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-top: 6px solid transparent;
+  border-bottom: 6px solid transparent;
+  border-left: 8px solid var(--levi-color-warning);
+  content: "";
+  transform: translate(-50%, -50%);
 }
 
 .levi-settings-group {

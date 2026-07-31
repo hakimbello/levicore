@@ -39,7 +39,18 @@ export type DebugLaunchConfiguration = {
 };
 
 export type DebugStartRequest = {
+  configuration?: DebugLaunchConfiguration;
+  configurationName?: string;
+};
+
+export type DebugLaunchConfigurationSource = ".vscode/launch.json" | ".levi/launch.json" | "detected";
+
+export type DebugLaunchConfigurationEntry = {
+  id: string;
+  name: string;
   configuration: DebugLaunchConfiguration;
+  source: DebugLaunchConfigurationSource;
+  default?: boolean;
 };
 
 export type DebugBreakpoint = {
@@ -80,6 +91,8 @@ export type DebugVariable = {
   type?: string;
   variablesReference?: number;
   evaluateName?: string;
+  children?: DebugVariable[];
+  expanded?: boolean;
 };
 
 export type DebugScope = {
@@ -93,6 +106,7 @@ export type DebugStackFrame = {
   id: number;
   name: string;
   relativePath?: string;
+  sourceName?: string;
   line?: number;
   column?: number;
 };
@@ -121,6 +135,11 @@ export type DebugConsoleEntry = {
   output: string;
 };
 
+export type DebugLoadedSource = {
+  name?: string;
+  relativePath?: string;
+};
+
 export type DebugSessionSummary = {
   id: string;
   name: string;
@@ -131,10 +150,15 @@ export type DebugSessionSummary = {
 export type DebugState = {
   state: DebugSessionState;
   session?: DebugSessionSummary;
+  launchConfigurations: DebugLaunchConfigurationEntry[];
+  selectedLaunchConfigurationName?: string;
   breakpoints: DebugBreakpoint[];
   watches: DebugWatchExpression[];
   variables: DebugScope[];
   callStack: DebugThread[];
+  activeThreadId?: number;
+  activeStackFrame?: DebugStackFrame;
+  loadedSources: DebugLoadedSource[];
   console: DebugConsoleEntry[];
   lastLaunchConfiguration?: DebugLaunchConfiguration;
   error?: DebugError;
@@ -144,6 +168,22 @@ export type DebugPersistenceState = {
   breakpoints: DebugBreakpoint[];
   watches: DebugWatchExpression[];
   lastLaunchConfiguration?: DebugLaunchConfiguration;
+  selectedLaunchConfigurationName?: string;
+};
+
+export type DebugEvaluateRequest = {
+  expression: string;
+  context?: "repl" | "watch" | "hover";
+  frameId?: number;
+};
+
+export type DebugLoadVariablesRequest = {
+  variablesReference: number;
+};
+
+export type DebugUpdateWatchRequest = {
+  id: string;
+  expression: string;
 };
 
 export type DebugEvent =
@@ -154,6 +194,11 @@ export type DebugEvent =
   | {
       type: "console";
       entry: DebugConsoleEntry;
+      state: DebugState;
+    }
+  | {
+      type: "navigation";
+      frame: DebugStackFrame;
       state: DebugState;
     }
   | {

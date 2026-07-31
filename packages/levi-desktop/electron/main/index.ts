@@ -2039,13 +2039,41 @@ function registerIpc(): void {
     assertNoIpcArgs(args);
     return debugService.getState();
   });
+  ipcMain.handle(IPC_CHANNELS.debugSelectConfiguration, async (_event, name, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.selectConfiguration(name);
+  });
+  ipcMain.handle(IPC_CHANNELS.debugCreateLaunchConfig, async (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.createLaunchConfig();
+  });
   ipcMain.handle(IPC_CHANNELS.debugAddWatch, async (_event, expression, ...args) => {
     assertNoIpcArgs(args);
     return debugService.addWatch(expression);
   });
+  ipcMain.handle(IPC_CHANNELS.debugUpdateWatch, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.updateWatch(request);
+  });
   ipcMain.handle(IPC_CHANNELS.debugRemoveWatch, async (_event, id, ...args) => {
     assertNoIpcArgs(args);
     return debugService.removeWatch(id);
+  });
+  ipcMain.handle(IPC_CHANNELS.debugLoadVariables, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.loadVariables(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.debugEvaluate, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.evaluate(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.debugClearConsole, async (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.clearConsole();
+  });
+  ipcMain.handle(IPC_CHANNELS.debugSelectStackFrame, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.selectStackFrame(request);
   });
   ipcMain.handle(IPC_CHANNELS.editsPropose, (event, rawRequest) => {
     const eventWindow = BrowserWindow.fromWebContents(event.sender);

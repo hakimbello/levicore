@@ -1,6 +1,6 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useState } from "react";
 import { Icon } from "../../components/Icon";
-import type { DebugLaunchConfiguration, DebugSetBreakpointRequest, DebugState } from "./DebugEvents";
+import type { DebugLaunchConfiguration, DebugSetBreakpointRequest, DebugStackFrame, DebugState, DebugVariable } from "./DebugEvents";
 
 type RunDebugPanelProps = {
   state: DebugState;
@@ -9,7 +9,14 @@ type RunDebugPanelProps = {
   onSetBreakpoint: (request: DebugSetBreakpointRequest) => Promise<void>;
   onRemoveBreakpoint: (breakpointId: string) => Promise<void>;
   onAddWatch: (expression: string) => Promise<void>;
+  onUpdateWatch: (id: string, expression: string) => Promise<void>;
   onRemoveWatch: (id: string) => Promise<void>;
+  onLoadVariables: (variablesReference: number) => Promise<void>;
+  onEvaluate: (expression: string) => Promise<void>;
+  onClearConsole: () => Promise<void>;
+  onSelectConfiguration: (name: string) => Promise<void>;
+  onCreateLaunchConfig: () => Promise<void>;
+  onOpenFrame: (threadId: number, frame: DebugStackFrame) => Promise<void>;
 };
 
 function defaultLaunchConfiguration(): DebugLaunchConfiguration {
@@ -30,7 +37,14 @@ export function RunDebugPanel({
   onSetBreakpoint,
   onRemoveBreakpoint,
   onAddWatch,
-  onRemoveWatch
+  onUpdateWatch,
+  onRemoveWatch,
+  onLoadVariables,
+  onEvaluate,
+  onClearConsole,
+  onSelectConfiguration,
+  onCreateLaunchConfig,
+  onOpenFrame
 }: RunDebugPanelProps) {
   const [configuration, setConfiguration] = useState<DebugLaunchConfiguration>(
     state.lastLaunchConfiguration ?? defaultLaunchConfiguration()
@@ -40,6 +54,11 @@ export function RunDebugPanel({
   const [condition, setCondition] = useState("");
   const [logMessage, setLogMessage] = useState("");
   const [watchExpression, setWatchExpression] = useState("");
+  const [editingWatchId, setEditingWatchId] = useState<string | null>(null);
+  const [editingWatchExpression, setEditingWatchExpression] = useState("");
+  const [consoleExpression, setConsoleExpression] = useState("");
+  const [consoleHistory, setConsoleHistory] = useState<string[]>([]);
+  const [consoleHistoryIndex, setConsoleHistoryIndex] = useState<number | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -47,6 +66,11 @@ export function RunDebugPanel({
       setConfiguration(state.lastLaunchConfiguration);
     }
   }, [state.lastLaunchConfiguration]);
+
+  useEffect(() => {
+    const selected = state.launchConfigurations.find((entry) => entry.name === state.selectedLaunchConfigurationName);
+    if (selected) setConfiguration(selected.configuration);
+  }, [state.launchConfigurations, state.selectedLaunchConfigurationName]);
 
   async function startDebugging(event: FormEvent) {
     event.preventDefault();
@@ -61,6 +85,12 @@ export function RunDebugPanel({
     } catch (error) {
       setLocalError(error instanceof Error ? error.message : "Debug launch failed.");
     }
+  }
+
+  async function selectConfiguration(name: string) {
+    const selected = state.launchConfigurations.find((entry) => entry.name === name);
+    if (selected) setConfiguration(selected.configuration);
+    await onSelectConfiguration(name);
   }
 
   async function toggleBreakpoint(event: FormEvent) {
@@ -88,6 +118,57 @@ export function RunDebugPanel({
     setWatchExpression("");
   }
 
+  async function submitWatchEdit(event: FormEvent) {
+    event.preventDefault();
+    if (!editingWatchId || !editingWatchExpression.trim()) return;
+    await onUpdateWatch(editingWatchId, editingWatchExpression.trim());
+    setEditingWatchId(null);
+    setEditingWatchExpression("");
+  }
+
+  async function evaluateConsole(event: FormEvent) {
+    event.preventDefault();
+    const expression = consoleExpression.trim();
+    if (!expression) return;
+    setConsoleHistory((history) => [expression, ...history.filter((item) => item !== expression)].slice(0, 50));
+    setConsoleHistoryIndex(null);
+    await onEvaluate(expression);
+    setConsoleExpression("");
+  }
+
+  function navigateConsoleHistory(event: KeyboardEvent<HTMLInputElement>) {
+    if (consoleHistory.length === 0) return;
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault();
+    const nextIndex =
+      event.key === "ArrowUp"
+        ? Math.min((consoleHistoryIndex ?? -1) + 1, consoleHistory.length - 1)
+        : Math.max((consoleHistoryIndex ?? 0) - 1, -1);
+    setConsoleHistoryIndex(nextIndex === -1 ? null : nextIndex);
+    setConsoleExpression(nextIndex === -1 ? "" : consoleHistory[nextIndex] ?? "");
+  }
+
+  function renderVariables(variables: DebugVariable[], depth = 0) {
+    return variables.map((variable) => {
+      const expandable = Boolean(variable.variablesReference && variable.variablesReference > 0);
+      return (
+        <div key={`${depth}-${variable.name}-${variable.evaluateName ?? variable.variablesReference ?? ""}`} className="levi-debug-variable" style={{ paddingLeft: depth * 14 }}>
+          <button
+            type="button"
+            className="levi-debug-expand"
+            disabled={!expandable}
+            aria-label={`Expand variable ${variable.name}`}
+            onClick={() => variable.variablesReference ? void onLoadVariables(variable.variablesReference) : undefined}
+          >
+            {expandable ? variable.expanded ? "v" : ">" : ""}
+          </button>
+          <span><strong>{variable.name}</strong>: {variable.value}{variable.type ? ` (${variable.type})` : ""}</span>
+          {variable.children?.length ? <div className="levi-debug-variable-children">{renderVariables(variable.children, depth + 1)}</div> : null}
+        </div>
+      );
+    });
+  }
+
   return (
     <section className="levi-debug-panel" aria-label="Run and Debug">
       <header className="levi-debug-header">
@@ -102,6 +183,24 @@ export function RunDebugPanel({
       <div className="levi-debug-grid">
         <section className="levi-debug-section" aria-label="Launch configuration">
           <h2>Configuration</h2>
+          <div className="levi-debug-config-picker">
+            <label>
+              <span>Configuration</span>
+              <select
+                value={state.selectedLaunchConfigurationName ?? configuration.name}
+                onChange={(event) => void selectConfiguration(event.target.value)}
+                disabled={state.launchConfigurations.length === 0}
+              >
+                {state.launchConfigurations.map((entry) => (
+                  <option key={entry.id} value={entry.name}>{entry.name}</option>
+                ))}
+              </select>
+            </label>
+            <button type="button" className="levi-button levi-button-secondary" onClick={() => void onCreateLaunchConfig()} disabled={!workspaceAvailable}>
+              <Icon name="plus" />
+              <span>Create launch.json</span>
+            </button>
+          </div>
           <form className="levi-debug-form" onSubmit={(event) => void startDebugging(event)}>
             <label>
               <span>Name</span>
@@ -213,10 +312,16 @@ export function RunDebugPanel({
           {state.variables.length === 0 ? <p className="levi-debug-empty">Variables will appear when execution pauses.</p> : null}
           {state.variables.map((scope) => (
             <div key={scope.variablesReference} className="levi-debug-scope">
-              <strong>{scope.name}</strong>
-              {scope.variables.map((variable) => (
-                <span key={`${scope.variablesReference}-${variable.name}`}>{variable.name}: {variable.value}</span>
-              ))}
+              <button
+                type="button"
+                className="levi-debug-scope-header"
+                onClick={() => void onLoadVariables(scope.variablesReference)}
+                disabled={scope.variablesReference <= 0}
+              >
+                <strong>{scope.name}</strong>
+                <span>{scope.expensive ? "lazy" : `${scope.variables.length} values`}</span>
+              </button>
+              {renderVariables(scope.variables)}
             </div>
           ))}
         </section>
@@ -233,12 +338,29 @@ export function RunDebugPanel({
             {state.watches.length === 0 ? <p className="levi-debug-empty">No watch expressions.</p> : null}
             {state.watches.map((watch) => (
               <div key={watch.id} className="levi-debug-row">
-                <div>
-                  <strong>{watch.expression}</strong>
-                  <span>{watch.error ?? watch.value ?? "Not evaluated"}</span>
-                </div>
+                {editingWatchId === watch.id ? (
+                  <form className="levi-debug-inline-form" onSubmit={(event) => void submitWatchEdit(event)}>
+                    <input aria-label={`Edit watch ${watch.expression}`} value={editingWatchExpression} onChange={(event) => setEditingWatchExpression(event.target.value)} />
+                    <button type="submit" className="levi-icon-button" aria-label="Save Watch"><Icon name="refresh" /></button>
+                  </form>
+                ) : (
+                  <button
+                    type="button"
+                    className="levi-debug-watch-value"
+                    onClick={() => {
+                      setEditingWatchId(watch.id);
+                      setEditingWatchExpression(watch.expression);
+                    }}
+                  >
+                    <strong>{watch.expression}</strong>
+                    <span>{watch.error ?? watch.value ?? "Not evaluated"}</span>
+                  </button>
+                )}
                 <button type="button" className="levi-icon-button" onClick={() => void onRemoveWatch(watch.id)} aria-label={`Remove watch ${watch.expression}`}>
                   <Icon name="close" />
+                </button>
+                <button type="button" className="levi-icon-button" onClick={() => void onUpdateWatch(watch.id, watch.expression)} aria-label={`Refresh watch ${watch.expression}`}>
+                  <Icon name="refresh" />
                 </button>
               </div>
             ))}
@@ -252,14 +374,41 @@ export function RunDebugPanel({
             <div key={thread.id} className="levi-debug-scope">
               <strong>{thread.name}</strong>
               {thread.frames.map((frame) => (
-                <span key={frame.id}>{frame.name}{frame.relativePath ? ` - ${frame.relativePath}:${frame.line ?? 1}` : ""}</span>
+                <button
+                  type="button"
+                  key={frame.id}
+                  className={state.activeStackFrame?.id === frame.id ? "levi-debug-frame levi-debug-frame-active" : "levi-debug-frame"}
+                  onDoubleClick={() => void onOpenFrame(thread.id, frame)}
+                  onClick={() => void onOpenFrame(thread.id, frame)}
+                >
+                  <span>{frame.name}</span>
+                  <small>{frame.relativePath ? `${frame.relativePath}:${frame.line ?? 1}` : frame.sourceName ?? ""}</small>
+                </button>
               ))}
             </div>
           ))}
         </section>
 
         <section className="levi-debug-section levi-debug-console" aria-label="Debug Console">
-          <h2>Debug Console</h2>
+          <div className="levi-debug-section-header">
+            <h2>Debug Console</h2>
+            <button type="button" className="levi-button levi-button-secondary" onClick={() => void onClearConsole()}>
+              <Icon name="close" />
+              <span>Clear</span>
+            </button>
+          </div>
+          <form className="levi-debug-inline-form" onSubmit={(event) => void evaluateConsole(event)}>
+            <input
+              value={consoleExpression}
+              onChange={(event) => {
+                setConsoleExpression(event.target.value);
+                setConsoleHistoryIndex(null);
+              }}
+              onKeyDown={navigateConsoleHistory}
+              placeholder="Evaluate expression"
+            />
+            <button type="submit" className="levi-icon-button" aria-label="Evaluate Expression"><Icon name="send" /></button>
+          </form>
           {state.console.length === 0 ? <p className="levi-debug-empty">Adapter output and debug console messages will appear here.</p> : null}
           {state.console.map((entry) => (
             <pre key={entry.id} className={`levi-debug-console-entry levi-debug-console-${entry.category}`}>{entry.output}</pre>

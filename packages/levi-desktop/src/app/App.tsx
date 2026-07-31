@@ -10,7 +10,7 @@ import { SearchPanel } from "../features/search/SearchPanel";
 import { TerminalPanel } from "../features/terminal/TerminalPanel";
 import { type EditorTab, useEditorTabs } from "../hooks/use-editor-tabs";
 import type { EditApplyResult, EditUndoResult, ExecutionPublicTransaction, OllamaStatus, SelectedProject, UpdateStatus, WorkspaceStatus } from "../types/levi-api";
-import type { DebugLaunchConfiguration, DebugSetBreakpointRequest, DebugState } from "../features/debugger";
+import type { DebugLaunchConfiguration, DebugSetBreakpointRequest, DebugStackFrame, DebugState } from "../features/debugger";
 import type { WorkspaceReadPathResult } from "../types/workspace-tree-api";
 import "../styles/editor-tabs.css";
 
@@ -43,10 +43,12 @@ const unknownStatus: OllamaStatus = { ready: false, modelCount: 0, models: [] };
 const idleWorkspaceStatus: WorkspaceStatus = { state: "idle" };
 const idleDebugState: DebugState = {
   state: "Idle",
+  launchConfigurations: [],
   breakpoints: [],
   watches: [],
   variables: [],
   callStack: [],
+  loadedSources: [],
   console: []
 };
 const FILE_CONFLICT_CODE = "WORKSPACE_FILE_CONFLICT";
@@ -90,6 +92,7 @@ export function App() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSummary, setSaveSummary] = useState<string | null>(null);
   const [conflictTabId, setConflictTabId] = useState<string | null>(null);
+  const lastOpenedDebugFrameRef = useRef<string | null>(null);
   const tabButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const {
     tabs,
@@ -165,6 +168,33 @@ export function App() {
       unsubscribeDebug();
     };
   }, []);
+
+  useEffect(() => {
+    const frame = debugState.activeStackFrame;
+    if (!frame?.relativePath || typeof frame.line !== "number") return;
+    const key = `${frame.id}:${frame.relativePath}:${frame.line}`;
+    if (lastOpenedDebugFrameRef.current === key) return;
+    lastOpenedDebugFrameRef.current = key;
+    let disposed = false;
+    window.levi.workspace
+      .readPath({ relativePath: frame.relativePath })
+      .then((file) => {
+        if (!disposed) {
+          openFile({
+            sourceId: `WORKSPACE:${file.relativePath}`,
+            relativePath: file.relativePath,
+            content: file.content,
+            language: file.language,
+            lineStart: frame.line ?? 1,
+            readOnly: false
+          });
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+    };
+  }, [debugState.activeStackFrame, openFile]);
 
   useEffect(() => {
     if (!activeTabId) return;
@@ -363,7 +393,14 @@ export function App() {
             onSetBreakpoint={setDebugBreakpoint}
             onRemoveBreakpoint={removeDebugBreakpoint}
             onAddWatch={addDebugWatch}
+            onUpdateWatch={updateDebugWatch}
             onRemoveWatch={removeDebugWatch}
+            onLoadVariables={loadDebugVariables}
+            onEvaluate={evaluateDebugExpression}
+            onClearConsole={clearDebugConsole}
+            onSelectConfiguration={selectDebugConfiguration}
+            onCreateLaunchConfig={createDebugLaunchConfig}
+            onOpenFrame={openDebugFrame}
           />
         </LazySurface>
       );
@@ -420,8 +457,46 @@ export function App() {
     await applyDebugState(window.levi.debug.addWatch(expression));
   }
 
+  async function updateDebugWatch(id: string, expression: string) {
+    await applyDebugState(window.levi.debug.updateWatch({ id, expression }));
+  }
+
   async function removeDebugWatch(id: string) {
     await applyDebugState(window.levi.debug.removeWatch(id));
+  }
+
+  async function loadDebugVariables(variablesReference: number) {
+    await applyDebugState(window.levi.debug.loadVariables({ variablesReference }));
+  }
+
+  async function evaluateDebugExpression(expression: string) {
+    await applyDebugState(window.levi.debug.evaluate({ expression, context: "repl" }));
+  }
+
+  async function clearDebugConsole() {
+    await applyDebugState(window.levi.debug.clearConsole());
+  }
+
+  async function selectDebugConfiguration(name: string) {
+    await applyDebugState(window.levi.debug.selectConfiguration(name));
+  }
+
+  async function createDebugLaunchConfig() {
+    await applyDebugState(window.levi.debug.createLaunchConfig());
+  }
+
+  async function openDebugFrame(threadId: number, frame: DebugStackFrame) {
+    await applyDebugState(window.levi.debug.selectStackFrame({ threadId, frameId: frame.id }));
+    if (!frame.relativePath || typeof frame.line !== "number") return;
+    const file = await window.levi.workspace.readPath({ relativePath: frame.relativePath });
+    openFile({
+      sourceId: `WORKSPACE:${file.relativePath}`,
+      relativePath: file.relativePath,
+      content: file.content,
+      language: file.language,
+      lineStart: frame.line,
+      readOnly: false
+    });
   }
 
   return (
@@ -488,7 +563,18 @@ export function App() {
               </div>
               <div className="levi-editor-host">
                 <LazySurface label="Editor">
-                  <CodeEditor value={activeTab.content} language={activeTab.language} lineStart={activeTab.lineStart} readOnly={!activeTabEditable} onChange={(content) => updateContent(activeTab.id, content)} onSave={() => void saveActiveTab()} />
+                  <CodeEditor
+                    value={activeTab.content}
+                    language={activeTab.language}
+                    relativePath={activeTab.relativePath}
+                    lineStart={activeTab.lineStart}
+                    readOnly={!activeTabEditable}
+                    breakpoints={debugState.breakpoints.filter((breakpoint) => breakpoint.relativePath === activeTab.relativePath)}
+                    activeExecutionLine={debugState.activeStackFrame?.relativePath === activeTab.relativePath ? debugState.activeStackFrame.line : undefined}
+                    onToggleBreakpoint={(line) => void setDebugBreakpoint({ relativePath: activeTab.relativePath, line, toggle: true })}
+                    onChange={(content) => updateContent(activeTab.id, content)}
+                    onSave={() => void saveActiveTab()}
+                  />
                 </LazySurface>
               </div>
             </aside>
