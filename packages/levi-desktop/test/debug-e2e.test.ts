@@ -85,7 +85,11 @@ describe("real adapter qualification", () => {
     pythonAvailable = await hasRuntime(pythonCommand);
   });
 
-  it.skipIf(() => !nodeAvailable)("qualifies Node.js js-debug discovery and DAP initialize", async () => {
+  it("qualifies Node.js js-debug discovery and DAP initialize", async (ctx) => {
+    if (!nodeAvailable) {
+      ctx.skip();
+      return;
+    }
     const root = path.join(fixturesRoot, "node-js");
     const context = {
       workspaceRoot: root,
@@ -108,13 +112,17 @@ describe("real adapter qualification", () => {
     expect(["installed", "missing"]).toContain(discovery.state);
     const entry = await discoverJsDebugEntry(context);
     if (!entry) {
-      console.warn("SKIP REASON: @vscode/js-debug is not installed in the Node fixture workspace or Levi-managed directory.");
+      ctx.skip(true, "@vscode/js-debug is not installed in the Node fixture workspace or Levi-managed directory.");
       return;
     }
     await expect(runDapHandshake(entry, process.execPath)).resolves.toBeUndefined();
   });
 
-  it.skipIf(() => !pythonAvailable)("qualifies Python interpreter discovery for fixture workspace", async () => {
+  it("qualifies Python interpreter discovery for fixture workspace", async (ctx) => {
+    if (!pythonAvailable) {
+      ctx.skip();
+      return;
+    }
     const root = path.join(fixturesRoot, "python");
     const discovery = await discoverAdapter(getAdapterDefinition("python")!, {
       workspaceRoot: root,
@@ -137,7 +145,11 @@ describe("real adapter qualification", () => {
     expect(discovery.executablePath).toBeTruthy();
   });
 
-  it.skipIf(() => !nodeAvailable)("blocks launch when js-debug entry point is missing", async () => {
+  it("blocks launch when js-debug entry point is missing", async (ctx) => {
+    if (!nodeAvailable) {
+      ctx.skip();
+      return;
+    }
     const root = await fs.mkdtemp(path.join(fixturesRoot, "missing-entry-"));
     const manager = new AdapterManager(() => root, { adapterRoot: path.join(root, "adapters") });
     const service = new DesktopDebugService(() => root, manager);
