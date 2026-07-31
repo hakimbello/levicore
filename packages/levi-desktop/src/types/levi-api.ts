@@ -22,6 +22,33 @@ import type {
   DebugCompletionRequest,
   DebugCompletionItem
 } from "../features/debugger";
+import type {
+  TaskCancelRequest,
+  TaskEvent,
+  TaskHistoryEntry,
+  TaskListResult,
+  TaskOutputEntry,
+  TaskOutputRequest,
+  TaskPinRequest,
+  TaskProblem,
+  TaskRun,
+  TaskRunRequest
+} from "./task-api";
+
+export type {
+  TaskCancelRequest,
+  TaskDefinition,
+  TaskEvent,
+  TaskHistoryEntry,
+  TaskListResult,
+  TaskOutputEntry,
+  TaskOutputRequest,
+  TaskPinRequest,
+  TaskProblem,
+  TaskRun,
+  TaskRunRequest,
+  TaskStatus
+} from "./task-api";
 
 export type OllamaStatus = {
   ready: boolean;
@@ -189,6 +216,7 @@ export type WorkspaceFileReference = {
 export type WorkspaceOpenFileRequest = {
   sourceId: string;
   lineStart?: number;
+  columnStart?: number;
 };
 
 export type WorkspaceOpenFileResult = {
@@ -197,6 +225,7 @@ export type WorkspaceOpenFileResult = {
   content: string;
   language: string;
   lineStart: number;
+  columnStart?: number;
   readOnly: boolean;
   appliedByLevi?: boolean;
   undoneByLevi?: boolean;
@@ -924,6 +953,16 @@ export type LeviApi = {
     setLayout: (layout: TerminalLayoutState) => Promise<TerminalLayoutState>;
     revealCwd: (id: string) => Promise<string>;
     onData: (listener: (event: TerminalDataEvent) => void) => () => void;
+  };
+  tasks: {
+    list: () => Promise<TaskListResult>;
+    run: (request: TaskRunRequest) => Promise<TaskRun>;
+    cancel: (request: TaskCancelRequest) => Promise<TaskRun>;
+    history: () => Promise<TaskHistoryEntry[]>;
+    problems: () => Promise<TaskProblem[]>;
+    output: (request?: TaskOutputRequest) => Promise<TaskOutputEntry[]>;
+    pin: (request: TaskPinRequest) => Promise<TaskListResult>;
+    onEvent: (listener: (event: TaskEvent) => void) => () => void;
   };
   conversation: {
     start: (request: ConversationStartRequest) => Promise<ConversationStartResult>;

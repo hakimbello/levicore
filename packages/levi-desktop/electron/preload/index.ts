@@ -19,6 +19,7 @@ import type {
   UpdateStatusEvent,
   WorkspaceOpenFileRequest
 } from "../../src/types/levi-api";
+import type { TaskEvent } from "../../src/types/task-api";
 import type {
   DebugEvent,
   DebugEvaluateRequest,
@@ -138,6 +139,14 @@ const IPC_CHANNELS = {
   terminalSetLayout: "levi:terminal:set-layout",
   terminalRevealCwd: "levi:terminal:reveal-cwd",
   terminalData: "levi:terminal:data",
+  tasksList: "levi:tasks:list",
+  tasksRun: "levi:tasks:run",
+  tasksCancel: "levi:tasks:cancel",
+  tasksHistory: "levi:tasks:history",
+  tasksProblems: "levi:tasks:problems",
+  tasksOutput: "levi:tasks:output",
+  tasksPin: "levi:tasks:pin",
+  tasksEvent: "levi:tasks:event",
   conversationStart: "levi:conversation:start",
   conversationCancel: "levi:conversation:cancel",
   conversationEvent: "levi:conversation:event"
@@ -147,6 +156,12 @@ function isTerminalDataEvent(value: unknown): value is TerminalDataEvent {
   if (!value || typeof value !== "object") return false;
   const event = value as Partial<TerminalDataEvent>;
   return typeof event.id === "string" && typeof event.data === "string";
+}
+
+function isTaskEvent(value: unknown): value is TaskEvent {
+  if (!value || typeof value !== "object") return false;
+  const event = value as Partial<TaskEvent>;
+  return event.type === "output" || event.type === "status" || event.type === "problems" || event.type === "output-entry";
 }
 
 function isConversationStreamEvent(value: unknown): value is ConversationStreamEvent {
@@ -472,6 +487,22 @@ const leviApi: LeviApiWithWorkspaceTree = {
       };
       ipcRenderer.on(IPC_CHANNELS.terminalData, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.terminalData, handler);
+    }
+  },
+  tasks: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.tasksList),
+    run: (request: { taskId: string }) => ipcRenderer.invoke(IPC_CHANNELS.tasksRun, request),
+    cancel: (request: { runId: string }) => ipcRenderer.invoke(IPC_CHANNELS.tasksCancel, request),
+    history: () => ipcRenderer.invoke(IPC_CHANNELS.tasksHistory),
+    problems: () => ipcRenderer.invoke(IPC_CHANNELS.tasksProblems),
+    output: (request?: { source?: string; channel?: string }) => ipcRenderer.invoke(IPC_CHANNELS.tasksOutput, request),
+    pin: (request: { taskId: string; pinned: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.tasksPin, request),
+    onEvent: (listener: (event: TaskEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+        if (isTaskEvent(payload)) listener(payload);
+      };
+      ipcRenderer.on(IPC_CHANNELS.tasksEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.tasksEvent, handler);
     }
   },
   conversation: {

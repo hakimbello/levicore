@@ -101,6 +101,8 @@ import { AdapterManager } from "./adapter-manager";
 import { DesktopRuntimeService } from "./runtime-service";
 import { UpdateService } from "./update-service";
 import { TerminalManager } from "./terminal-manager";
+import { TaskService } from "./tasks/task-service";
+import { registerDebugTaskRunner } from "./debug-tasks";
 import type { DebugEvent } from "../../src/features/debugger";
 
 const OLLAMA_TAGS_URL = "http://127.0.0.1:11434/api/tags";
@@ -122,6 +124,14 @@ const terminalManager = new TerminalManager(
   () => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null,
   getRepositoryRoot
 );
+const taskService = new TaskService(
+  terminalManager,
+  () => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null,
+  () => workspaceScan?.summary
+);
+terminalManager.onTerminalData((sessionId, data) => {
+  taskService.bindTerminalOutput(sessionId, data);
+});
 const activeGenerations = new Map<number, { requestId: string; controller: AbortController; stoppedByUser: boolean }>();
 const activeEditGenerations = new Map<number, { requestId: string; controller: AbortController; stoppedByUser: boolean }>();
 const activePlanningGenerations = new Map<number, { requestId: string; controller: AbortController; stoppedByUser: boolean }>();
@@ -2258,6 +2268,38 @@ function registerIpc(): void {
     assertNoIpcArgs(args);
     return terminalManager.revealCwd(id);
   });
+  ipcMain.handle(IPC_CHANNELS.tasksList, (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return taskService.list();
+  });
+  ipcMain.handle(IPC_CHANNELS.tasksRun, (event, request, ...args) => {
+    assertNoIpcArgs(args);
+    const eventWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!eventWindow) {
+      throw new Error("Task requests require a window.");
+    }
+    return taskService.run(request, eventWindow);
+  });
+  ipcMain.handle(IPC_CHANNELS.tasksCancel, (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return taskService.cancel(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.tasksHistory, (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return taskService.getHistory();
+  });
+  ipcMain.handle(IPC_CHANNELS.tasksProblems, (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return taskService.getProblems();
+  });
+  ipcMain.handle(IPC_CHANNELS.tasksOutput, (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return taskService.getOutput(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.tasksPin, (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return taskService.pin(request);
+  });
   ipcMain.handle(IPC_CHANNELS.conversationStart, (event, rawRequest) => {
     const eventWindow = BrowserWindow.fromWebContents(event.sender);
     if (!eventWindow) {
@@ -2411,6 +2453,13 @@ app.whenReady().then(async () => {
   registerIpc();
   await debugService.initializeAdapters();
   await terminalManager.initialize();
+  await taskService.initialize();
+  registerDebugTaskRunner(async (taskName) => {
+    if (!mainWindow) {
+      return { success: false, message: "No active window is available to run tasks." };
+    }
+    return taskService.runByName(taskName, mainWindow);
+  });
   await createWindow();
 
   if (liveAcceptanceEnabled() && process.env.LEVI_OPEN_PROJECT_PATH) {

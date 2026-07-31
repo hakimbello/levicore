@@ -491,7 +491,7 @@ export class DesktopDebugService {
   }
 
   private async prepareLaunchConfiguration(configuration: DebugLaunchConfiguration, root: string): Promise<DebugLaunchConfiguration> {
-    const preLaunch = runDebugTaskBoundary(configuration.preLaunchTask, "preLaunch");
+    const preLaunch = await runDebugTaskBoundary(configuration.preLaunchTask, "preLaunch");
     if (!preLaunch.supported || !preLaunch.success) {
       throw new Error(preLaunch.message ?? "preLaunchTask is not supported.");
     }

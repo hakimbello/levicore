@@ -73,13 +73,32 @@ export type DebugTaskOrchestrationResult = {
   message?: string;
 };
 
-export function runDebugTaskBoundary(taskName: string | undefined, phase: "preLaunch" | "postDebug"): DebugTaskOrchestrationResult {
+type DebugTaskRunner = (taskName: string) => Promise<{ success: boolean; message?: string }>;
+
+let debugTaskRunner: DebugTaskRunner | null = null;
+
+export function registerDebugTaskRunner(runner: DebugTaskRunner): void {
+  debugTaskRunner = runner;
+}
+
+export async function runDebugTaskBoundary(
+  taskName: string | undefined,
+  phase: "preLaunch" | "postDebug"
+): Promise<DebugTaskOrchestrationResult> {
   if (!taskName) {
     return { supported: true, success: true };
   }
+  if (!debugTaskRunner) {
+    return {
+      supported: false,
+      success: false,
+      message: `${phase === "preLaunch" ? "preLaunchTask" : "postDebugTask"} "${taskName}" is not supported because Levi does not yet provide a task runner. Remove the task reference or run the task manually before debugging.`
+    };
+  }
+  const result = await debugTaskRunner(taskName);
   return {
-    supported: false,
-    success: false,
-    message: `${phase === "preLaunch" ? "preLaunchTask" : "postDebugTask"} "${taskName}" is not supported because Levi does not yet provide a task runner. Remove the task reference or run the task manually before debugging.`
+    supported: true,
+    success: result.success,
+    message: result.message
   };
 }
