@@ -44,6 +44,8 @@ export const IPC_CHANNELS = {
   executionEvent: "levi:execution:event",
   debugStart: "levi:debug:start",
   debugStop: "levi:debug:stop",
+  debugStopAll: "levi:debug:stop-all",
+  debugSelectSession: "levi:debug:select-session",
   debugRestart: "levi:debug:restart",
   debugPause: "levi:debug:pause",
   debugContinue: "levi:debug:continue",

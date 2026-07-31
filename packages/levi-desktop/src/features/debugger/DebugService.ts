@@ -30,9 +30,12 @@ import type {
   DebugSessionState,
   DebugStackFrame,
   DebugState,
-  DebugVariable
+  DebugVariable,
+  DebugCompoundConfigurationEntry
 } from "./DebugEvents";
 import { DEFAULT_EXCEPTION_BREAKPOINTS } from "./DebugEvents";
+import { DebugSessionHost } from "./DebugSessionHost";
+import { resolveConfigurationAdapterId } from "./adapters/registry";
 
 export type DebugAdapterHandle = {
   session: DebugSession;
@@ -70,6 +73,9 @@ export class DebugService {
   private evaluationGeneration = 0;
   private readonly consoleEntries: DebugConsoleEntry[] = [];
   private readonly listeners: Array<(event: DebugEvent) => void> = [];
+  private readonly sessionHosts = new Map<string, DebugSessionHost>();
+  private activeSessionId: string | null = null;
+  private compoundConfigurations: DebugCompoundConfigurationEntry[] = [];
 
   constructor(private readonly options: DebugServiceOptions) {}
 
@@ -94,7 +100,50 @@ export class DebugService {
     this.emitState();
   }
 
+  setCompoundConfigurations(configurations: DebugCompoundConfigurationEntry[]): void {
+    this.compoundConfigurations = configurations.map((entry) => ({ ...entry }));
+    this.emitState();
+  }
+
+  getSessionHosts(): DebugSessionHost[] {
+    return [...this.sessionHosts.values()];
+  }
+
+  selectSession(sessionId: string): DebugState {
+    const host = this.sessionHosts.get(sessionId);
+    if (!host) {
+      this.setError({ code: "INVALID_CONFIGURATION", message: "Debug session was not found.", recoverable: true });
+      return this.snapshot();
+    }
+    if (this.activeSessionId && this.activeSessionId !== sessionId) {
+      this.syncActiveToHost(this.sessionHosts.get(this.activeSessionId)!);
+    }
+    this.activeSessionId = sessionId;
+    this.syncActiveFromHost(host);
+    this.emitState();
+    return this.snapshot();
+  }
+
+  async stopAll(): Promise<DebugState> {
+    for (const host of this.sessionHosts.values()) {
+      await this.stopHost(host);
+    }
+    this.sessionHosts.clear();
+    this.activeSessionId = null;
+    this.session = null;
+    this.sessionStartedAt = null;
+    this.variables.clear();
+    this.callStack.clear();
+    this.consoleEntries.length = 0;
+    this.loadedSources = [];
+    this.exceptionInfo = undefined;
+    this.inlineValues = [];
+    this.setState(this.sessionHosts.size > 0 ? "Running" : "Idle");
+    return this.snapshot();
+  }
+
   snapshot(): DebugState {
+    const activeHost = this.activeSessionId ? this.sessionHosts.get(this.activeSessionId) : undefined;
     return {
       state: this.state,
       session: this.session
@@ -102,10 +151,15 @@ export class DebugService {
             id: this.session.id,
             name: this.session.name,
             type: this.lastLaunchConfiguration?.type ?? "debug",
-            startedAt: this.sessionStartedAt ?? new Date().toISOString()
+            startedAt: this.sessionStartedAt ?? new Date().toISOString(),
+            adapterId: this.lastLaunchConfiguration ? resolveConfigurationAdapterId(this.lastLaunchConfiguration) : undefined,
+            state: activeHost?.state ?? this.state
           }
         : undefined,
+      sessions: [...this.sessionHosts.values()].map((host) => host.toManagedSession(host.id === this.activeSessionId ? this.callStack.getActiveFrame() : undefined)),
+      activeSessionId: this.activeSessionId ?? undefined,
       launchConfigurations: this.launchConfigurations.map((entry) => ({ ...entry, configuration: { ...entry.configuration } })),
+      compoundConfigurations: this.compoundConfigurations.map((entry) => ({ ...entry })),
       selectedLaunchConfigurationName: this.selectedLaunchConfigurationName,
       breakpoints: this.breakpoints.list(),
       watches: this.watches.list(),
@@ -168,8 +222,31 @@ export class DebugService {
     this.selectedLaunchConfigurationName = configuration.name;
   }
 
-  async start(configuration: DebugLaunchConfiguration, effectiveConfiguration: DebugLaunchConfiguration = configuration): Promise<DebugState> {
-    if (this.session) {
+  async startCompound(configurations: DebugLaunchConfiguration[]): Promise<DebugState> {
+    const failures: string[] = [];
+    for (const configuration of configurations) {
+      try {
+        await this.start(configuration, configuration, { stopExisting: false });
+      } catch (error) {
+        failures.push(`${configuration.name}: ${error instanceof Error ? error.message : "Launch failed."}`);
+      }
+    }
+    if (failures.length > 0) {
+      this.setError({
+        code: "LAUNCH_FAILED",
+        message: `Some compound sessions failed to start:\n${failures.join("\n")}`,
+        recoverable: true
+      });
+    }
+    return this.snapshot();
+  }
+
+  async start(
+    configuration: DebugLaunchConfiguration,
+    effectiveConfiguration: DebugLaunchConfiguration = configuration,
+    options?: { stopExisting?: boolean }
+  ): Promise<DebugState> {
+    if (options?.stopExisting !== false && this.session) {
       await this.stop();
     }
     this.error = undefined;
@@ -181,9 +258,15 @@ export class DebugService {
 
     try {
       const transport = await this.options.createAdapter(effectiveConfiguration);
-      const session = new DebugSession(randomId("debug-session"), configuration.name, transport);
+      const adapterId = resolveConfigurationAdapterId(effectiveConfiguration);
+      const host = new DebugSessionHost(configuration, adapterId);
+      const session = new DebugSession(host.id, configuration.name, transport);
+      host.bindSession(session, () => transport.dispose());
+      this.sessionHosts.set(host.id, host);
+      this.activeSessionId = host.id;
       this.session = session;
-      this.sessionStartedAt = new Date().toISOString();
+      this.sessionStartedAt = host.startedAt;
+      host.state = "Starting";
       session.onEvent((message) => this.handleAdapterEvent(message));
       await session.request("initialize", {
         adapterID: effectiveConfiguration.adapterId ?? effectiveConfiguration.type,
@@ -197,6 +280,7 @@ export class DebugService {
       await this.syncExceptionBreakpoints();
       await session.request(effectiveConfiguration.request, this.launchArguments(effectiveConfiguration), 15000);
       await session.request("configurationDone", {}, 10000).catch(() => undefined);
+      host.state = "Running";
       this.setState("Running");
     } catch (error) {
       this.variables.clear();
@@ -221,18 +305,30 @@ export class DebugService {
       return this.snapshot();
     }
     this.setState("Stopping");
+    const activeHost = this.activeSessionId ? this.sessionHosts.get(this.activeSessionId) : undefined;
     await this.session.request("disconnect", { terminateDebuggee: true }, 5000).catch(() => undefined);
     this.session.dispose();
+    if (activeHost) {
+      this.sessionHosts.delete(activeHost.id);
+      activeHost.dispose();
+    }
     this.session = null;
     this.sessionStartedAt = null;
-    this.variables.clear();
-    this.callStack.clear();
-    this.watches.clearValues();
-    this.exceptionInfo = undefined;
-    this.inlineValues = [];
-    this.lastEvaluation = undefined;
-    this.evaluationCache.clear();
-    this.setState("Stopped");
+    this.activeSessionId = this.sessionHosts.size > 0 ? [...this.sessionHosts.keys()][0] : null;
+    if (this.activeSessionId) {
+      this.syncActiveFromHost(this.sessionHosts.get(this.activeSessionId)!);
+    } else {
+      this.variables.clear();
+      this.callStack.clear();
+      this.watches.clearValues();
+      this.exceptionInfo = undefined;
+      this.inlineValues = [];
+      this.lastEvaluation = undefined;
+      this.evaluationCache.clear();
+      this.consoleEntries.length = 0;
+      this.loadedSources = [];
+    }
+    this.setState(this.sessionHosts.size > 0 ? "Running" : "Idle");
     return this.snapshot();
   }
 
@@ -780,12 +876,25 @@ export class DebugService {
       type: configuration.type,
       request: configuration.request,
       program: configuration.program,
+      module: configuration.module,
       cwd: configuration.cwd,
       args: configuration.args,
       env: configuration.env,
       stopOnEntry: configuration.stopOnEntry,
       console: configuration.console,
+      internalConsoleOptions: configuration.internalConsoleOptions,
       runtimeArgs: configuration.runtimeArgs,
+      runtimeExecutable: configuration.runtimeExecutable,
+      runtimeVersion: configuration.runtimeVersion,
+      sourceMaps: configuration.sourceMaps,
+      outFiles: configuration.outFiles,
+      skipFiles: configuration.skipFiles,
+      justMyCode: configuration.justMyCode,
+      port: configuration.port,
+      host: configuration.host,
+      url: configuration.url,
+      webRoot: configuration.webRoot,
+      python: configuration.python,
       ...(configuration.dap ?? {})
     };
   }
@@ -819,6 +928,37 @@ export class DebugService {
       lastLaunchConfiguration: this.lastLaunchConfiguration,
       selectedLaunchConfigurationName: this.selectedLaunchConfigurationName
     });
+  }
+
+  private async stopHost(host: DebugSessionHost): Promise<void> {
+    if (host.dapSession) {
+      await host.dapSession.request("disconnect", { terminateDebuggee: true }, 5000).catch(() => undefined);
+    }
+    host.dispose();
+  }
+
+  private syncActiveToHost(host: DebugSessionHost): void {
+    host.variables.replaceScopes(this.variables.list());
+    host.callStack.replaceThreads(this.callStack.list());
+    host.consoleEntries.splice(0, host.consoleEntries.length, ...this.consoleEntries);
+    host.loadedSources = [...this.loadedSources];
+    host.exceptionInfo = this.exceptionInfo ? { ...this.exceptionInfo } : undefined;
+    host.inlineValues = [...this.inlineValues];
+    host.state = this.state;
+  }
+
+  private syncActiveFromHost(host: DebugSessionHost): void {
+    this.session = host.dapSession;
+    this.sessionStartedAt = host.startedAt;
+    this.lastLaunchConfiguration = host.configuration;
+    this.selectedLaunchConfigurationName = host.configuration.name;
+    this.variables.replaceScopes(host.variables.list());
+    this.callStack.replaceThreads(host.callStack.list());
+    this.consoleEntries.splice(0, this.consoleEntries.length, ...host.consoleEntries);
+    this.loadedSources = [...host.loadedSources];
+    this.exceptionInfo = host.exceptionInfo ? { ...host.exceptionInfo } : undefined;
+    this.inlineValues = [...host.inlineValues];
+    this.state = host.state;
   }
 
   private emitState(): void {

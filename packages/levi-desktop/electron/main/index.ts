@@ -2003,6 +2003,14 @@ function registerIpc(): void {
     assertNoIpcArgs(args);
     return debugService.stop();
   });
+  ipcMain.handle(IPC_CHANNELS.debugStopAll, (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.stopAll();
+  });
+  ipcMain.handle(IPC_CHANNELS.debugSelectSession, (_event, sessionId, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.selectSession(sessionId);
+  });
   ipcMain.handle(IPC_CHANNELS.debugRestart, (_event, ...args) => {
     assertNoIpcArgs(args);
     return debugService.restart();

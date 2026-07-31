@@ -81,6 +81,8 @@ const IPC_CHANNELS = {
   executionEvent: "levi:execution:event",
   debugStart: "levi:debug:start",
   debugStop: "levi:debug:stop",
+  debugStopAll: "levi:debug:stop-all",
+  debugSelectSession: "levi:debug:select-session",
   debugRestart: "levi:debug:restart",
   debugPause: "levi:debug:pause",
   debugContinue: "levi:debug:continue",
@@ -393,6 +395,8 @@ const leviApi: LeviApiWithWorkspaceTree = {
   debug: {
     start: (request: DebugStartRequest) => ipcRenderer.invoke(IPC_CHANNELS.debugStart, request),
     stop: () => ipcRenderer.invoke(IPC_CHANNELS.debugStop),
+    stopAll: () => ipcRenderer.invoke(IPC_CHANNELS.debugStopAll),
+    selectSession: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.debugSelectSession, sessionId),
     restart: () => ipcRenderer.invoke(IPC_CHANNELS.debugRestart),
     pause: () => ipcRenderer.invoke(IPC_CHANNELS.debugPause),
     continue: () => ipcRenderer.invoke(IPC_CHANNELS.debugContinue),

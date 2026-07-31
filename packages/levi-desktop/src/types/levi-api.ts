@@ -824,6 +824,8 @@ export type LeviApi = {
   debug: {
     start: (request: DebugStartRequest) => Promise<DebugState>;
     stop: () => Promise<DebugState>;
+    stopAll: () => Promise<DebugState>;
+    selectSession: (sessionId: string) => Promise<DebugState>;
     restart: () => Promise<DebugState>;
     pause: () => Promise<DebugState>;
     continue: () => Promise<DebugState>;
