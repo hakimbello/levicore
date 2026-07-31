@@ -11,6 +11,7 @@ import {
   resolveWorkspaceCwd,
   revealPathInExplorer,
   spawnTerminalPty,
+  spawnCommandPty,
   TERMINAL_MAX_COLS,
   TERMINAL_MAX_ROWS,
   TERMINAL_MIN_COLS,
@@ -45,6 +46,15 @@ export type TerminalCreateResult = {
   shellKind: string;
 };
 
+export type TerminalCommandCreateRequest = {
+  command: string;
+  args: string[];
+  cwd?: string;
+  name?: string;
+  cols: number;
+  rows: number;
+};
+
 const STATE_FILE = "terminal-state.json";
 const DEFAULT_LAYOUT: ValidatedTerminalLayoutState = {
   tabs: [],
@@ -62,12 +72,14 @@ type ManagedTerminal = {
   metadata: TerminalSessionMetadata;
   pty: TerminalPtySession;
   window: BrowserWindow;
+  onExit?: (exitCode: number) => void;
 };
 
 export class TerminalManager {
   private readonly sessions = new Map<string, ManagedTerminal>();
   private layout: ValidatedTerminalLayoutState = { ...DEFAULT_LAYOUT, tabs: [] };
   private readonly statePath: string;
+  private dataListeners: Array<(sessionId: string, data: string) => void> = [];
 
   constructor(
     private readonly getWorkspaceRoot: WorkspaceProvider,
@@ -123,6 +135,22 @@ export class TerminalManager {
     return [...this.sessions.values()].map((entry) => ({ ...entry.metadata }));
   }
 
+  onTerminalData(listener: (sessionId: string, data: string) => void): () => void {
+    this.dataListeners.push(listener);
+    return () => {
+      this.dataListeners = this.dataListeners.filter((item) => item !== listener);
+    };
+  }
+
+  private emitTerminalData(sessionId: string, data: string, window: BrowserWindow): void {
+    if (!window.isDestroyed()) {
+      window.webContents.send(IPC_CHANNELS.terminalData, { id: sessionId, data });
+    }
+    for (const listener of this.dataListeners) {
+      listener(sessionId, data);
+    }
+  }
+
   create(window: BrowserWindow, request: unknown): TerminalCreateResult {
     const validated = validateTerminalCreateRequest(request);
     const cwd = resolveWorkspaceCwd(validated.cwd, this.getWorkspaceRoot(), this.getFallbackRoot());
@@ -134,15 +162,14 @@ export class TerminalManager {
       rows: validated.rows,
       cwd,
       onData: (data) => {
-        if (!window.isDestroyed()) {
-          window.webContents.send(IPC_CHANNELS.terminalData, { id, data });
-        }
+        this.emitTerminalData(id, data, window);
       },
-      onExit: () => {
+      onExit: (exitCode) => {
         const managed = this.sessions.get(id);
         if (managed) {
           managed.metadata.alive = false;
           managed.pty.alive = false;
+          managed.onExit?.(exitCode);
         }
       }
     });
@@ -171,6 +198,45 @@ export class TerminalManager {
       name: this.nextDefaultName()
     };
     return this.create(window, createRequest);
+  }
+
+  createCommand(
+    window: BrowserWindow,
+    request: TerminalCommandCreateRequest,
+    onExit?: (exitCode: number) => void
+  ): TerminalCreateResult {
+    const cwd = resolveWorkspaceCwd(request.cwd, this.getWorkspaceRoot(), this.getFallbackRoot());
+    const id = randomUUID();
+    const name = request.name ?? this.nextDefaultName();
+    const ptySession = spawnCommandPty({
+      id,
+      executable: request.command,
+      args: request.args,
+      cols: parseTerminalSize(request.cols, 96, TERMINAL_MIN_COLS, TERMINAL_MAX_COLS),
+      rows: parseTerminalSize(request.rows, 16, TERMINAL_MIN_ROWS, TERMINAL_MAX_ROWS),
+      cwd,
+      onData: (data) => {
+        this.emitTerminalData(id, data, window);
+      },
+      onExit: (exitCode) => {
+        const managed = this.sessions.get(id);
+        if (managed) {
+          managed.metadata.alive = false;
+          managed.pty.alive = false;
+          managed.onExit?.(exitCode);
+        }
+      }
+    });
+    const metadata: TerminalSessionMetadata = {
+      id,
+      name,
+      cwd,
+      shellKind: ptySession.shell.kind,
+      alive: true,
+      createdAt: new Date().toISOString()
+    };
+    this.sessions.set(id, { metadata, pty: ptySession, window, onExit });
+    return { id, cwd, name, shellKind: metadata.shellKind };
   }
 
   write(idValue: unknown, dataValue: unknown): void {

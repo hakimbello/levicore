@@ -90,6 +90,7 @@ export type TerminalPtySession = {
   cwd: string;
   shell: TerminalShellInfo;
   alive: boolean;
+  command?: string;
 };
 
 export type TerminalSpawnOptions = {
@@ -98,7 +99,12 @@ export type TerminalSpawnOptions = {
   rows: number;
   cwd: string;
   onData: (data: string) => void;
-  onExit: () => void;
+  onExit: (exitCode: number) => void;
+};
+
+export type TerminalCommandSpawnOptions = TerminalSpawnOptions & {
+  executable: string;
+  args: string[];
 };
 
 export function spawnTerminalPty(options: TerminalSpawnOptions): TerminalPtySession {
@@ -120,8 +126,8 @@ export function spawnTerminalPty(options: TerminalSpawnOptions): TerminalPtySess
   });
 
   session.onData(options.onData);
-  session.onExit(() => {
-    options.onExit();
+  session.onExit(({ exitCode }) => {
+    options.onExit(typeof exitCode === "number" ? exitCode : 1);
   });
 
   return {
@@ -130,6 +136,35 @@ export function spawnTerminalPty(options: TerminalSpawnOptions): TerminalPtySess
     cwd: options.cwd,
     shell,
     alive: true
+  };
+}
+
+export function spawnCommandPty(options: TerminalCommandSpawnOptions): TerminalPtySession {
+  const shell = detectDefaultShell();
+  const session = pty.spawn(options.executable, options.args, {
+    name: "xterm-256color",
+    cols: options.cols,
+    rows: options.rows,
+    cwd: options.cwd,
+    env: {
+      ...process.env,
+      TERM: "xterm-256color",
+      LANG: process.env.LANG ?? "en_US.UTF-8"
+    }
+  });
+
+  session.onData(options.onData);
+  session.onExit(({ exitCode }) => {
+    options.onExit(typeof exitCode === "number" ? exitCode : 1);
+  });
+
+  return {
+    id: options.id,
+    pty: session,
+    cwd: options.cwd,
+    shell,
+    alive: true,
+    command: `${options.executable} ${options.args.join(" ")}`.trim()
   };
 }
 
