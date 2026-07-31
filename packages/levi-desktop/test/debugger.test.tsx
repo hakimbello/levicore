@@ -5,6 +5,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BreakpointManager, DebugService, DebugSession, EvaluationCache, VariableStore, WatchStore, encodeDapMessage } from "../src/features/debugger";
 import { DesktopDebugService, validateDebugSetBreakpointRequest, validateDebugStartRequest } from "../electron/main/debug-service";
+import { AdapterManager } from "../electron/main/adapter-manager";
 import { truncateValue, MAX_VARIABLE_CHILDREN } from "../src/features/debugger/variableLimits";
 import { App } from "../src/app/App";
 
@@ -200,7 +201,9 @@ describe("DAP debugger foundation", () => {
 
   it("creates and loads workspace launch.json configurations with VS Code-compatible names", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "levi-debug-launch-"));
-    const service = new DesktopDebugService(() => root);
+    const adapterManager = new AdapterManager(() => root, { adapterRoot: path.join(root, "adapters") });
+    const service = new DesktopDebugService(() => root, adapterManager);
+    await adapterManager.initialize();
 
     const state = await service.getState();
 
@@ -216,7 +219,8 @@ describe("DAP debugger foundation", () => {
       JSON.stringify({ version: "0.2.0", configurations: [{ type: "node", request: "launch", name: "Workspace App", program: "${workspaceFolder}/app.js" }] }),
       "utf8"
     );
-    const vscodeService = new DesktopDebugService(() => vscodeRoot);
+    const vscodeService = new DesktopDebugService(() => vscodeRoot, new AdapterManager(() => vscodeRoot, { adapterRoot: path.join(vscodeRoot, "adapters") }));
+    await vscodeService.initializeAdapters();
     const vscodeState = await vscodeService.getState();
 
     expect(vscodeState.launchConfigurations[0]).toMatchObject({ name: "Workspace App", source: ".vscode/launch.json" });

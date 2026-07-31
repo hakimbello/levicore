@@ -387,9 +387,11 @@ function createDefaultApi(): LeviApi {
         inlineValues: [],
         evaluationCache: [],
         lastLaunchConfiguration: request.configuration ?? undefined,
+        adapters: [],
+        adapterRecommendations: [],
         error: {
           code: "MISSING_ADAPTER" as const,
-          message: "Missing debug adapter for \"node\".",
+          message: 'Missing debug adapter for "node".',
           recoverable: true
         }
       })),
@@ -404,7 +406,9 @@ function createDefaultApi(): LeviApi {
         console: [],
         exceptionBreakpoints: [],
         inlineValues: [],
-        evaluationCache: []
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
       })),
       restart: vi.fn(async () => ({
         state: "Stopped" as const,
@@ -417,7 +421,9 @@ function createDefaultApi(): LeviApi {
         console: [],
         exceptionBreakpoints: [],
         inlineValues: [],
-        evaluationCache: []
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
       })),
       pause: vi.fn(async () => ({
         state: "Paused" as const,
@@ -430,7 +436,9 @@ function createDefaultApi(): LeviApi {
         console: [],
         exceptionBreakpoints: [],
         inlineValues: [],
-        evaluationCache: []
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
       })),
       continue: vi.fn(async () => ({
         state: "Running" as const,
@@ -443,7 +451,9 @@ function createDefaultApi(): LeviApi {
         console: [],
         exceptionBreakpoints: [],
         inlineValues: [],
-        evaluationCache: []
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
       })),
       stepOver: vi.fn(async () => ({
         state: "Paused" as const,
@@ -456,7 +466,9 @@ function createDefaultApi(): LeviApi {
         console: [],
         exceptionBreakpoints: [],
         inlineValues: [],
-        evaluationCache: []
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
       })),
       stepInto: vi.fn(async () => ({
         state: "Paused" as const,
@@ -469,7 +481,9 @@ function createDefaultApi(): LeviApi {
         console: [],
         exceptionBreakpoints: [],
         inlineValues: [],
-        evaluationCache: []
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
       })),
       stepOut: vi.fn(async () => ({
         state: "Paused" as const,
@@ -482,7 +496,9 @@ function createDefaultApi(): LeviApi {
         console: [],
         exceptionBreakpoints: [],
         inlineValues: [],
-        evaluationCache: []
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
       })),
       setBreakpoint: vi.fn(async (request) => ({
         state: "Idle" as const,
@@ -508,7 +524,9 @@ function createDefaultApi(): LeviApi {
         console: [],
         exceptionBreakpoints: [],
         inlineValues: [],
-        evaluationCache: []
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
       })),
       removeBreakpoint: vi.fn(async () => ({
         state: "Idle" as const,
@@ -521,7 +539,9 @@ function createDefaultApi(): LeviApi {
         console: [],
         exceptionBreakpoints: [],
         inlineValues: [],
-        evaluationCache: []
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
       })),
       getBreakpoints: vi.fn(async () => []),
       getState: vi.fn(async () => ({
@@ -550,7 +570,9 @@ function createDefaultApi(): LeviApi {
         console: [],
         exceptionBreakpoints: [],
         inlineValues: [],
-        evaluationCache: []
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
       })),
       selectConfiguration: vi.fn(async (name) => ({
         state: "Idle" as const,
@@ -564,7 +586,9 @@ function createDefaultApi(): LeviApi {
         console: [],
         exceptionBreakpoints: [],
         inlineValues: [],
-        evaluationCache: []
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
       })),
       createLaunchConfig: vi.fn(async () => ({
         state: "Idle" as const,
@@ -577,7 +601,9 @@ function createDefaultApi(): LeviApi {
         console: [],
         exceptionBreakpoints: [],
         inlineValues: [],
-        evaluationCache: []
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
       })),
       addWatch: vi.fn(async (expression) => ({
         state: "Idle" as const,
@@ -598,7 +624,9 @@ function createDefaultApi(): LeviApi {
         console: [],
         exceptionBreakpoints: [],
         inlineValues: [],
-        evaluationCache: []
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
       })),
       updateWatch: vi.fn(async (request) => ({
         state: "Idle" as const,
@@ -619,7 +647,9 @@ function createDefaultApi(): LeviApi {
         console: [],
         exceptionBreakpoints: [],
         inlineValues: [],
-        evaluationCache: []
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
       })),
       removeWatch: vi.fn(async () => ({
         state: "Idle" as const,
@@ -632,7 +662,9 @@ function createDefaultApi(): LeviApi {
         console: [],
         exceptionBreakpoints: [],
         inlineValues: [],
-        evaluationCache: []
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
       })),
       loadVariables: vi.fn(async () => ({
         state: "Paused" as const,
@@ -645,7 +677,9 @@ function createDefaultApi(): LeviApi {
         console: [],
         exceptionBreakpoints: [],
         inlineValues: [],
-        evaluationCache: []
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
       })),
       evaluate: vi.fn(async (request) => ({
         state: "Paused" as const,
@@ -669,7 +703,9 @@ function createDefaultApi(): LeviApi {
         lastEvaluation: {
           expression: request.expression,
           result: request.expression
-        }
+        },
+        adapters: [],
+        adapterRecommendations: []
       })),
       clearConsole: vi.fn(async () => ({
         state: "Paused" as const,
@@ -682,7 +718,9 @@ function createDefaultApi(): LeviApi {
         console: [],
         exceptionBreakpoints: [],
         inlineValues: [],
-        evaluationCache: []
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
       })),
       selectStackFrame: vi.fn(async () => ({
         state: "Paused" as const,
@@ -695,7 +733,9 @@ function createDefaultApi(): LeviApi {
         console: [],
         exceptionBreakpoints: [],
         inlineValues: [],
-        evaluationCache: []
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
       })),
       setExceptionBreakpoints: vi.fn(async () => ({
         state: "Idle" as const,
@@ -708,7 +748,9 @@ function createDefaultApi(): LeviApi {
         console: [],
         exceptionBreakpoints: [],
         inlineValues: [],
-        evaluationCache: []
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
       })),
       refreshLoadedSources: vi.fn(async () => ({
         state: "Running" as const,
@@ -721,10 +763,150 @@ function createDefaultApi(): LeviApi {
         console: [],
         exceptionBreakpoints: [],
         inlineValues: [],
-        evaluationCache: []
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
       })),
       getCompletions: vi.fn(async () => [{ label: "count", insertText: "count" }]),
       cancelEvaluations: vi.fn(async () => undefined),
+      listAdapters: vi.fn(async () => []),
+      scanAdapters: vi.fn(async () => ({
+        state: "Idle" as const,
+        launchConfigurations: [],
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        loadedSources: [],
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
+      })),
+      getAdapterStatus: vi.fn(async () => ({
+        state: "Idle" as const,
+        launchConfigurations: [],
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        loadedSources: [],
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
+      })),
+      installAdapter: vi.fn(async () => ({
+        state: "Idle" as const,
+        launchConfigurations: [],
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        loadedSources: [],
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: [],
+        adapters: [{ id: "node", displayName: "Node.js", languages: ["typescript"], requestTypes: ["launch" as const], state: "installed" as const }],
+        adapterRecommendations: []
+      })),
+      updateAdapter: vi.fn(async () => ({
+        state: "Idle" as const,
+        launchConfigurations: [],
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        loadedSources: [],
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
+      })),
+      uninstallAdapter: vi.fn(async () => ({
+        state: "Idle" as const,
+        launchConfigurations: [],
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        loadedSources: [],
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
+      })),
+      validateAdapter: vi.fn(async () => ({
+        state: "Idle" as const,
+        launchConfigurations: [],
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        loadedSources: [],
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
+      })),
+      registerCustomAdapter: vi.fn(async () => ({
+        state: "Idle" as const,
+        launchConfigurations: [],
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        loadedSources: [],
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
+      })),
+      revokeCustomAdapter: vi.fn(async () => ({
+        state: "Idle" as const,
+        launchConfigurations: [],
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        loadedSources: [],
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
+      })),
+      dismissAdapterRecommendation: vi.fn(async () => ({
+        state: "Idle" as const,
+        launchConfigurations: [],
+        breakpoints: [],
+        watches: [],
+        variables: [],
+        callStack: [],
+        loadedSources: [],
+        console: [],
+        exceptionBreakpoints: [],
+        inlineValues: [],
+        evaluationCache: [],
+        adapters: [],
+        adapterRecommendations: []
+      })),
+      cancelAdapterInstall: vi.fn(async () => undefined),
+      revealAdapterLocation: vi.fn(async () => "C:\\Users\\developer\\Project\\adapters\\node"),
       onEvent: vi.fn((listener: (event: DebugEvent) => void) => {
         window.__leviDebugListeners.push(listener);
         return () => {
