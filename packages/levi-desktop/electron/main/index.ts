@@ -101,6 +101,7 @@ import {
   type ProjectRulesCache
 } from "./project-rules-context";
 import { DesktopDebugService } from "./debug-service";
+import { AdapterManager } from "./adapter-manager";
 import { DesktopRuntimeService } from "./runtime-service";
 import { UpdateService } from "./update-service";
 import type { DebugEvent } from "../../src/features/debugger";
@@ -152,7 +153,10 @@ let selectedProject: SelectedProject | null = null;
 let workspaceScan: WorkspaceScan | null = null;
 let workspaceStatus: WorkspaceStatus = createWorkspaceStatus("idle");
 let activeWorkspaceScan: Promise<WorkspaceStatus> | null = null;
-const debugService = new DesktopDebugService(() => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null);
+const debugService = new DesktopDebugService(
+  () => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null,
+  new AdapterManager(() => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null)
+);
 
 function getRepositoryRoot(): string {
   if (process.env.LEVI_REPO_ROOT && path.isAbsolute(process.env.LEVI_REPO_ROOT)) {
@@ -2091,6 +2095,56 @@ function registerIpc(): void {
     assertNoIpcArgs(args);
     debugService.cancelEvaluations();
   });
+  ipcMain.handle(IPC_CHANNELS.debugListAdapters, (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.listAdapterDefinitions();
+  });
+  ipcMain.handle(IPC_CHANNELS.debugScanAdapters, async (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.scanAdapters();
+  });
+  ipcMain.handle(IPC_CHANNELS.debugGetAdapterStatus, async (_event, adapterId, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.getAdapterStatus(adapterId);
+  });
+  ipcMain.handle(IPC_CHANNELS.debugInstallAdapter, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.installAdapter(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.debugUpdateAdapter, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.updateAdapter(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.debugUninstallAdapter, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.uninstallAdapter(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.debugValidateAdapter, async (_event, adapterId, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.validateAdapter(adapterId);
+  });
+  ipcMain.handle(IPC_CHANNELS.debugRegisterCustomAdapter, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.registerTrustedCustomAdapter(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.debugRevokeCustomAdapter, async (_event, adapterId, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.revokeTrustedCustomAdapter(adapterId);
+  });
+  ipcMain.handle(IPC_CHANNELS.debugDismissAdapterRecommendation, async (_event, adapterId, ...args) => {
+    assertNoIpcArgs(args);
+    return debugService.dismissAdapterRecommendation(adapterId);
+  });
+  ipcMain.handle(IPC_CHANNELS.debugCancelAdapterInstall, (_event, ...args) => {
+    assertNoIpcArgs(args);
+    debugService.cancelAdapterInstall();
+  });
+  ipcMain.handle(IPC_CHANNELS.debugRevealAdapterLocation, (_event, adapterId, ...args) => {
+    assertNoIpcArgs(args);
+    const location = debugService.revealAdapterLocation(adapterId);
+    shell.showItemInFolder(location);
+    return location;
+  });
   ipcMain.handle(IPC_CHANNELS.editsPropose, (event, rawRequest) => {
     const eventWindow = BrowserWindow.fromWebContents(event.sender);
     if (!eventWindow) {
@@ -2363,6 +2417,7 @@ async function createWindow(): Promise<void> {
 app.whenReady().then(async () => {
   await readRecentProject();
   registerIpc();
+  await debugService.initializeAdapters();
   await createWindow();
 
   if (liveAcceptanceEnabled() && process.env.LEVI_OPEN_PROJECT_PATH) {

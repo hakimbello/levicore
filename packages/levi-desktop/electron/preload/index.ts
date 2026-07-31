@@ -25,7 +25,11 @@ import type {
   DebugSetExceptionBreakpointsRequest,
   DebugStartRequest,
   DebugUpdateWatchRequest,
-  DebugCompletionRequest
+  DebugCompletionRequest,
+  DebugAdapterInstallRequest,
+  DebugAdapterUninstallRequest,
+  DebugAdapterRegisterCustomRequest,
+  DebugAdapterDefinition
 } from "../../src/features/debugger";
 import type {
   LeviApiWithWorkspaceTree,
@@ -100,6 +104,18 @@ const IPC_CHANNELS = {
   debugRefreshLoadedSources: "levi:debug:refresh-loaded-sources",
   debugCompletions: "levi:debug:completions",
   debugCancelEvaluations: "levi:debug:cancel-evaluations",
+  debugListAdapters: "levi:debug:list-adapters",
+  debugScanAdapters: "levi:debug:scan-adapters",
+  debugGetAdapterStatus: "levi:debug:get-adapter-status",
+  debugInstallAdapter: "levi:debug:install-adapter",
+  debugUpdateAdapter: "levi:debug:update-adapter",
+  debugUninstallAdapter: "levi:debug:uninstall-adapter",
+  debugValidateAdapter: "levi:debug:validate-adapter",
+  debugRegisterCustomAdapter: "levi:debug:register-custom-adapter",
+  debugRevokeCustomAdapter: "levi:debug:revoke-custom-adapter",
+  debugDismissAdapterRecommendation: "levi:debug:dismiss-adapter-recommendation",
+  debugCancelAdapterInstall: "levi:debug:cancel-adapter-install",
+  debugRevealAdapterLocation: "levi:debug:reveal-adapter-location",
   debugEvent: "levi:debug:event",
   devOpenProjectPath: "levi:dev:open-project-path",
   devInjectPlan: "levi:dev:inject-plan",
@@ -257,7 +273,9 @@ function isDebugState(value: unknown): boolean {
     Array.isArray(state.console) &&
     Array.isArray(state.exceptionBreakpoints) &&
     Array.isArray(state.inlineValues) &&
-    Array.isArray(state.evaluationCache)
+    Array.isArray(state.evaluationCache) &&
+    Array.isArray((state as { adapters?: unknown }).adapters) &&
+    Array.isArray((state as { adapterRecommendations?: unknown }).adapterRecommendations)
   );
 }
 
@@ -268,6 +286,7 @@ function isDebugEvent(value: unknown): value is DebugEvent {
   if (event.type === "console") return isDebugState(event.state) && typeof event.entry === "object";
   if (event.type === "navigation") return isDebugState(event.state) && typeof (event as { frame?: unknown }).frame === "object";
   if (event.type === "evaluation") return isDebugState(event.state) && typeof event.result === "object";
+  if (event.type === "adapter-progress") return isDebugState(event.state) && typeof (event as { progress?: unknown }).progress === "object";
   if (event.type === "error") {
     const error = event.error as { code?: unknown; message?: unknown; recoverable?: unknown } | undefined;
     return (
@@ -398,6 +417,19 @@ const leviApi: LeviApiWithWorkspaceTree = {
     refreshLoadedSources: () => ipcRenderer.invoke(IPC_CHANNELS.debugRefreshLoadedSources),
     getCompletions: (request: DebugCompletionRequest) => ipcRenderer.invoke(IPC_CHANNELS.debugCompletions, request),
     cancelEvaluations: () => ipcRenderer.invoke(IPC_CHANNELS.debugCancelEvaluations),
+    listAdapters: () => ipcRenderer.invoke(IPC_CHANNELS.debugListAdapters) as Promise<DebugAdapterDefinition[]>,
+    scanAdapters: () => ipcRenderer.invoke(IPC_CHANNELS.debugScanAdapters),
+    getAdapterStatus: (adapterId: string) => ipcRenderer.invoke(IPC_CHANNELS.debugGetAdapterStatus, adapterId),
+    installAdapter: (request: DebugAdapterInstallRequest) => ipcRenderer.invoke(IPC_CHANNELS.debugInstallAdapter, request),
+    updateAdapter: (request: DebugAdapterInstallRequest) => ipcRenderer.invoke(IPC_CHANNELS.debugUpdateAdapter, request),
+    uninstallAdapter: (request: DebugAdapterUninstallRequest) => ipcRenderer.invoke(IPC_CHANNELS.debugUninstallAdapter, request),
+    validateAdapter: (adapterId: string) => ipcRenderer.invoke(IPC_CHANNELS.debugValidateAdapter, adapterId),
+    registerCustomAdapter: (request: DebugAdapterRegisterCustomRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.debugRegisterCustomAdapter, request),
+    revokeCustomAdapter: (adapterId: string) => ipcRenderer.invoke(IPC_CHANNELS.debugRevokeCustomAdapter, adapterId),
+    dismissAdapterRecommendation: (adapterId: string) => ipcRenderer.invoke(IPC_CHANNELS.debugDismissAdapterRecommendation, adapterId),
+    cancelAdapterInstall: () => ipcRenderer.invoke(IPC_CHANNELS.debugCancelAdapterInstall),
+    revealAdapterLocation: (adapterId: string) => ipcRenderer.invoke(IPC_CHANNELS.debugRevealAdapterLocation, adapterId),
     onEvent: (listener: (event: DebugEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
         if (isDebugEvent(payload)) listener(payload);

@@ -121,7 +121,9 @@ export class DebugService {
       lastEvaluation: this.lastEvaluation ? { ...this.lastEvaluation } : undefined,
       evaluationCache: this.evaluationCache.list(),
       lastLaunchConfiguration: this.lastLaunchConfiguration,
-      error: this.error
+      error: this.error,
+      adapters: [],
+      adapterRecommendations: []
     };
   }
 
@@ -159,6 +161,11 @@ export class DebugService {
     await this.persist();
     this.emitState();
     return this.snapshot();
+  }
+
+  rememberLaunchConfiguration(configuration: DebugLaunchConfiguration): void {
+    this.lastLaunchConfiguration = configuration;
+    this.selectedLaunchConfigurationName = configuration.name;
   }
 
   async start(configuration: DebugLaunchConfiguration, effectiveConfiguration: DebugLaunchConfiguration = configuration): Promise<DebugState> {

@@ -15,6 +15,10 @@ import type {
   DebugStartRequest,
   DebugState,
   DebugUpdateWatchRequest,
+  DebugAdapterInstallRequest,
+  DebugAdapterUninstallRequest,
+  DebugAdapterRegisterCustomRequest,
+  DebugAdapterDefinition,
   DebugCompletionRequest,
   DebugCompletionItem
 } from "../features/debugger";
@@ -843,6 +847,18 @@ export type LeviApi = {
     refreshLoadedSources: () => Promise<DebugState>;
     getCompletions: (request: DebugCompletionRequest) => Promise<DebugCompletionItem[]>;
     cancelEvaluations: () => Promise<void>;
+    listAdapters: () => Promise<DebugAdapterDefinition[]>;
+    scanAdapters: () => Promise<DebugState>;
+    getAdapterStatus: (adapterId: string) => Promise<DebugState>;
+    installAdapter: (request: DebugAdapterInstallRequest) => Promise<DebugState>;
+    updateAdapter: (request: DebugAdapterInstallRequest) => Promise<DebugState>;
+    uninstallAdapter: (request: DebugAdapterUninstallRequest) => Promise<DebugState>;
+    validateAdapter: (adapterId: string) => Promise<DebugState>;
+    registerCustomAdapter: (request: DebugAdapterRegisterCustomRequest) => Promise<DebugState>;
+    revokeCustomAdapter: (adapterId: string) => Promise<DebugState>;
+    dismissAdapterRecommendation: (adapterId: string) => Promise<DebugState>;
+    cancelAdapterInstall: () => Promise<void>;
+    revealAdapterLocation: (adapterId: string) => Promise<string>;
     onEvent: (listener: (event: DebugEvent) => void) => () => void;
   };
   terminal: {

@@ -22,6 +22,14 @@ import type {
   DebugExceptionBreakpointFilter
 } from "../../src/features/debugger/DebugEvents";
 import { DEFAULT_EXCEPTION_BREAKPOINTS } from "../../src/features/debugger/DebugEvents";
+import {
+  validateCustomAdapterDefinition,
+  type DebugAdapterInstallRequest,
+  type DebugAdapterRegisterCustomRequest,
+  type DebugAdapterUninstallRequest
+} from "../../src/features/debugger/adapters";
+import type { DebugLaunchAdapterDiagnostic, DebugAdapterInstallProgress } from "../../src/features/debugger/DebugEvents";
+import { AdapterManager } from "./adapter-manager";
 
 const DEBUG_STATE_FILE = path.join(".levi", "debug-state.json");
 const LEVI_LAUNCH_FILE = path.join(".levi", "launch.json");
@@ -34,6 +42,7 @@ type WorkspaceProvider = () => string | null;
 type AdapterConfig = {
   command: string;
   args: string[];
+  env?: Record<string, string>;
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -340,22 +349,88 @@ function substituteWorkspaceFolder(value: Record<string, unknown> | undefined, r
   return substitute(value) as Record<string, unknown>;
 }
 
+function validateDebugAdapterInstallRequest(value: unknown): DebugAdapterInstallRequest {
+  if (!isPlainObject(value)) throw new Error("Adapter install request is invalid.");
+  if (value.confirmed !== true) throw new Error("Adapter install requires confirmation.");
+  return {
+    adapterId: assertSmallString(value.adapterId, "adapterId", true) as string,
+    optionId: assertSmallString(value.optionId, "optionId", true) as string,
+    confirmed: true
+  };
+}
+
+function validateDebugAdapterUninstallRequest(value: unknown): DebugAdapterUninstallRequest {
+  if (!isPlainObject(value)) throw new Error("Adapter uninstall request is invalid.");
+  if (value.confirmed !== true) throw new Error("Adapter uninstall requires confirmation.");
+  return {
+    adapterId: assertSmallString(value.adapterId, "adapterId", true) as string,
+    confirmed: true
+  };
+}
+
+function validateDebugAdapterRegisterCustomRequest(value: unknown): DebugAdapterRegisterCustomRequest {
+  if (!isPlainObject(value)) throw new Error("Custom adapter registration request is invalid.");
+  if (value.confirmed !== true) throw new Error("Custom adapter registration requires trust confirmation.");
+  if (!isPlainObject(value.adapter)) throw new Error("Custom adapter payload is invalid.");
+  return {
+    adapter: validateCustomAdapterDefinition(value.adapter),
+    confirmed: true
+  };
+}
+
 export class DesktopDebugService {
   private workspaceRoot: string | null = null;
   private adapterProcess: ChildProcessWithoutNullStreams | null = null;
   private readonly service: CoreDebugService;
+  private lastLaunchDiagnostic: DebugLaunchAdapterDiagnostic | undefined;
+  private lastInstallProgress: DebugAdapterInstallProgress | undefined;
+  private adapterListeners: Array<(event: DebugEvent) => void> = [];
 
-  constructor(private readonly getWorkspaceRoot: WorkspaceProvider) {
+  constructor(
+    private readonly getWorkspaceRoot: WorkspaceProvider,
+    private readonly adapterManager: AdapterManager
+  ) {
     this.service = new CoreDebugService({
       createAdapter: (configuration) => this.createAdapter(configuration),
       resolveSourcePath: (relativePath) => this.resolveSourcePath(relativePath),
       relativizeSourcePath: (sourcePath) => this.relativeSourcePath(sourcePath),
       onDidChangePersistence: (state) => this.persist(state)
     });
+    this.adapterManager.onProgress((progress) => {
+      this.lastInstallProgress = progress;
+      this.emitAdapterEvent({ type: "adapter-progress", progress, state: this.service.snapshot() as DebugState });
+    });
+  }
+
+  async initializeAdapters(): Promise<void> {
+    await this.adapterManager.initialize();
   }
 
   onEvent(listener: (event: DebugEvent) => void): () => void {
-    return this.service.onEvent(listener);
+    this.adapterListeners.push(listener);
+    const unsubscribe = this.service.onEvent(listener);
+    return () => {
+      unsubscribe();
+      this.adapterListeners = this.adapterListeners.filter((item) => item !== listener);
+    };
+  }
+
+  private emitAdapterEvent(event: DebugEvent): void {
+    void this.enrichedState().then((state) => {
+      const enriched = { ...event, state } as DebugEvent;
+      for (const listener of this.adapterListeners) listener(enriched);
+    });
+  }
+
+  private async enrichedState(): Promise<DebugState> {
+    const snapshot = this.service.snapshot();
+    return {
+      ...snapshot,
+      adapters: this.adapterManager.getStatuses(),
+      adapterRecommendations: this.adapterManager.getRecommendations(),
+      launchAdapterDiagnostic: this.lastLaunchDiagnostic,
+      adapterInstallProgress: this.lastInstallProgress
+    };
   }
 
   async ensureWorkspace(): Promise<string> {
@@ -368,13 +443,19 @@ export class DesktopDebugService {
       this.workspaceRoot = realRoot;
       await this.load();
       await this.refreshLaunchConfigurations();
+      await this.adapterManager.scanAdapters();
     }
     return realRoot;
   }
 
   async getState(): Promise<DebugState> {
     await this.ensureWorkspace().catch(() => undefined);
-    return this.service.snapshot();
+    return this.enrichedState();
+  }
+
+  private async wrapState(action: () => Promise<unknown>): Promise<DebugState> {
+    await action();
+    return this.enrichedState();
   }
 
   async start(rawRequest: unknown): Promise<DebugState> {
@@ -387,90 +468,102 @@ export class DesktopDebugService {
     if (!configuration) {
       throw new Error("No debug configuration is selected.");
     }
+    const resolved = await this.adapterManager.resolveLaunchAdapter(configuration);
+    this.lastLaunchDiagnostic = resolved.diagnostic;
+    if (!resolved.command) {
+      this.service.rememberLaunchConfiguration(configuration);
+      this.service.setError({
+        code: "MISSING_ADAPTER",
+        message: resolved.diagnostic?.message ?? `Missing debug adapter for "${configuration.adapterId ?? configuration.type}".`,
+        recoverable: true
+      });
+      return this.enrichedState();
+    }
     const effectiveConfiguration = this.resolveWorkspacePaths(configuration, root);
-    return this.service.start(configuration, effectiveConfiguration);
+    await this.service.start(configuration, effectiveConfiguration);
+    return this.enrichedState();
   }
 
   stop(): Promise<DebugState> {
-    return this.service.stop();
+    return this.wrapState(() => this.service.stop());
   }
 
   restart(): Promise<DebugState> {
     const configuration = this.service.snapshot().lastLaunchConfiguration;
-    if (!configuration) return this.service.restart();
+    if (!configuration) return this.wrapState(() => this.service.restart());
     return this.start({ configuration });
   }
 
   pause(): Promise<DebugState> {
-    return this.service.control("pause");
+    return this.wrapState(() => this.service.control("pause"));
   }
 
   continue(): Promise<DebugState> {
-    return this.service.control("continue");
+    return this.wrapState(() => this.service.control("continue"));
   }
 
   stepOver(): Promise<DebugState> {
-    return this.service.control("next");
+    return this.wrapState(() => this.service.control("next"));
   }
 
   stepInto(): Promise<DebugState> {
-    return this.service.control("stepIn");
+    return this.wrapState(() => this.service.control("stepIn"));
   }
 
   stepOut(): Promise<DebugState> {
-    return this.service.control("stepOut");
+    return this.wrapState(() => this.service.control("stepOut"));
   }
 
   async setBreakpoint(rawRequest: unknown): Promise<DebugState> {
     await this.ensureWorkspace();
-    return this.service.setBreakpoint(validateDebugSetBreakpointRequest(rawRequest));
+    return this.wrapState(() => this.service.setBreakpoint(validateDebugSetBreakpointRequest(rawRequest)));
   }
 
   async removeBreakpoint(rawRequest: unknown): Promise<DebugState> {
     await this.ensureWorkspace();
     const request = validateDebugRemoveBreakpointRequest(rawRequest);
-    return this.service.removeBreakpoint(request.breakpointId, request.relativePath, request.line);
+    return this.wrapState(() => this.service.removeBreakpoint(request.breakpointId, request.relativePath, request.line));
   }
 
   async addWatch(rawExpression: unknown): Promise<DebugState> {
     await this.ensureWorkspace();
     const expression = assertSmallString(rawExpression, "watch expression", true) as string;
-    return this.service.addWatch(expression);
+    return this.wrapState(() => this.service.addWatch(expression));
   }
 
   async removeWatch(rawId: unknown): Promise<DebugState> {
     await this.ensureWorkspace();
     const id = assertSmallString(rawId, "watch id", true) as string;
-    return this.service.removeWatch(id);
+    return this.wrapState(() => this.service.removeWatch(id));
   }
 
   async updateWatch(rawRequest: unknown): Promise<DebugState> {
     await this.ensureWorkspace();
     const request = validateDebugUpdateWatchRequest(rawRequest);
-    return this.service.updateWatch(request.id, request.expression);
+    return this.wrapState(() => this.service.updateWatch(request.id, request.expression));
   }
 
   async loadVariables(rawRequest: unknown): Promise<DebugState> {
     await this.ensureWorkspace();
     const request = validateLoadVariablesRequest(rawRequest);
-    return this.service.loadVariables(request.variablesReference);
+    return this.wrapState(() => this.service.loadVariables(request.variablesReference));
   }
 
   async evaluate(rawRequest: unknown): Promise<DebugState> {
     await this.ensureWorkspace();
     const request = validateDebugEvaluateRequest(rawRequest);
-    return this.service.evaluateExpression(request.expression, request.context, request.frameId);
+    return this.wrapState(() => this.service.evaluateExpression(request.expression, request.context, request.frameId));
   }
 
   async setExceptionBreakpoints(rawRequest: unknown): Promise<DebugState> {
     await this.ensureWorkspace();
     const request = validateDebugSetExceptionBreakpointsRequest(rawRequest);
-    return this.service.setExceptionBreakpoints(request.breakpoints);
+    return this.wrapState(() => this.service.setExceptionBreakpoints(request.breakpoints));
   }
 
   async refreshLoadedSources(): Promise<DebugState> {
     await this.ensureWorkspace();
-    return this.service.refreshLoadedSources();
+    return this.wrapState(() => this.service.refreshLoadedSources());
   }
 
   async getCompletions(rawRequest: unknown): Promise<DebugCompletionItem[]> {
@@ -485,20 +578,20 @@ export class DesktopDebugService {
 
   async clearConsole(): Promise<DebugState> {
     await this.ensureWorkspace();
-    return this.service.clearConsole();
+    return this.wrapState(() => Promise.resolve(this.service.clearConsole()));
   }
 
   async selectConfiguration(rawName: unknown): Promise<DebugState> {
     await this.ensureWorkspace();
     const name = assertSmallString(rawName, "configuration name", true) as string;
-    return this.service.selectLaunchConfiguration(name);
+    return this.wrapState(() => this.service.selectLaunchConfiguration(name));
   }
 
   async createLaunchConfig(): Promise<DebugState> {
     const root = await this.ensureWorkspace();
     await this.ensureLeviLaunchFile(root);
     await this.refreshLaunchConfigurations();
-    return this.service.snapshot();
+    return this.enrichedState();
   }
 
   async selectStackFrame(rawRequest: unknown): Promise<DebugState> {
@@ -508,7 +601,75 @@ export class DesktopDebugService {
     if (!Number.isInteger(threadId) || !Number.isInteger(frameId)) {
       throw new Error("Stack frame request is invalid.");
     }
-    return this.service.selectStackFrame(threadId, frameId);
+    return this.wrapState(() => Promise.resolve(this.service.selectStackFrame(threadId, frameId)));
+  }
+
+  listAdapterDefinitions() {
+    return this.adapterManager.listDefinitions();
+  }
+
+  async scanAdapters(): Promise<DebugState> {
+    await this.adapterManager.scanAdapters();
+    return this.enrichedState();
+  }
+
+  async getAdapterStatus(adapterId: unknown): Promise<DebugState> {
+    const id = assertSmallString(adapterId, "adapter id", true) as string;
+    await this.adapterManager.getAdapterStatus(id);
+    return this.enrichedState();
+  }
+
+  async installAdapter(rawRequest: unknown): Promise<DebugState> {
+    await this.ensureWorkspace();
+    await this.adapterManager.installAdapter(validateDebugAdapterInstallRequest(rawRequest));
+    return this.enrichedState();
+  }
+
+  async updateAdapter(rawRequest: unknown): Promise<DebugState> {
+    await this.ensureWorkspace();
+    await this.adapterManager.updateAdapter(validateDebugAdapterInstallRequest(rawRequest));
+    return this.enrichedState();
+  }
+
+  async uninstallAdapter(rawRequest: unknown): Promise<DebugState> {
+    await this.ensureWorkspace();
+    const request = validateDebugAdapterUninstallRequest(rawRequest);
+    await this.adapterManager.uninstallAdapter(request.adapterId, request.confirmed);
+    return this.enrichedState();
+  }
+
+  async validateAdapter(adapterId: unknown): Promise<DebugState> {
+    const id = assertSmallString(adapterId, "adapter id", true) as string;
+    await this.adapterManager.validateAdapter(id);
+    return this.enrichedState();
+  }
+
+  async registerTrustedCustomAdapter(rawRequest: unknown): Promise<DebugState> {
+    await this.ensureWorkspace();
+    await this.adapterManager.registerTrustedCustomAdapter(validateDebugAdapterRegisterCustomRequest(rawRequest));
+    return this.enrichedState();
+  }
+
+  async revokeTrustedCustomAdapter(adapterId: unknown): Promise<DebugState> {
+    const id = assertSmallString(adapterId, "adapter id", true) as string;
+    await this.adapterManager.revokeTrustedCustomAdapter(id);
+    return this.enrichedState();
+  }
+
+  async dismissAdapterRecommendation(adapterId: unknown): Promise<DebugState> {
+    const id = assertSmallString(adapterId, "adapter id", true) as string;
+    this.adapterManager.dismissRecommendation(id);
+    return this.enrichedState();
+  }
+
+  cancelAdapterInstall(): void {
+    this.adapterManager.cancelInstall();
+  }
+
+  revealAdapterLocation(adapterId: unknown): string {
+    const id = assertSmallString(adapterId, "adapter id", true) as string;
+    const status = this.adapterManager.getStatuses().find((item) => item.id === id);
+    return status?.installPath ?? status?.executablePath ?? this.adapterManager.getManagedRoot();
   }
 
   async dispose(): Promise<void> {
@@ -640,31 +801,18 @@ export class DesktopDebugService {
     return normalizeSlashes(relative);
   }
 
-  private resolveAdapter(configuration: DebugLaunchConfiguration): AdapterConfig | null {
-    const adapterId = (configuration.adapterId ?? configuration.type).replace(/[^A-Za-z0-9_]/g, "_").toUpperCase();
-    const command = process.env[`LEVI_DEBUG_ADAPTER_${adapterId}`];
-    if (!command || !path.isAbsolute(command)) {
-      return null;
-    }
-    const argsRaw = process.env[`LEVI_DEBUG_ADAPTER_ARGS_${adapterId}`];
-    let args: string[] = [];
-    if (argsRaw) {
-      try {
-        const parsed = JSON.parse(argsRaw) as unknown;
-        args = assertStringArray(parsed, "debug adapter args") ?? [];
-      } catch {
-        args = [];
-      }
-    }
-    return { command, args };
-  }
-
   private async createAdapter(configuration: DebugLaunchConfiguration): Promise<DebugTransport> {
     const root = await this.ensureWorkspace();
-    const adapter = this.resolveAdapter(configuration);
-    if (!adapter) {
-      throw new Error(`Missing debug adapter for "${configuration.adapterId ?? configuration.type}".`);
+    const resolved = await this.adapterManager.resolveLaunchAdapter(configuration);
+    this.lastLaunchDiagnostic = resolved.diagnostic;
+    if (!resolved.command) {
+      throw new Error(resolved.diagnostic?.message ?? `Missing debug adapter for "${configuration.adapterId ?? configuration.type}".`);
     }
+    const adapter: AdapterConfig = {
+      command: resolved.command.command,
+      args: resolved.command.args,
+      env: resolved.command.launcher === "python" ? { PYTHONPATH: path.dirname(resolved.command.entryPath ?? root) } : undefined
+    };
     try {
       await fs.access(adapter.command);
     } catch {
@@ -678,6 +826,7 @@ export class DesktopDebugService {
       stdio: ["pipe", "pipe", "pipe"],
       env: {
         ...process.env,
+        ...(adapter.env ?? {}),
         ...(configuration.env ?? {})
       }
     });

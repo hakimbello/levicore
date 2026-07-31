@@ -206,6 +206,24 @@ export type DebugSetExceptionBreakpointsRequest = {
   breakpoints: DebugExceptionBreakpoint[];
 };
 
+import type {
+  DebugAdapterStatus,
+  DebugAdapterRecommendation,
+  DebugAdapterInstallProgress,
+  DebugLaunchAdapterDiagnostic
+} from "./adapters/types";
+
+export type {
+  DebugAdapterStatus,
+  DebugAdapterRecommendation,
+  DebugAdapterInstallProgress,
+  DebugLaunchAdapterDiagnostic,
+  DebugAdapterInstallRequest,
+  DebugAdapterUninstallRequest,
+  DebugAdapterRegisterCustomRequest,
+  DebugAdapterDefinition
+} from "./adapters/types";
+
 export type DebugSessionSummary = {
   id: string;
   name: string;
@@ -233,6 +251,10 @@ export type DebugState = {
   evaluationCache: DebugEvaluationCacheEntry[];
   lastLaunchConfiguration?: DebugLaunchConfiguration;
   error?: DebugError;
+  adapters: DebugAdapterStatus[];
+  adapterRecommendations: DebugAdapterRecommendation[];
+  adapterInstallProgress?: DebugAdapterInstallProgress;
+  launchAdapterDiagnostic?: DebugLaunchAdapterDiagnostic;
 };
 
 export type DebugPersistenceState = {
@@ -276,6 +298,11 @@ export type DebugEvent =
   | {
       type: "evaluation";
       result: DebugEvaluateResult;
+      state: DebugState;
+    }
+  | {
+      type: "adapter-progress";
+      progress: DebugAdapterInstallProgress;
       state: DebugState;
     }
   | {
