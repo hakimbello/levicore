@@ -11,7 +11,17 @@ import { BottomPanel } from "../features/terminal/BottomPanel";
 import { TasksPanel } from "../features/tasks/TasksPanel";
 import { useTasks } from "../features/tasks/useTasks";
 import { type EditorTab, useEditorTabs } from "../hooks/use-editor-tabs";
-import type { EditApplyResult, EditUndoResult, ExecutionPublicTransaction, OllamaStatus, SelectedProject, UpdateStatus, WorkspaceStatus } from "../types/levi-api";
+import type {
+  AIRuntimeProviderId,
+  AIRuntimeState,
+  EditApplyResult,
+  EditUndoResult,
+  ExecutionPublicTransaction,
+  OllamaStatus,
+  SelectedProject,
+  UpdateStatus,
+  WorkspaceStatus
+} from "../types/levi-api";
 import type { TaskProblem } from "../types/task-api";
 import type { DebugLaunchConfiguration, DebugSetBreakpointRequest, DebugStackFrame, DebugState, DebugExceptionBreakpoint, DebugAdapterInstallRequest } from "../features/debugger";
 import { DEFAULT_EXCEPTION_BREAKPOINTS } from "../features/debugger";
@@ -43,7 +53,17 @@ const RunDebugPanel = lazy(async () => {
   return { default: module.RunDebugPanel };
 });
 
+const RuntimeManagerPanel = lazy(async () => {
+  const module = await import("../features/ai-runtime/RuntimeManagerPanel");
+  return { default: module.RuntimeManagerPanel };
+});
+
 const unknownStatus: OllamaStatus = { ready: false, modelCount: 0, models: [] };
+const idleRuntimeState: AIRuntimeState = {
+  providers: [],
+  selectionMode: "automatic",
+  diagnostics: []
+};
 const idleWorkspaceStatus: WorkspaceStatus = { state: "idle" };
 const idleDebugState: DebugState = {
   state: "Idle",
@@ -91,6 +111,7 @@ export function App() {
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus>(unknownStatus);
   const [selectedProject, setSelectedProject] = useState<SelectedProject | null>(null);
   const [workspaceStatus, setWorkspaceStatus] = useState<WorkspaceStatus>(idleWorkspaceStatus);
+  const [runtimeState, setRuntimeState] = useState<AIRuntimeState>(idleRuntimeState);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>(idleUpdateStatus);
   const [debugState, setDebugState] = useState<DebugState>(idleDebugState);
   const [canUndoEdit, setCanUndoEdit] = useState(false);
@@ -135,10 +156,11 @@ export function App() {
   useEffect(() => {
     let disposed = false;
     async function loadShellState() {
-      const [status, recentProject, workspace, editStatus, executionStatus, debug, updates] = await Promise.all([
+      const [status, recentProject, workspace, runtime, editStatus, executionStatus, debug, updates] = await Promise.all([
         window.levi.ollama.getStatus(),
         window.levi.projects.getRecent(),
         window.levi.workspace.getStatus(),
+        window.levi.runtime.list(),
         window.levi.edits.getStatus(),
         window.levi.execution.getStatus(),
         window.levi.debug.getState(),
@@ -148,6 +170,7 @@ export function App() {
         setOllamaStatus(status);
         setSelectedProject(recentProject);
         setWorkspaceStatus(workspace);
+        setRuntimeState(runtime);
         setUpdateStatus(updates);
         setDebugState(debug);
         setCanUndoEdit(editStatus.canUndo);
@@ -482,6 +505,19 @@ export function App() {
         </LazySurface>
       );
     }
+    if (activeView === "runtime") {
+      return (
+        <LazySurface label="Runtime Manager">
+          <RuntimeManagerPanel
+            state={runtimeState}
+            onRefresh={refreshRuntimeHealth}
+            onDetect={detectRuntimes}
+            onSelectRuntime={selectRuntime}
+            onSetAutomatic={setAutomaticRuntime}
+          />
+        </LazySurface>
+      );
+    }
     if (activeView === "history") return <LazySurface label="History"><HistoryPanel transactions={executionHistory} /></LazySurface>;
     if (activeView === "settings") {
       return (
@@ -504,6 +540,22 @@ export function App() {
 
   async function checkForUpdates() {
     setUpdateStatus(await window.levi.updates.checkForUpdates());
+  }
+
+  async function refreshRuntimeHealth() {
+    setRuntimeState(await window.levi.runtime.health());
+  }
+
+  async function detectRuntimes() {
+    setRuntimeState(await window.levi.runtime.detect());
+  }
+
+  async function selectRuntime(runtimeId: AIRuntimeProviderId) {
+    setRuntimeState(await window.levi.runtime.select({ runtimeId, preferred: true, mode: "manual" }));
+  }
+
+  async function setAutomaticRuntime() {
+    setRuntimeState(await window.levi.runtime.select({ mode: "automatic" }));
   }
 
   async function downloadUpdate() {

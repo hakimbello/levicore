@@ -34,6 +34,25 @@ import type {
   TaskRun,
   TaskRunRequest
 } from "./task-api";
+import type {
+  AIRuntimeDiagnostics,
+  AIRuntimeModel,
+  AIRuntimeProviderId,
+  AIRuntimeSelectRequest,
+  AIRuntimeState
+} from "../features/ai-runtime";
+
+export type {
+  AIRuntimeDetection,
+  AIRuntimeDiagnostics,
+  AIRuntimeHealthState,
+  AIRuntimeModel,
+  AIRuntimeProviderId,
+  AIRuntimeProviderSummary,
+  AIRuntimeSelectRequest,
+  AIRuntimeSelectionMode,
+  AIRuntimeState
+} from "../features/ai-runtime";
 
 export type {
   TaskCancelRequest,
@@ -963,6 +982,14 @@ export type LeviApi = {
     output: (request?: TaskOutputRequest) => Promise<TaskOutputEntry[]>;
     pin: (request: TaskPinRequest) => Promise<TaskListResult>;
     onEvent: (listener: (event: TaskEvent) => void) => () => void;
+  };
+  runtime: {
+    list: () => Promise<AIRuntimeState>;
+    detect: () => Promise<AIRuntimeState>;
+    health: (providerId?: AIRuntimeProviderId) => Promise<AIRuntimeState>;
+    models: (providerId?: AIRuntimeProviderId) => Promise<AIRuntimeModel[]>;
+    select: (request: AIRuntimeSelectRequest) => Promise<AIRuntimeState>;
+    diagnostics: () => Promise<AIRuntimeDiagnostics[]>;
   };
   conversation: {
     start: (request: ConversationStartRequest) => Promise<ConversationStartResult>;

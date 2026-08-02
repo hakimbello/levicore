@@ -17,7 +17,9 @@ import type {
   TerminalResizeRequest,
   TerminalSplitRequest,
   UpdateStatusEvent,
-  WorkspaceOpenFileRequest
+  WorkspaceOpenFileRequest,
+  AIRuntimeProviderId,
+  AIRuntimeSelectRequest
 } from "../../src/types/levi-api";
 import type { TaskEvent } from "../../src/types/task-api";
 import type {
@@ -147,6 +149,12 @@ const IPC_CHANNELS = {
   tasksOutput: "levi:tasks:output",
   tasksPin: "levi:tasks:pin",
   tasksEvent: "levi:tasks:event",
+  runtimeList: "levi:runtime:list",
+  runtimeDetect: "levi:runtime:detect",
+  runtimeHealth: "levi:runtime:health",
+  runtimeModels: "levi:runtime:models",
+  runtimeSelect: "levi:runtime:select",
+  runtimeDiagnostics: "levi:runtime:diagnostics",
   conversationStart: "levi:conversation:start",
   conversationCancel: "levi:conversation:cancel",
   conversationEvent: "levi:conversation:event"
@@ -504,6 +512,14 @@ const leviApi: LeviApiWithWorkspaceTree = {
       ipcRenderer.on(IPC_CHANNELS.tasksEvent, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.tasksEvent, handler);
     }
+  },
+  runtime: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.runtimeList),
+    detect: () => ipcRenderer.invoke(IPC_CHANNELS.runtimeDetect),
+    health: (providerId?: AIRuntimeProviderId) => ipcRenderer.invoke(IPC_CHANNELS.runtimeHealth, providerId),
+    models: (providerId?: AIRuntimeProviderId) => ipcRenderer.invoke(IPC_CHANNELS.runtimeModels, providerId),
+    select: (request: AIRuntimeSelectRequest) => ipcRenderer.invoke(IPC_CHANNELS.runtimeSelect, request),
+    diagnostics: () => ipcRenderer.invoke(IPC_CHANNELS.runtimeDiagnostics)
   },
   conversation: {
     start: (request: ConversationStartRequest) => ipcRenderer.invoke(IPC_CHANNELS.conversationStart, request),

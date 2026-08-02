@@ -1114,6 +1114,82 @@ function createDefaultApi(): LeviApi {
       })),
       onEvent: vi.fn(() => () => undefined)
     },
+    runtime: {
+      list: vi.fn(async () => ({
+        providers: [
+          {
+            id: "ollama" as const,
+            name: "Ollama",
+            installed: true,
+            running: true,
+            version: "0.5.0",
+            endpoint: "http://127.0.0.1:11434",
+            status: "Running" as const,
+            models: [
+              {
+                id: "qwen3.6:latest",
+                displayName: "qwen3.6:latest",
+                contextWindow: 32768,
+                embeddingSupport: false,
+                visionSupport: false,
+                toolSupport: false
+              }
+            ],
+            latencyMs: 12
+          },
+          {
+            id: "lm-studio" as const,
+            name: "LM Studio",
+            installed: false,
+            running: false,
+            status: "Stopped" as const,
+            models: []
+          }
+        ],
+        selectedRuntimeId: "ollama" as const,
+        preferredRuntimeId: "ollama" as const,
+        automaticRuntimeId: "ollama" as const,
+        lastSuccessfulRuntimeId: "ollama" as const,
+        lastSelectedModelId: "qwen3.6:latest",
+        selectionMode: "manual" as const,
+        diagnostics: [
+          {
+            providerId: "ollama" as const,
+            providerName: "Ollama",
+            installed: true,
+            running: true,
+            version: "0.5.0",
+            endpoint: "http://127.0.0.1:11434",
+            supportedModels: [],
+            health: "Running" as const,
+            latencyMs: 12,
+            checkedAt: "2026-08-01T00:00:00.000Z",
+            selected: true,
+            preferred: true
+          }
+        ]
+      })),
+      detect: vi.fn(async () => window.levi.runtime.list()),
+      health: vi.fn(async () => window.levi.runtime.list()),
+      models: vi.fn(async () => [
+        {
+          id: "qwen3.6:latest",
+          displayName: "qwen3.6:latest",
+          embeddingSupport: false,
+          visionSupport: false,
+          toolSupport: false
+        }
+      ]),
+      select: vi.fn(async (request) => ({
+        providers: [],
+        selectedRuntimeId: request.runtimeId,
+        preferredRuntimeId: request.preferred ? request.runtimeId : undefined,
+        lastSelectedModelId: request.modelId,
+        selectionMode: request.mode ?? "manual",
+        diagnostics: []
+      })),
+      diagnostics: vi.fn(async () => [])
+    },
     conversation: {
       start: vi.fn(async () => ({
         requestId: "conversation-1"

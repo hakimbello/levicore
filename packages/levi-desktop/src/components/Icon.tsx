@@ -19,7 +19,8 @@ export type IconName =
   | "step-into"
   | "step-out"
   | "layers"
-  | "tasks";
+  | "tasks"
+  | "cpu";
 
 type IconProps = {
   name: IconName;
@@ -47,7 +48,8 @@ const paths: Record<IconName, string> = {
   "step-into": "M12 4v12M8 12l4 4 4-4M6 20h12",
   "step-out": "M12 20V8M8 12l4-4 4 4M6 4h12",
   layers: "M12 4l8 4-8 4-8-4 8-4zM4 12l8 4 8-4M4 16l8 4 8-4",
-  tasks: "M4 6h16M4 12h10M4 18h7M18 10v8M15 13l3-3 3 3"
+  tasks: "M4 6h16M4 12h10M4 18h7M18 10v8M15 13l3-3 3 3",
+  cpu: "M8 8h8v8H8zM4 10h2M4 14h2M18 10h2M18 14h2M10 4v2M14 4v2M10 18v2M14 18v2M9.5 9.5h5v5h-5z"
 };
 
 export function Icon({ name, className }: IconProps) {

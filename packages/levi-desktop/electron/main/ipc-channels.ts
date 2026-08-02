@@ -106,6 +106,12 @@ export const IPC_CHANNELS = {
   tasksOutput: "levi:tasks:output",
   tasksPin: "levi:tasks:pin",
   tasksEvent: "levi:tasks:event",
+  runtimeList: "levi:runtime:list",
+  runtimeDetect: "levi:runtime:detect",
+  runtimeHealth: "levi:runtime:health",
+  runtimeModels: "levi:runtime:models",
+  runtimeSelect: "levi:runtime:select",
+  runtimeDiagnostics: "levi:runtime:diagnostics",
   conversationStart: "levi:conversation:start",
   conversationCancel: "levi:conversation:cancel",
   conversationEvent: "levi:conversation:event"

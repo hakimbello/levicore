@@ -87,7 +87,8 @@ describe("desktop runtime service boundary", () => {
     expect(mainSource).toContain("ipcMain.handle(IPC_CHANNELS.workspaceGetStatus, () => withRuntimeStatus(workspaceStatus))");
     expect(mainSource).toContain("desktopRuntimeService.syncWorkspace");
     expect(preloadSource).toContain("getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.workspaceGetStatus)");
-    expect(preloadSource).not.toContain("runtime: {");
+    expect(preloadSource).toContain("runtime: {");
+    expect(preloadSource).toContain("list: () => ipcRenderer.invoke(IPC_CHANNELS.runtimeList)");
     expect(typeSource).toContain("runtime?: RuntimeConnectionStatus");
   });
 });
