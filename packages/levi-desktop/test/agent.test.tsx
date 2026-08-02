@@ -2,12 +2,15 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { AgentService } from "../electron/main/agent-service";
+import { GitService } from "../electron/main/git-service";
 import { RuntimeManager } from "../electron/main/ai-runtime/runtime-manager";
 import { AIRuntimeProviderRegistry } from "../electron/main/ai-runtime/provider-registry";
+import type { GitOperationPreview, GitOperationPreviewRequest, GitRepositoryStatus } from "../electron/main/git-service";
 import type {
   AIRuntimeDetection,
   AIRuntimeInvocationResponse,
@@ -178,7 +181,81 @@ function createFakeTaskService(tasks: TaskDefinition[]) {
   return service;
 }
 
-async function createService(runtimeProvider = provider(), options: { taskService?: ReturnType<typeof createFakeTaskService>; getWindow?: () => ReturnType<typeof fakeWindow>; getChangedFiles?: () => string[] } = {}) {
+function createFakeGitService() {
+  let conflict = false;
+  let rebase = false;
+  let detached = false;
+  let executeError: Error | null = null;
+  let previewCount = 0;
+  const status = (): GitRepositoryStatus => ({
+    repositoryRoot: "C:/workspace",
+    currentBranch: detached ? undefined : "main",
+    detachedHead: detached,
+    headCommit: "abc123",
+    hasMergeConflicts: conflict,
+    rebaseInProgress: rebase,
+    entries: [
+      { path: "src/Login.tsx", index: " ", workingTree: "M" },
+      { path: "src/App.tsx", index: "M", workingTree: " " }
+    ],
+    summary: ["## main", " M src/Login.tsx", "M  src/App.tsx"]
+  });
+  const service = {
+    status: vi.fn(async () => status()),
+    preview: vi.fn(async (request: GitOperationPreviewRequest) => {
+      previewCount += 1;
+      if (request.operation === "commit" && conflict) throw new Error("Cannot commit with unresolved merge conflicts.");
+      if (request.operation === "commit" && rebase) throw new Error("Cannot commit while a rebase is in progress.");
+      if (request.operation === "commit" && !request.commitMessage?.trim()) throw new Error("Git commit message is required.");
+      if ((request.operation === "stage-file" || request.operation === "unstage-file" || request.operation === "restore-file") && !request.relativePaths?.length) {
+        throw new Error("Git file operation requires at least one affected file.");
+      }
+      const affectedFiles = request.relativePaths?.length ? request.relativePaths : request.operation === "commit" ? ["src/App.tsx"] : ["src/Login.tsx"];
+      return {
+        operation: request.operation,
+        relativePaths: request.relativePaths ?? [],
+        commitMessage: request.commitMessage,
+        branchName: request.branchName,
+        repositoryRoot: "C:/workspace",
+        affectedFiles,
+        riskLevel: request.operation === "commit" || request.operation === "restore-file" ? "high" as const : "medium" as const,
+        unifiedDiff: "diff --git a/src/Login.tsx b/src/Login.tsx\n@@\n-old\n+new\n",
+        fileCount: affectedFiles.length,
+        addedLineCount: 1,
+        removedLineCount: 1,
+        status: status(),
+        warnings: detached ? ["Repository is in detached HEAD state."] : [],
+        createdAt: `2026-08-02T00:00:0${previewCount}.000Z`
+      };
+    }),
+    execute: vi.fn(async (preview: GitOperationPreview) => {
+      if (executeError) throw executeError;
+      return {
+        preview,
+        status: status(),
+        commitHash: preview.operation === "commit" ? "def456" : undefined,
+        durationMs: 42,
+        stdout: preview.operation === "commit" ? "[main def456] Update login\n" : "",
+        stderr: ""
+      };
+    }),
+    setConflict(value: boolean) {
+      conflict = value;
+    },
+    setRebase(value: boolean) {
+      rebase = value;
+    },
+    setDetached(value: boolean) {
+      detached = value;
+    },
+    setExecuteError(error: Error | null) {
+      executeError = error;
+    }
+  };
+  return service;
+}
+
+async function createService(runtimeProvider = provider(), options: { taskService?: ReturnType<typeof createFakeTaskService>; gitService?: ReturnType<typeof createFakeGitService>; getWindow?: () => ReturnType<typeof fakeWindow>; getChangedFiles?: () => string[] } = {}) {
   const statePath = path.join(await fsp.mkdtemp(path.join(os.tmpdir(), "levi-agent-")), "agent-state.json");
   const registry = new AIRuntimeProviderRegistry();
   registry.register(runtimeProvider.id, () => runtimeProvider);
@@ -207,6 +284,7 @@ async function createService(runtimeProvider = provider(), options: { taskServic
       }
     }),
     taskService: options.taskService as never,
+    gitService: options.gitService as never,
     getWindow: options.getWindow as never,
     getChangedFiles: options.getChangedFiles
   });
@@ -263,7 +341,7 @@ describe("Coding Agent foundation", () => {
     await expect(service.approve({ sessionId: "missing", actionId: "a" })).rejects.toThrow(/not found/i);
   });
 
-  it("wires secure agent IPC through main and preload without task, terminal, git, or file execution", () => {
+  it("wires secure agent IPC through main and preload without terminal or autonomous execution", () => {
     const channels = fs.readFileSync(path.join(process.cwd(), "electron/main/ipc-channels.ts"), "utf8");
     const main = fs.readFileSync(path.join(process.cwd(), "electron/main/index.ts"), "utf8");
     const preload = fs.readFileSync(path.join(process.cwd(), "electron/preload/index.ts"), "utf8");
@@ -278,14 +356,19 @@ describe("Coding Agent foundation", () => {
     expect(channels).toContain('agentCancel: "levi:agent:cancel"');
     expect(channels).toContain('agentTaskExecute: "levi:agent:task-execute"');
     expect(channels).toContain('agentTaskVerify: "levi:agent:task-verify"');
+    expect(channels).toContain('agentGitPreview: "levi:agent:git-preview"');
+    expect(channels).toContain('agentGitExecute: "levi:agent:git-execute"');
+    expect(channels).toContain('agentGitStatus: "levi:agent:git-status"');
     expect(main).toContain("const agentService = new AgentService(aiRuntimeManager");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentPlan");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentExecute");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentTaskExecute");
+    expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentGitExecute");
     expect(preload).toContain("agent: {");
     expect(preload).toContain("plan: (request: AgentPlanRequest)");
     expect(preload).toContain("execute: (request: AgentExecuteRequest)");
     expect(preload).toContain("taskExecute: (request: AgentTaskExecuteRequest)");
+    expect(preload).toContain("gitExecute: (request: AgentGitExecuteRequest)");
     expect(service).toContain("this.runtimeManager.chat");
     expect(service).not.toContain("writeWorkspacePath");
     expect(service).not.toContain("terminalManager");
@@ -415,6 +498,81 @@ describe("Coding Agent foundation", () => {
     expect(verification.verification).toMatchObject({ changedFiles: ["src/Login.tsx"] });
   });
 
+  it("previews and executes approved Git operations through GitService only", async () => {
+    const gitService = createFakeGitService();
+    const runtimeProvider = providerWithActions([
+      { type: "git-operation", title: "Stage login", description: "Stage a reviewed file.", gitOperation: "stage-file", relativePath: "src/Login.tsx" },
+      { type: "git-operation", title: "Commit login", description: "Commit staged changes.", gitOperation: "commit", commitMessage: "Update login" },
+      { type: "git-operation", title: "Create branch", description: "Create a safe branch.", gitOperation: "create-branch", branchName: "feature/login" },
+      { type: "git-operation", title: "Switch branch", description: "Switch to branch.", gitOperation: "switch-branch", branchName: "feature/login" },
+      { type: "git-operation", title: "Show diff", description: "Review diff.", gitOperation: "show-diff", affectedFiles: ["src/Login.tsx"] }
+    ]);
+    const { service } = await createService(runtimeProvider, { gitService });
+    const planned = await service.plan({ prompt: "Handle Git operations", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const actions = planned.state.sessions[0].plan!.approvals;
+
+    await expect(service.gitPreview({ sessionId, actionId: actions[0].id })).rejects.toThrow(/approved/i);
+    for (const action of actions) {
+      await service.approve({ sessionId, actionId: action.id });
+      const preview = await service.gitPreview({ sessionId, actionId: action.id });
+      expect(preview.preview.repositoryRoot).toBe("C:/workspace");
+      expect(preview.preview.fileCount).toBeGreaterThanOrEqual(1);
+      const result = await service.gitExecute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+      expect(result.gitRun.status).toBe("Succeeded");
+    }
+
+    expect(gitService.execute).toHaveBeenCalledTimes(actions.length);
+    const gitRuns = service.gitStatus({ sessionId }).gitRuns;
+    expect(gitRuns.map((run) => run.operation)).toEqual(["stage-file", "commit", "create-branch", "switch-branch", "show-diff"]);
+    expect(gitRuns[1]).toMatchObject({ commitHash: "def456", verification: expect.objectContaining({ summary: expect.any(String) }) });
+  });
+
+  it("rejects unsafe Git states, stale previews, and concurrent Git actions", async () => {
+    const gitService = createFakeGitService();
+    const runtimeProvider = providerWithActions([
+      { type: "git-operation", title: "Commit bad", description: "Commit conflict.", gitOperation: "commit", commitMessage: "Update login" },
+      { type: "git-operation", title: "Restore bad", description: "Reject traversal.", gitOperation: "restore-file", relativePath: "../outside.ts" },
+      { type: "git-operation", title: "Stage login", description: "Stage file.", gitOperation: "stage-file", relativePath: "src/Login.tsx" },
+      { type: "git-operation", title: "Stage app", description: "Stage another file.", gitOperation: "stage-file", relativePath: "src/App.tsx" }
+    ]);
+    const { service } = await createService(runtimeProvider, { gitService });
+    const planned = await service.plan({ prompt: "Reject unsafe Git", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const actions = planned.state.sessions[0].plan!.approvals;
+    for (const action of actions) await service.approve({ sessionId, actionId: action.id });
+
+    gitService.setConflict(true);
+    await expect(service.gitPreview({ sessionId, actionId: actions[0].id })).rejects.toThrow(/conflicts/i);
+    gitService.setConflict(false);
+    gitService.setRebase(true);
+    await expect(service.gitPreview({ sessionId, actionId: actions[0].id })).rejects.toThrow(/rebase/i);
+    gitService.setRebase(false);
+    gitService.setDetached(true);
+    const detachedPreview = await service.gitPreview({ sessionId, actionId: actions[0].id });
+    expect(detachedPreview.preview.warnings).toContain("Repository is in detached HEAD state.");
+    gitService.setDetached(false);
+
+    await expect(service.gitPreview({ sessionId, actionId: actions[1].id })).rejects.toThrow(/affected file/i);
+    const preview = await service.gitPreview({ sessionId, actionId: actions[2].id });
+    gitService.setExecuteError(new Error("Git repository state changed since preview."));
+    await expect(service.gitExecute({ sessionId, actionId: actions[2].id, previewId: preview.preview.previewId })).rejects.toThrow(/changed/i);
+    expect(service.gitStatus({ sessionId }).gitRuns.find((run) => run.actionId === actions[2].id)?.status).toBe("Failed");
+
+    gitService.setExecuteError(null);
+    const state = service.status({ sessionId });
+    if (!("plan" in state) || !state.plan) throw new Error("Expected session state.");
+    state.plan.gitRuns.push({
+      actionId: actions[3].id,
+      operation: "stage-file",
+      status: "Executing",
+      repositoryRoot: "C:/workspace",
+      affectedFiles: ["src/App.tsx"],
+      updatedAt: "2026-08-02T00:00:00.000Z"
+    });
+    await expect(service.gitExecute({ sessionId, actionId: actions[3].id })).rejects.toThrow(/already executing/i);
+  });
+
   it("rejects missing and stale task definitions without running them", async () => {
     const task: TaskDefinition = { id: "npm:test", label: "test", source: "detected", group: "test", command: "npm.cmd", args: ["test"], cwd: ".", problemMatchers: [] };
     const taskService = createFakeTaskService([task]);
@@ -466,6 +624,54 @@ describe("Coding Agent foundation", () => {
     const restoredState = await restored.initialize();
     expect(restoredState.sessions[0].plan?.taskRuns[0].status).toBe("Interrupted");
   });
+
+  it("executes the supported local GitService operations without network or force commands", async () => {
+    try {
+      execFileSync("git", ["--version"], { stdio: "ignore" });
+    } catch {
+      return;
+    }
+    const repo = await fsp.mkdtemp(path.join(os.tmpdir(), "levi-git-service-"));
+    const runGit = (args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "pipe" }).toString();
+    runGit(["init"]);
+    runGit(["config", "user.email", "levi@example.test"]);
+    runGit(["config", "user.name", "Levi Test"]);
+    await fsp.writeFile(path.join(repo, "file.txt"), "one\n", "utf8");
+    runGit(["add", "file.txt"]);
+    runGit(["commit", "-m", "Initial"]);
+    await fsp.mkdir(path.join(repo, "subdir"));
+    await expect(new GitService(() => path.join(repo, "subdir")).status()).rejects.toThrow(/outside the selected workspace/i);
+
+    const service = new GitService(() => repo);
+    await fsp.writeFile(path.join(repo, "file.txt"), "one\ntwo\n", "utf8");
+    const diffPreview = await service.preview({ operation: "show-diff", relativePaths: ["file.txt"] });
+    expect(diffPreview.unifiedDiff).toContain("+two");
+
+    const stagePreview = await service.preview({ operation: "stage-file", relativePaths: ["file.txt"] });
+    await service.execute(stagePreview);
+    expect((await service.status()).entries[0]).toMatchObject({ path: "file.txt", index: "M" });
+
+    const unstagePreview = await service.preview({ operation: "unstage-file", relativePaths: ["file.txt"] });
+    await service.execute(unstagePreview);
+    expect((await service.status()).entries[0]).toMatchObject({ path: "file.txt", workingTree: "M" });
+
+    const stageAllPreview = await service.preview({ operation: "stage-all" });
+    await service.execute(stageAllPreview);
+    const commitPreview = await service.preview({ operation: "commit", commitMessage: "Update file" });
+    const commitResult = await service.execute(commitPreview);
+    expect(commitResult.commitHash).toMatch(/[0-9a-f]+/);
+
+    const branchPreview = await service.preview({ operation: "create-branch", branchName: "feature/git-ops" });
+    await service.execute(branchPreview);
+    const switchPreview = await service.preview({ operation: "switch-branch", branchName: "feature/git-ops" });
+    await service.execute(switchPreview);
+    expect((await service.status()).currentBranch).toBe("feature/git-ops");
+
+    await fsp.writeFile(path.join(repo, "file.txt"), "changed again\n", "utf8");
+    const restorePreview = await service.preview({ operation: "restore-file", relativePaths: ["file.txt"] });
+    await service.execute(restorePreview);
+    expect((await fsp.readFile(path.join(repo, "file.txt"), "utf8")).replace(/\r\n/g, "\n")).toBe("one\ntwo\n");
+  }, 15_000);
 
   it("renders the planning-only Agent panel and approval queue", async () => {
     const user = userEvent.setup();
@@ -538,6 +744,7 @@ describe("Coding Agent foundation", () => {
             }],
             executionQueue: [],
             taskRuns: [],
+            gitRuns: [],
             createdAt: "2026-08-01T00:00:00.000Z",
             updatedAt: "2026-08-01T00:00:00.000Z"
           },
@@ -577,6 +784,7 @@ describe("Coding Agent foundation", () => {
           }],
           executionQueue: [],
           taskRuns: [],
+          gitRuns: [],
           createdAt: "2026-08-01T00:00:00.000Z",
           updatedAt: "2026-08-01T00:00:00.000Z"
         },
@@ -635,6 +843,7 @@ describe("Coding Agent foundation", () => {
               problems: [],
               updatedAt: "2026-08-01T00:00:00.000Z"
             }],
+            gitRuns: [],
             createdAt: "2026-08-01T00:00:00.000Z",
             updatedAt: "2026-08-01T00:00:00.000Z"
           },
@@ -659,5 +868,189 @@ describe("Coding Agent foundation", () => {
     expect(within(panel).getByText("pass")).toBeInTheDocument();
     expect(within(panel).getByRole("button", { name: "Cancel Task" })).toBeInTheDocument();
     expect(within(panel).getByRole("button", { name: "Reveal Terminal" })).toBeInTheDocument();
+  });
+
+  it("renders Git approval, diff, branch, commit, and verification details", async () => {
+    const user = userEvent.setup();
+    window.levi.agent.plan = vi.fn(async (request) => ({
+      sessionId: "agent-git-1",
+      state: {
+        sessions: [{
+          id: "agent-git-1",
+          title: "Commit changes",
+          status: "WaitingForApproval" as const,
+          archived: false,
+          runtimeId: request.runtimeId,
+          modelId: request.modelId,
+          attachments: [],
+          messages: [],
+          plan: {
+            id: "plan-git-1",
+            objective: request.prompt,
+            summary: "Review Git operation.",
+            estimatedFiles: ["src/Login.tsx"],
+            progress: { totalSteps: 1, pendingActions: 1, approvedActions: 0, rejectedActions: 0, completedActions: 0 },
+            steps: [{ id: "step-git-1", order: 1, title: "Commit", description: "Commit staged work.", status: "Pending" as const, estimatedFiles: ["src/Login.tsx"], actionIds: ["git-action-1"] }],
+            approvals: [{
+              id: "git-action-1",
+              type: "git-operation" as const,
+              title: "Commit login changes",
+              description: "Commit staged login changes.",
+              status: "Pending" as const,
+              stepId: "step-git-1",
+              gitOperation: "commit",
+              commitMessage: "Update login",
+              affectedFiles: ["src/Login.tsx"],
+              createdAt: "2026-08-01T00:00:00.000Z",
+              updatedAt: "2026-08-01T00:00:00.000Z"
+            }],
+            executionQueue: [],
+            taskRuns: [],
+            gitRuns: [],
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z"
+          },
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z"
+        }],
+        activeSessionId: "agent-git-1",
+        updatedAt: "2026-08-01T00:00:00.000Z"
+      }
+    }));
+    window.levi.agent.approve = vi.fn(async (request) => ({
+      sessions: [{
+        id: request.sessionId,
+        title: "Commit changes",
+        status: "Ready" as const,
+        archived: false,
+        messages: [],
+        attachments: [],
+        plan: {
+          id: "plan-git-1",
+          objective: "Commit changes",
+          summary: "Review Git operation.",
+          estimatedFiles: ["src/Login.tsx"],
+          progress: { totalSteps: 1, pendingActions: 0, approvedActions: 1, rejectedActions: 0, completedActions: 0 },
+          steps: [{ id: "step-git-1", order: 1, title: "Commit", description: "Commit staged work.", status: "Approved" as const, estimatedFiles: ["src/Login.tsx"], actionIds: [request.actionId] }],
+          approvals: [{
+            id: request.actionId,
+            type: "git-operation" as const,
+            title: "Commit login changes",
+            description: "Commit staged login changes.",
+            status: "Approved" as const,
+            stepId: "step-git-1",
+            gitOperation: "commit",
+            commitMessage: "Update login",
+            affectedFiles: ["src/Login.tsx"],
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z"
+          }],
+          executionQueue: [],
+          taskRuns: [],
+          gitRuns: [],
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z"
+        },
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z"
+      }],
+      activeSessionId: request.sessionId,
+      updatedAt: "2026-08-01T00:00:00.000Z"
+    }));
+    window.levi.agent.gitPreview = vi.fn(async (request) => ({
+      sessionId: request.sessionId,
+      preview: {
+        previewId: "git-preview-1",
+        sessionId: request.sessionId,
+        actionId: request.actionId,
+        operation: "commit" as const,
+        repositoryRoot: "C:/workspace",
+        relativePaths: ["src/Login.tsx"],
+        affectedFiles: ["src/Login.tsx"],
+        commitMessage: "Update login",
+        riskLevel: "high" as const,
+        unifiedDiff: "diff --git a/src/Login.tsx b/src/Login.tsx\n@@\n-old\n+new\n",
+        fileCount: 1,
+        addedLineCount: 1,
+        removedLineCount: 1,
+        status: {
+          repositoryRoot: "C:/workspace",
+          currentBranch: "main",
+          detachedHead: false,
+          headCommit: "abc123",
+          hasMergeConflicts: false,
+          rebaseInProgress: false,
+          entries: [{ path: "src/Login.tsx", index: "M", workingTree: " " }],
+          summary: ["## main", "M  src/Login.tsx"]
+        },
+        warnings: [],
+        createdAt: "2026-08-01T00:00:00.000Z"
+      },
+      state: {
+        sessions: [{
+          id: request.sessionId,
+          title: "Commit changes",
+          status: "Ready" as const,
+          archived: false,
+          messages: [],
+          attachments: [],
+          plan: {
+            id: "plan-git-1",
+            objective: "Commit changes",
+            summary: "Review Git operation.",
+            estimatedFiles: ["src/Login.tsx"],
+            progress: { totalSteps: 1, pendingActions: 0, approvedActions: 1, rejectedActions: 0, completedActions: 0 },
+            steps: [],
+            approvals: [],
+            executionQueue: [],
+            taskRuns: [],
+            gitRuns: [{
+              actionId: request.actionId,
+              operation: "commit" as const,
+              status: "Succeeded" as const,
+              repositoryRoot: "C:/workspace",
+              affectedFiles: ["src/Login.tsx"],
+              commitMessage: "Update login",
+              commitHash: "def456",
+              verification: {
+                id: "git-verification-1",
+                actionId: request.actionId,
+                operation: "commit" as const,
+                summary: "Commit created successfully.",
+                repositoryRoot: "C:/workspace",
+                currentBranch: "main",
+                commitHash: "def456",
+                durationMs: 42,
+                affectedFiles: ["src/Login.tsx"],
+                statusLines: ["## main"],
+                createdAt: "2026-08-01T00:00:00.000Z"
+              },
+              updatedAt: "2026-08-01T00:00:00.000Z"
+            }],
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z"
+          },
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z"
+        }],
+        activeSessionId: request.sessionId,
+        updatedAt: "2026-08-01T00:00:00.000Z"
+      }
+    }));
+
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Coding Agent" }));
+    const panel = await screen.findByRole("region", { name: "Coding Agent" });
+    await user.type(within(panel).getByRole("textbox", { name: "Agent Request" }), "Commit changes");
+    await user.click(within(panel).getByRole("button", { name: "Generate Plan" }));
+    await user.click(await within(panel).findByRole("button", { name: "Approve" }));
+    await user.click(await within(panel).findByRole("button", { name: "Preview" }));
+
+    expect(await within(panel).findByRole("group", { name: "Git Approval Card" })).toBeInTheDocument();
+    expect(within(panel).getByText("Update login")).toBeInTheDocument();
+    expect(within(panel).getByText("src/Login.tsx")).toBeInTheDocument();
+    expect(within(panel).getByRole("group", { name: "Git Diff Review" })).toBeInTheDocument();
+    expect(within(panel).getByText("Commit created successfully.")).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "Approve Git Operation" })).toBeInTheDocument();
   });
 });

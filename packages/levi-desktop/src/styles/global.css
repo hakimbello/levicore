@@ -2945,7 +2945,8 @@ textarea:focus-visible,
 .levi-agent-approvals article,
 .levi-agent-execution-queue article,
 .levi-agent-preview,
-.levi-agent-task-preview {
+.levi-agent-task-preview,
+.levi-agent-git-preview {
   border: 1px solid var(--levi-color-border);
   border-radius: var(--levi-radius-control);
   padding: var(--levi-space-10);
@@ -2961,10 +2962,24 @@ textarea:focus-visible,
 }
 
 .levi-agent-preview,
-.levi-agent-task-preview {
+.levi-agent-task-preview,
+.levi-agent-git-preview {
   display: grid;
   gap: var(--levi-space-12);
   background: var(--levi-color-surface);
+}
+
+.levi-agent-git-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--levi-space-6);
+}
+
+.levi-agent-git-files code {
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-control);
+  padding: var(--levi-space-4) var(--levi-space-6);
+  background: var(--levi-color-surfaceElevated);
 }
 
 .levi-agent-task-output {

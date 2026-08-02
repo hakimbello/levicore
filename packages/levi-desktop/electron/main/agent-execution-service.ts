@@ -12,6 +12,15 @@ import type {
   AgentExecutionQueueItem,
   AgentExecutionResult,
   AgentFileEdit,
+  AgentGitExecuteRequest,
+  AgentGitExecutionResult,
+  AgentGitPreview,
+  AgentGitPreviewRequest,
+  AgentGitPreviewResult,
+  AgentGitRunState,
+  AgentGitStatusRequest,
+  AgentGitStatusResult,
+  AgentGitVerificationSummary,
   AgentPreviewRequest,
   AgentPreviewResult,
   AgentQueueRequest,
@@ -40,6 +49,7 @@ import type { TaskDefinition, TaskEvent, TaskOutputEntry, TaskProblem, TaskRun }
 import { generateLocalDiff, hashContent, writeAtomically } from "./edit-context";
 import type { RuntimeManager } from "./ai-runtime";
 import type { TaskService } from "./tasks/task-service";
+import type { GitOperation, GitOperationPreview, GitRepositoryStatus, GitService } from "./git-service";
 import { getMonacoLanguage, isInsideRoot, normalizeSlashes } from "./workspace-context";
 
 const MAX_TEXT_BYTES = 5 * 1024 * 1024;
@@ -48,6 +58,8 @@ const MAX_DIFF_LINES = 1_000;
 const MAX_TASK_OUTPUT_ENTRIES = 40;
 const MAX_TASK_OUTPUT_CHARS = 12_000;
 const MAX_TASK_PROBLEMS = 40;
+const MAX_GIT_OUTPUT_CHARS = 12_000;
+const MAX_GIT_STATUS_LINES = 80;
 const SUPPORTED_ACTIONS = new Set(["create-file", "modify-file", "delete-file", "rename-file", "create-folder", "rename-folder"]);
 
 type AgentExecutionServiceOptions = {
@@ -59,7 +71,10 @@ type AgentExecutionServiceOptions = {
   emitTaskPreview?: (sessionId: string, preview: AgentTaskPreview) => void;
   emitTask?: (sessionId: string, actionId: string, taskRun: AgentTaskRunState) => void;
   emitTaskVerification?: (sessionId: string, actionId: string, verification: AgentTaskVerificationSummary) => void;
+  emitGitPreview?: (sessionId: string, preview: AgentGitPreview) => void;
+  emitGit?: (sessionId: string, actionId: string, gitRun: AgentGitRunState) => void;
   taskService?: TaskService;
+  gitService?: GitService;
   runtimeManager?: RuntimeManager;
   getWindow?: () => BrowserWindow | null;
   getChangedFiles?: () => string[];
@@ -110,6 +125,7 @@ type UndoRecord =
 export class AgentExecutionService {
   private readonly previews = new Map<string, AgentActionPreview>();
   private readonly taskPreviews = new Map<string, AgentTaskPreview>();
+  private readonly gitPreviews = new Map<string, AgentGitPreview>();
   private readonly undoBySession = new Map<string, UndoRecord>();
 
   constructor(private readonly options: AgentExecutionServiceOptions) {}
@@ -346,6 +362,84 @@ export class AgentExecutionService {
     return { sessionId: session.id, actionId: request.actionId, verification, state: this.options.snapshot() };
   }
 
+  async gitPreview(session: AgentSession, rawRequest: unknown): Promise<AgentGitPreviewResult> {
+    const request = validateGitPreviewRequest(rawRequest);
+    const action = requireAction(session, request.actionId);
+    requireApprovedGitAction(action);
+    const preview = await this.createGitPreview(session.id, action);
+    this.gitPreviews.set(preview.previewId, preview);
+    const gitRun = ensureGitRun(session, action, preview);
+    gitRun.status = "Approved";
+    gitRun.updatedAt = new Date().toISOString();
+    await this.touch(session);
+    this.options.emitGitPreview?.(session.id, preview);
+    return { sessionId: session.id, preview, state: this.options.snapshot() };
+  }
+
+  async gitExecute(session: AgentSession, rawRequest: unknown): Promise<AgentGitExecutionResult> {
+    const request = validateGitExecuteRequest(rawRequest);
+    const action = requireAction(session, request.actionId);
+    requireApprovedGitAction(action);
+    if (ensureGitRuns(session).some((run) => run.status === "Executing")) {
+      throw new Error("Another agent Git action is already executing.");
+    }
+    const preview = request.previewId ? this.requireGitPreview(request.previewId, session.id, action.id) : await this.createGitPreview(session.id, action);
+    const gitRun = ensureGitRun(session, action, preview);
+    const startedAt = new Date().toISOString();
+    Object.assign(gitRun, {
+      status: "Executing" as const,
+      startedAt,
+      endedAt: undefined,
+      durationMs: undefined,
+      commitHash: undefined,
+      stdout: undefined,
+      stderr: undefined,
+      failureReason: undefined,
+      verification: undefined,
+      updatedAt: startedAt
+    });
+    session.status = "Executing";
+    await this.touch(session);
+    try {
+      const result = await this.options.gitService!.execute(toGitOperationPreview(preview));
+      gitRun.status = "Succeeded";
+      gitRun.endedAt = new Date().toISOString();
+      gitRun.durationMs = result.durationMs;
+      gitRun.commitHash = result.commitHash;
+      gitRun.stdout = result.stdout.slice(-MAX_GIT_OUTPUT_CHARS);
+      gitRun.stderr = result.stderr.slice(-MAX_GIT_OUTPUT_CHARS);
+      gitRun.updatedAt = gitRun.endedAt;
+      const verification = await this.createGitVerification(session, gitRun, result.status);
+      gitRun.verification = verification;
+      session.status = "Ready";
+      session.plan!.progress = progressFromSession(session);
+      await this.touch(session);
+      this.options.emitGit?.(session.id, action.id, gitRun);
+      return { sessionId: session.id, actionId: action.id, gitRun, state: this.options.snapshot() };
+    } catch (error) {
+      gitRun.status = "Failed";
+      gitRun.endedAt = new Date().toISOString();
+      gitRun.failureReason = errorMessage(error);
+      gitRun.updatedAt = gitRun.endedAt;
+      session.status = "Error";
+      session.error = gitRun.failureReason;
+      session.plan!.progress = progressFromSession(session);
+      await this.touch(session);
+      this.options.emitGit?.(session.id, action.id, gitRun);
+      throw error;
+    }
+  }
+
+  gitStatus(session: AgentSession, rawRequest: unknown): AgentGitStatusResult {
+    const request = validateGitStatusRequest(rawRequest);
+    const gitRuns = ensureGitRuns(session);
+    return {
+      sessionId: session.id,
+      gitRuns: request.actionId ? gitRuns.filter((run) => run.actionId === request.actionId) : gitRuns,
+      state: this.options.snapshot()
+    };
+  }
+
   handleTaskEvent(event: TaskEvent): void {
     for (const session of this.options.snapshot().sessions) {
       for (const taskRun of session.plan?.taskRuns ?? []) {
@@ -373,6 +467,14 @@ export class AgentExecutionService {
         taskRun.endedAt = new Date().toISOString();
         taskRun.failureReason = "Task was interrupted before Levi shut down.";
         taskRun.updatedAt = taskRun.endedAt;
+      }
+    }
+    for (const gitRun of session.plan?.gitRuns ?? []) {
+      if (gitRun.status === "Executing") {
+        gitRun.status = "Interrupted";
+        gitRun.endedAt = new Date().toISOString();
+        gitRun.failureReason = "Git operation was interrupted before Levi shut down.";
+        gitRun.updatedAt = gitRun.endedAt;
       }
     }
   }
@@ -712,6 +814,94 @@ export class AgentExecutionService {
       createdAt: new Date().toISOString()
     };
   }
+
+  private async createGitPreview(sessionId: string, action: AgentApprovalAction): Promise<AgentGitPreview> {
+    if (!this.options.gitService) throw new Error("GitService is unavailable.");
+    const operation = normalizeGitOperation(action.gitOperation);
+    const preview = await this.options.gitService.preview({
+      operation,
+      relativePaths: gitActionPaths(action),
+      commitMessage: action.commitMessage,
+      branchName: action.branchName
+    });
+    return {
+      previewId: randomUUID(),
+      sessionId,
+      actionId: action.id,
+      operation: preview.operation,
+      repositoryRoot: preview.repositoryRoot,
+      relativePaths: preview.relativePaths,
+      affectedFiles: preview.affectedFiles,
+      commitMessage: preview.commitMessage,
+      branchName: preview.branchName,
+      riskLevel: preview.riskLevel,
+      unifiedDiff: preview.unifiedDiff,
+      fileCount: preview.fileCount,
+      addedLineCount: preview.addedLineCount,
+      removedLineCount: preview.removedLineCount,
+      status: preview.status,
+      warnings: preview.warnings,
+      createdAt: preview.createdAt
+    };
+  }
+
+  private requireGitPreview(previewId: string, sessionId: string, actionId: string): AgentGitPreview {
+    const preview = this.gitPreviews.get(previewId);
+    if (!preview || preview.sessionId !== sessionId || preview.actionId !== actionId) {
+      throw new Error("Agent Git preview was not found.");
+    }
+    return preview;
+  }
+
+  private async createGitVerification(session: AgentSession, gitRun: AgentGitRunState, status: GitRepositoryStatus): Promise<AgentGitVerificationSummary> {
+    const fallback = `${gitRun.operation} ${gitRun.status.toLowerCase()}${gitRun.commitHash ? ` at ${gitRun.commitHash}` : ""}.`;
+    let summary = fallback;
+    if (this.options.runtimeManager && session.modelId) {
+      try {
+        const response: AIRuntimeInvocationResponse = await this.options.runtimeManager.chat({
+          providerId: session.runtimeId,
+          model: session.modelId,
+          messages: [
+            {
+              role: "system",
+              content: "Summarize approved Levi Git operation results. Do not propose edits, run commands, request retries, or trigger follow-up actions."
+            },
+            {
+              role: "user",
+              content: JSON.stringify({
+                operation: gitRun.operation,
+                status: gitRun.status,
+                repositoryRoot: gitRun.repositoryRoot,
+                affectedFiles: gitRun.affectedFiles,
+                branchName: gitRun.branchName,
+                commitHash: gitRun.commitHash,
+                durationMs: gitRun.durationMs,
+                stdout: gitRun.stdout,
+                stderr: gitRun.stderr,
+                statusLines: status.summary
+              })
+            }
+          ]
+        });
+        summary = response.content.slice(0, 2_000);
+      } catch {
+        summary = fallback;
+      }
+    }
+    return {
+      id: randomUUID(),
+      actionId: gitRun.actionId,
+      operation: gitRun.operation,
+      summary,
+      repositoryRoot: gitRun.repositoryRoot,
+      currentBranch: status.currentBranch,
+      commitHash: gitRun.commitHash,
+      durationMs: gitRun.durationMs,
+      affectedFiles: gitRun.affectedFiles.slice(0, 80),
+      statusLines: status.summary.slice(0, MAX_GIT_STATUS_LINES),
+      createdAt: new Date().toISOString()
+    };
+  }
 }
 
 function validatePreviewRequest(value: unknown): AgentPreviewRequest {
@@ -786,6 +976,31 @@ function validateTaskVerifyRequest(value: unknown): AgentTaskVerifyRequest {
   return { sessionId: validateId(record.sessionId, "sessionId"), actionId: validateId(record.actionId, "actionId") };
 }
 
+function validateGitPreviewRequest(value: unknown): AgentGitPreviewRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent Git preview request is invalid.");
+  const record = value as Record<string, unknown>;
+  return { sessionId: validateId(record.sessionId, "sessionId"), actionId: validateId(record.actionId, "actionId") };
+}
+
+function validateGitExecuteRequest(value: unknown): AgentGitExecuteRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent Git execute request is invalid.");
+  const record = value as Record<string, unknown>;
+  return {
+    sessionId: validateId(record.sessionId, "sessionId"),
+    actionId: validateId(record.actionId, "actionId"),
+    previewId: record.previewId === undefined ? undefined : validateId(record.previewId, "previewId")
+  };
+}
+
+function validateGitStatusRequest(value: unknown): AgentGitStatusRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent Git status request is invalid.");
+  const record = value as Record<string, unknown>;
+  return {
+    sessionId: validateId(record.sessionId, "sessionId"),
+    actionId: record.actionId === undefined ? undefined : validateId(record.actionId, "actionId")
+  };
+}
+
 function validateId(value: unknown, field: string): string {
   if (typeof value !== "string" || value.length === 0 || value.length > 140 || value.includes("\0")) throw new Error(`${field} is invalid.`);
   return value;
@@ -834,6 +1049,15 @@ function requireApprovedTaskAction(action: AgentApprovalAction): void {
   }
 }
 
+function requireApprovedGitAction(action: AgentApprovalAction): void {
+  if (action.status !== "Approved") {
+    throw new Error("Agent Git action must be approved before execution.");
+  }
+  if (action.type !== "git-operation") {
+    throw new Error("Only approved Git actions can use the Git executor.");
+  }
+}
+
 function ensureQueue(session: AgentSession): AgentExecutionQueueItem[] {
   if (!session.plan) throw new Error("Agent session has no execution plan.");
   const existing = new Map((session.plan.executionQueue ?? []).map((item) => [item.actionId, item]));
@@ -862,6 +1086,36 @@ function ensureTaskRuns(session: AgentSession): AgentTaskRunState[] {
   if (!session.plan) throw new Error("Agent session has no execution plan.");
   session.plan.taskRuns = Array.isArray(session.plan.taskRuns) ? session.plan.taskRuns : [];
   return session.plan.taskRuns;
+}
+
+function ensureGitRuns(session: AgentSession): AgentGitRunState[] {
+  if (!session.plan) throw new Error("Agent session has no execution plan.");
+  session.plan.gitRuns = Array.isArray(session.plan.gitRuns) ? session.plan.gitRuns : [];
+  return session.plan.gitRuns;
+}
+
+function ensureGitRun(session: AgentSession, action: AgentApprovalAction, preview: AgentGitPreview): AgentGitRunState {
+  const runs = ensureGitRuns(session);
+  let run = runs.find((item) => item.actionId === action.id);
+  if (!run) {
+    run = {
+      actionId: action.id,
+      operation: preview.operation,
+      status: "Pending",
+      repositoryRoot: preview.repositoryRoot,
+      affectedFiles: preview.affectedFiles,
+      commitMessage: preview.commitMessage,
+      branchName: preview.branchName,
+      updatedAt: new Date().toISOString()
+    };
+    runs.push(run);
+  }
+  run.operation = preview.operation;
+  run.repositoryRoot = preview.repositoryRoot;
+  run.affectedFiles = preview.affectedFiles;
+  run.commitMessage = preview.commitMessage;
+  run.branchName = preview.branchName;
+  return run;
 }
 
 function ensureTaskRun(session: AgentSession, action: AgentApprovalAction, preview: AgentTaskPreview): AgentTaskRunState {
@@ -903,7 +1157,49 @@ function progressFromSession(session: AgentSession): NonNullable<AgentSession["p
     pendingActions: plan.approvals.filter((item) => item.status === "Pending").length,
     approvedActions: plan.approvals.filter((item) => item.status === "Approved").length,
     rejectedActions: plan.approvals.filter((item) => item.status === "Rejected").length + queue.filter((item) => item.status === "Rejected").length,
-    completedActions: queue.filter((item) => item.status === "Completed").length + (plan.taskRuns ?? []).filter((item) => item.status === "Succeeded").length
+    completedActions:
+      queue.filter((item) => item.status === "Completed").length +
+      (plan.taskRuns ?? []).filter((item) => item.status === "Succeeded").length +
+      (plan.gitRuns ?? []).filter((item) => item.status === "Succeeded").length
+  };
+}
+
+function normalizeGitOperation(value: unknown): GitOperation {
+  if (
+    value === "status" ||
+    value === "stage-file" ||
+    value === "unstage-file" ||
+    value === "stage-all" ||
+    value === "commit" ||
+    value === "create-branch" ||
+    value === "switch-branch" ||
+    value === "restore-file" ||
+    value === "show-diff"
+  ) return value;
+  throw new Error("Agent Git operation is not supported.");
+}
+
+function gitActionPaths(action: AgentApprovalAction): string[] {
+  const paths = action.affectedFiles?.length ? action.affectedFiles : action.relativePath ? [action.relativePath] : [];
+  return paths.map(validateRelativePath).slice(0, 80);
+}
+
+function toGitOperationPreview(preview: AgentGitPreview): GitOperationPreview {
+  return {
+    operation: preview.operation,
+      relativePaths: preview.relativePaths,
+    commitMessage: preview.commitMessage,
+    branchName: preview.branchName,
+    repositoryRoot: preview.repositoryRoot,
+    affectedFiles: preview.affectedFiles,
+    riskLevel: preview.riskLevel,
+    unifiedDiff: preview.unifiedDiff,
+    fileCount: preview.fileCount,
+    addedLineCount: preview.addedLineCount,
+    removedLineCount: preview.removedLineCount,
+    status: preview.status,
+    warnings: preview.warnings,
+    createdAt: preview.createdAt
   };
 }
 

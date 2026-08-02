@@ -105,6 +105,7 @@ import { AgentService } from "./agent-service";
 import { UpdateService } from "./update-service";
 import { TerminalManager } from "./terminal-manager";
 import { TaskService } from "./tasks/task-service";
+import { GitService } from "./git-service";
 import { registerDebugTaskRunner } from "./debug-tasks";
 import type { DebugEvent } from "../../src/features/debugger";
 import type { AIChatEvent } from "../../src/features/ai-chat";
@@ -131,12 +132,14 @@ const taskService = new TaskService(
   () => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null,
   () => workspaceScan?.summary
 );
+const gitService = new GitService(() => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null);
 const agentService = new AgentService(aiRuntimeManager, {
   emit: sendAgentEvent,
   getWorkspaceRoot: () => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null,
   getWorkspaceStatus: () => workspaceStatus,
   getWindow: () => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null,
   taskService,
+  gitService,
   getChangedFiles: () => taskService.getOutput({ source: "git" }).map((entry) => entry.text).slice(-40)
 });
 terminalManager.onTerminalData((sessionId, data) => {
@@ -2376,6 +2379,18 @@ function registerIpc(): void {
   ipcMain.handle(IPC_CHANNELS.agentTaskVerify, async (_event, request, ...args) => {
     assertNoIpcArgs(args);
     return agentService.taskVerify(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentGitPreview, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.gitPreview(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentGitExecute, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.gitExecute(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentGitStatus, (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.gitStatus(request);
   });
   ipcMain.handle(IPC_CHANNELS.agentStatus, (_event, request, ...args) => {
     assertNoIpcArgs(args);

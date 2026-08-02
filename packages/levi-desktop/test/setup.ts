@@ -1544,6 +1544,7 @@ function createDefaultApi(): LeviApi {
                 ],
                 executionQueue: [],
                 taskRuns: [],
+                gitRuns: [],
                 createdAt: "2026-08-01T00:00:00.000Z",
                 updatedAt: "2026-08-01T00:00:00.000Z"
               },
@@ -1591,6 +1592,7 @@ function createDefaultApi(): LeviApi {
                 status: "Pending" as const
               }],
               taskRuns: [],
+              gitRuns: [],
               createdAt: "2026-08-01T00:00:00.000Z",
               updatedAt: "2026-08-01T00:00:00.000Z"
             },
@@ -1661,6 +1663,7 @@ function createDefaultApi(): LeviApi {
                 previewId: "preview-1"
               }],
               taskRuns: [],
+              gitRuns: [],
               createdAt: "2026-08-01T00:00:00.000Z",
               updatedAt: "2026-08-01T00:00:00.000Z"
             },
@@ -1748,6 +1751,62 @@ function createDefaultApi(): LeviApi {
         },
         state: agentState
       })),
+      gitPreview: vi.fn(async (request) => ({
+        sessionId: request.sessionId,
+        preview: {
+          previewId: "git-preview-1",
+          sessionId: request.sessionId,
+          actionId: request.actionId,
+          operation: "show-diff" as const,
+          repositoryRoot: "C:/workspace",
+          relativePaths: ["src/Login.tsx"],
+          affectedFiles: ["src/Login.tsx"],
+          riskLevel: "low" as const,
+          unifiedDiff: "diff --git a/src/Login.tsx b/src/Login.tsx\n+change\n",
+          fileCount: 1,
+          addedLineCount: 1,
+          removedLineCount: 0,
+          status: {
+            repositoryRoot: "C:/workspace",
+            currentBranch: "main",
+            detachedHead: false,
+            headCommit: "abc123",
+            hasMergeConflicts: false,
+            rebaseInProgress: false,
+            entries: [{ path: "src/Login.tsx", index: " ", workingTree: "M" }],
+            summary: ["## main", " M src/Login.tsx"]
+          },
+          warnings: [],
+          createdAt: "2026-08-01T00:00:00.000Z"
+        },
+        state: agentState
+      })),
+      gitExecute: vi.fn(async (request) => ({
+        sessionId: request.sessionId,
+        actionId: request.actionId,
+        gitRun: {
+          actionId: request.actionId,
+          operation: "show-diff" as const,
+          status: "Succeeded" as const,
+          repositoryRoot: "C:/workspace",
+          affectedFiles: ["src/Login.tsx"],
+          durationMs: 20,
+          verification: {
+            id: "git-verification-1",
+            actionId: request.actionId,
+            operation: "show-diff" as const,
+            summary: "Diff reviewed.",
+            repositoryRoot: "C:/workspace",
+            currentBranch: "main",
+            affectedFiles: ["src/Login.tsx"],
+            statusLines: ["## main", " M src/Login.tsx"],
+            createdAt: "2026-08-01T00:00:00.000Z"
+          },
+          updatedAt: "2026-08-01T00:00:00.000Z"
+        },
+        state: agentState
+      })),
+      gitStatus: vi.fn(async (request) => ({ sessionId: request.sessionId, gitRuns: [], state: agentState })),
       status: vi.fn(async () => agentState),
       onEvent: vi.fn((listener: (event: AgentEvent) => void) => {
         window.__leviAgentListeners.push(listener);

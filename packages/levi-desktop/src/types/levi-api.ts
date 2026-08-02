@@ -80,6 +80,12 @@ import type {
   AgentExecuteRequest,
   AgentExecutionResult,
   AgentEvent,
+  AgentGitExecuteRequest,
+  AgentGitExecutionResult,
+  AgentGitPreviewRequest,
+  AgentGitPreviewResult,
+  AgentGitStatusRequest,
+  AgentGitStatusResult,
   AgentNewSessionRequest,
   AgentPlanRequest,
   AgentPlanResult,
@@ -122,6 +128,19 @@ export type {
   AgentExecutionPlan,
   AgentFileEdit,
   AgentFileEditKind,
+  AgentGitActionStatus,
+  AgentGitExecuteRequest,
+  AgentGitExecutionResult,
+  AgentGitOperation,
+  AgentGitPreview,
+  AgentGitPreviewRequest,
+  AgentGitPreviewResult,
+  AgentGitRepositoryStatus,
+  AgentGitRunState,
+  AgentGitStatusEntry,
+  AgentGitStatusRequest,
+  AgentGitStatusResult,
+  AgentGitVerificationSummary,
   AgentMessage,
   AgentMessageRole,
   AgentNewSessionRequest,
@@ -1198,6 +1217,9 @@ export type LeviApi = {
     taskCancel: (request: AgentTaskCancelRequest) => Promise<AgentTaskExecutionResult>;
     taskStatus: (request: AgentTaskStatusRequest) => Promise<AgentTaskStatusResult>;
     taskVerify: (request: AgentTaskVerifyRequest) => Promise<AgentTaskVerificationResult>;
+    gitPreview: (request: AgentGitPreviewRequest) => Promise<AgentGitPreviewResult>;
+    gitExecute: (request: AgentGitExecuteRequest) => Promise<AgentGitExecutionResult>;
+    gitStatus: (request: AgentGitStatusRequest) => Promise<AgentGitStatusResult>;
     status: (request?: AgentStatusRequest) => Promise<AgentState | AgentSession>;
     onEvent: (listener: (event: AgentEvent) => void) => () => void;
   };

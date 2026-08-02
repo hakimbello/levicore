@@ -3,7 +3,7 @@ import type { AIRuntimeProviderId, AIRuntimeState } from "../ai-runtime";
 import type { AIChatAttachment, AIChatContextDiscoveryResult, AIChatContextPreviewRequest } from "../ai-chat";
 import type { EditorTab } from "../../hooks/use-editor-tabs";
 import type { TaskOutputEntry, TaskProblem, WorkspaceStatus } from "../../types/levi-api";
-import type { AgentActionPreview, AgentSession, AgentState, AgentTaskPreview } from "./types";
+import type { AgentActionPreview, AgentGitPreview, AgentSession, AgentState, AgentTaskPreview } from "./types";
 
 type AgentPanelProps = {
   runtimeState: AIRuntimeState;
@@ -31,6 +31,7 @@ export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, w
   const [planning, setPlanning] = useState(false);
   const [preview, setPreview] = useState<AgentActionPreview | null>(null);
   const [taskPreview, setTaskPreview] = useState<AgentTaskPreview | null>(null);
+  const [gitPreview, setGitPreview] = useState<AgentGitPreview | null>(null);
   const [executingActionId, setExecutingActionId] = useState<string | null>(null);
 
   const activeSession = state.sessions.find((session) => session.id === state.activeSessionId);
@@ -59,6 +60,11 @@ export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, w
         setTaskPreview(event.preview);
       }
       if (event.type === "task" || event.type === "task-verification") setState(event.state);
+      if (event.type === "git-preview") {
+        setState(event.state);
+        setGitPreview(event.preview);
+      }
+      if (event.type === "git") setState(event.state);
     });
   }, []);
 
@@ -264,6 +270,8 @@ export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, w
             onPreview={setPreview}
             taskPreview={taskPreview}
             onTaskPreview={setTaskPreview}
+            gitPreview={gitPreview}
+            onGitPreview={setGitPreview}
             onExecuting={setExecutingActionId}
             onError={setError}
             onState={setState}
@@ -274,6 +282,7 @@ export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, w
             onState={setState}
             onPreview={(nextPreview) => setPreview(nextPreview)}
             onTaskPreview={(nextPreview) => setTaskPreview(nextPreview)}
+            onGitPreview={(nextPreview) => setGitPreview(nextPreview)}
             onError={setError}
           />
         </div>
@@ -341,12 +350,14 @@ function PlanView({
   onState,
   onPreview,
   onTaskPreview,
+  onGitPreview,
   onError
 }: {
   session?: AgentSession;
   onState: (state: AgentState) => void;
   onPreview: (preview: AgentActionPreview) => void;
   onTaskPreview: (preview: AgentTaskPreview) => void;
+  onGitPreview: (preview: AgentGitPreview) => void;
   onError: (error: string | null) => void;
 }) {
   const plan = session?.plan;
@@ -383,6 +394,12 @@ function PlanView({
         const result = await window.levi.agent.taskPreview({ sessionId: session.id, actionId });
         onState(result.state);
         onTaskPreview(result.preview);
+        return;
+      }
+      if (action?.type === "git-operation") {
+        const result = await window.levi.agent.gitPreview({ sessionId: session.id, actionId });
+        onState(result.state);
+        onGitPreview(result.preview);
         return;
       }
       const result = await window.levi.agent.preview({ sessionId: session.id, actionId });
@@ -443,9 +460,11 @@ function ExecutionReview({
   session,
   preview,
   taskPreview,
+  gitPreview,
   executingActionId,
   onPreview,
   onTaskPreview,
+  onGitPreview,
   onExecuting,
   onError,
   onState,
@@ -454,9 +473,11 @@ function ExecutionReview({
   session?: AgentSession;
   preview: AgentActionPreview | null;
   taskPreview: AgentTaskPreview | null;
+  gitPreview: AgentGitPreview | null;
   executingActionId: string | null;
   onPreview: (preview: AgentActionPreview | null) => void;
   onTaskPreview: (preview: AgentTaskPreview | null) => void;
+  onGitPreview: (preview: AgentGitPreview | null) => void;
   onExecuting: (actionId: string | null) => void;
   onError: (error: string | null) => void;
   onState: (state: AgentState) => void;
@@ -467,7 +488,9 @@ function ExecutionReview({
   const sessionId = session.id;
   const queue = plan.executionQueue ?? [];
   const taskRuns = plan.taskRuns ?? [];
+  const gitRuns = plan.gitRuns ?? [];
   const activeTaskRun = taskPreview ? taskRuns.find((run) => run.actionId === taskPreview.actionId) : undefined;
+  const activeGitRun = gitPreview ? gitRuns.find((run) => run.actionId === gitPreview.actionId) : undefined;
 
   async function executePreview() {
     if (!preview) return;
@@ -540,6 +563,32 @@ function ExecutionReview({
     }
   }
 
+  async function executeGitPreview() {
+    if (!gitPreview) return;
+    onExecuting(gitPreview.actionId);
+    onError(null);
+    try {
+      const result = await window.levi.agent.gitExecute({ sessionId, actionId: gitPreview.actionId, previewId: gitPreview.previewId });
+      onState(result.state);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Agent Git operation failed.");
+    } finally {
+      onExecuting(null);
+    }
+  }
+
+  async function rejectGitPreview() {
+    if (!gitPreview) return;
+    onError(null);
+    try {
+      const result = await window.levi.agent.cancel({ sessionId, actionId: gitPreview.actionId });
+      onState(result.state);
+      onGitPreview(null);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Could not reject Git action.");
+    }
+  }
+
   return (
     <section className="levi-agent-card" aria-label="Execution Queue">
       <div className="levi-agent-plan-top">
@@ -608,6 +657,63 @@ function ExecutionReview({
         </div>
       ) : null}
 
+      {gitPreview ? (
+        <div className="levi-agent-git-preview" role="group" aria-label="Git Approval Card">
+          <div className="levi-agent-preview-header">
+            <div>
+              <h3>{gitOperationLabel(gitPreview.operation)}</h3>
+              <p>{gitPreview.repositoryRoot}</p>
+            </div>
+            <span>{activeGitRun?.status ?? "Approved"} / {gitPreview.riskLevel} risk</span>
+          </div>
+          <div className="levi-agent-summary-grid">
+            <span>Repository</span><strong>{gitPreview.repositoryRoot}</strong>
+            <span>Files</span><strong>{gitPreview.fileCount}</strong>
+            <span>Branch</span><strong>{gitPreview.branchName ?? gitPreview.status.currentBranch ?? (gitPreview.status.detachedHead ? "Detached HEAD" : "Unknown")}</strong>
+            <span>Commit message</span><strong>{gitPreview.commitMessage ?? "Not applicable"}</strong>
+            <span>Additions</span><strong>+{gitPreview.addedLineCount}</strong>
+            <span>Deletions</span><strong>-{gitPreview.removedLineCount}</strong>
+          </div>
+          {gitPreview.warnings.length ? (
+            <div className="levi-agent-task-problems" aria-label="Git warnings">
+              {gitPreview.warnings.map((warning) => <p key={warning}>{warning}</p>)}
+            </div>
+          ) : null}
+          {gitPreview.affectedFiles.length ? (
+            <div className="levi-agent-git-files" aria-label="Git affected files">
+              {gitPreview.affectedFiles.map((file) => <code key={file}>{file}</code>)}
+            </div>
+          ) : null}
+          {gitPreview.unifiedDiff ? (
+            <div className="levi-agent-monaco-diff" role="group" aria-label="Git Diff Review">
+              <div>
+                <strong>Unified diff</strong>
+                <pre>{gitPreview.unifiedDiff}</pre>
+              </div>
+              <div>
+                <strong>Side-by-side diff</strong>
+                <pre>{gitPreview.unifiedDiff}</pre>
+              </div>
+            </div>
+          ) : null}
+          {activeGitRun?.verification ? (
+            <div className="levi-agent-task-verification" aria-label="Git verification summary">
+              <strong>Verification</strong>
+              <p>{activeGitRun.verification.summary}</p>
+              {activeGitRun.verification.commitHash ? <small>{activeGitRun.verification.commitHash}</small> : null}
+            </div>
+          ) : null}
+          {activeGitRun?.failureReason ? <div className="levi-agent-error" role="alert">{activeGitRun.failureReason}</div> : null}
+          <div className="levi-edit-actions">
+            <button type="button" className="levi-secondary-button" onClick={() => onGitPreview(null)}>Back</button>
+            <button type="button" className="levi-secondary-button" onClick={() => void rejectGitPreview()}>Reject</button>
+            <button type="button" className="levi-apply-button" disabled={executingActionId === gitPreview.actionId || activeGitRun?.status === "Executing"} onClick={() => void executeGitPreview()}>
+              {executingActionId === gitPreview.actionId ? "Executing..." : "Approve Git Operation"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {preview ? (
         <div className="levi-agent-preview" role="group" aria-label="Approval Dialog">
           <div className="levi-agent-preview-header">
@@ -653,4 +759,16 @@ function ExecutionReview({
       ) : null}
     </section>
   );
+}
+
+function gitOperationLabel(operation: AgentGitPreview["operation"]): string {
+  if (operation === "status") return "Git Status";
+  if (operation === "stage-file") return "Stage File";
+  if (operation === "unstage-file") return "Unstage File";
+  if (operation === "stage-all") return "Stage All";
+  if (operation === "commit") return "Commit";
+  if (operation === "create-branch") return "Create Branch";
+  if (operation === "switch-branch") return "Switch Branch";
+  if (operation === "restore-file") return "Restore File";
+  return "Show Diff";
 }
