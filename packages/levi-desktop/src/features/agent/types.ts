@@ -311,6 +311,80 @@ export type AgentGitVerificationSummary = {
   createdAt: string;
 };
 
+export type AgentVerificationStatus = "Succeeded" | "Failed" | "Warnings";
+export type AgentVerificationCheckStatus = "not-run" | "succeeded" | "failed" | "warnings";
+export type AgentFailureClassification =
+  | "Compilation"
+  | "Type errors"
+  | "Lint"
+  | "Runtime"
+  | "Missing dependency"
+  | "Missing import"
+  | "Syntax"
+  | "Unknown";
+export type AgentRepairStatus = "Pending" | "Approved" | "Rejected" | "Cancelled" | "Completed";
+
+export type AgentVerificationCheck = {
+  kind: "build" | "test" | "lint" | "typecheck";
+  status: AgentVerificationCheckStatus;
+  actionId?: string;
+  taskRunId?: string;
+  exitCode?: number;
+  durationMs?: number;
+  summary: string;
+};
+
+export type AgentVerificationFailure = {
+  id: string;
+  classification: AgentFailureClassification;
+  source: "task" | "terminal" | "problems" | "git" | "execution";
+  message: string;
+  affectedFiles: string[];
+  actionId?: string;
+  exitCode?: number;
+  severity: "error" | "warning";
+};
+
+export type AgentVerificationReport = {
+  id: string;
+  sessionId: string;
+  status: AgentVerificationStatus;
+  summary: string;
+  checks: AgentVerificationCheck[];
+  problems: TaskProblem[];
+  terminalOutputExcerpt: string;
+  taskOutputExcerpt: string;
+  gitChangedFiles: string[];
+  exitCodes: Array<{ source: "task" | "terminal"; actionId: string; exitCode?: number }>;
+  failures: AgentVerificationFailure[];
+  warnings: string[];
+  startedAt: string;
+  completedAt: string;
+};
+
+export type AgentRepairQueueItem = {
+  id: string;
+  reportId: string;
+  problem: string;
+  likelyCause: string;
+  affectedFiles: string[];
+  suggestedFix: string;
+  confidence: number;
+  estimatedRisk: AgentRiskLevel;
+  classification: AgentFailureClassification;
+  status: AgentRepairStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AgentRepairProgressEntry = {
+  id: string;
+  stage: "Verification Started" | "Verification Complete" | "Repair Planned" | "Repair Approved" | "Repair Complete";
+  reportId?: string;
+  repairId?: string;
+  createdAt: string;
+};
+
 export type AgentExecutionPlan = {
   id: string;
   objective: string;
@@ -321,6 +395,9 @@ export type AgentExecutionPlan = {
   taskRuns: AgentTaskRunState[];
   terminalRuns: AgentTerminalRunState[];
   gitRuns: AgentGitRunState[];
+  verificationReports: AgentVerificationReport[];
+  repairQueue: AgentRepairQueueItem[];
+  repairProgress: AgentRepairProgressEntry[];
   lastUndo?: AgentUndoMetadata;
   estimatedFiles: string[];
   progress: {
@@ -499,6 +576,20 @@ export type AgentGitStatusRequest = {
   actionId?: string;
 };
 
+export type AgentVerifyRequest = {
+  sessionId: string;
+};
+
+export type AgentRepairPlanRequest = {
+  sessionId: string;
+  reportId?: string;
+};
+
+export type AgentRepairStatusRequest = {
+  sessionId: string;
+  repairId?: string;
+};
+
 export type AgentStatusRequest = {
   sessionId?: string;
 };
@@ -603,6 +694,27 @@ export type AgentGitStatusResult = {
   state: AgentState;
 };
 
+export type AgentVerifyResult = {
+  sessionId: string;
+  report: AgentVerificationReport;
+  state: AgentState;
+};
+
+export type AgentRepairPlanResult = {
+  sessionId: string;
+  reportId: string;
+  repairs: AgentRepairQueueItem[];
+  state: AgentState;
+};
+
+export type AgentRepairStatusResult = {
+  sessionId: string;
+  repairs: AgentRepairQueueItem[];
+  reports: AgentVerificationReport[];
+  progress: AgentRepairProgressEntry[];
+  state: AgentState;
+};
+
 export type AgentEvent =
   | { type: "state"; state: AgentState }
   | { type: "progress"; sessionId: string; state: AgentState }
@@ -614,4 +726,6 @@ export type AgentEvent =
   | { type: "terminal-preview"; sessionId: string; preview: AgentTerminalPreview; state: AgentState }
   | { type: "terminal"; sessionId: string; actionId: string; terminalRun: AgentTerminalRunState; state: AgentState }
   | { type: "git-preview"; sessionId: string; preview: AgentGitPreview; state: AgentState }
-  | { type: "git"; sessionId: string; actionId: string; gitRun: AgentGitRunState; state: AgentState };
+  | { type: "git"; sessionId: string; actionId: string; gitRun: AgentGitRunState; state: AgentState }
+  | { type: "verification"; sessionId: string; report: AgentVerificationReport; state: AgentState }
+  | { type: "repair-plan"; sessionId: string; reportId: string; repairs: AgentRepairQueueItem[]; state: AgentState };

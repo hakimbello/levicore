@@ -71,6 +71,7 @@ export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, w
         setGitPreview(event.preview);
       }
       if (event.type === "git") setState(event.state);
+      if (event.type === "verification" || event.type === "repair-plan") setState(event.state);
     });
   }, []);
 
@@ -269,6 +270,7 @@ export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, w
           <SessionActions session={activeSession} onState={setState} />
           <Conversation session={activeSession} />
           <ProjectSummary session={activeSession} />
+          <VerificationPanel session={activeSession} onState={setState} onError={setError} />
           <ExecutionReview
             session={activeSession}
             preview={preview}
@@ -350,6 +352,112 @@ function ProjectSummary({ session }: { session?: AgentSession }) {
         <span>Git</span><strong>{summary.git.branch ?? "No branch"} / {summary.git.changedFiles} changed</strong>
         <span>Context</span><strong>{summary.context.attachmentCount} items / {summary.context.tokenEstimate} tokens</strong>
       </div>
+    </section>
+  );
+}
+
+function VerificationPanel({ session, onState, onError }: { session?: AgentSession; onState: (state: AgentState) => void; onError: (error: string | null) => void }) {
+  const [busy, setBusy] = useState<"verify" | "repair" | null>(null);
+  const plan = session?.plan;
+  if (!session || !plan) return null;
+  const sessionId = session.id;
+  const report = plan.verificationReports?.[0];
+  const repairs = plan.repairQueue ?? [];
+
+  async function verify() {
+    onError(null);
+    setBusy("verify");
+    try {
+      const result = await window.levi.agent.verify({ sessionId });
+      onState(result.state);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Verification failed.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function planRepairs() {
+    if (!report) return;
+    onError(null);
+    setBusy("repair");
+    try {
+      const result = await window.levi.agent.repairPlan({ sessionId, reportId: report.id });
+      onState(result.state);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Repair planning failed.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function updateRepair(actionId: string, approved: boolean) {
+    onError(null);
+    try {
+      const result = approved
+        ? await window.levi.agent.approve({ sessionId, actionId })
+        : await window.levi.agent.reject({ sessionId, actionId });
+      onState(result);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Could not update repair approval.");
+    }
+  }
+
+  return (
+    <section className="levi-agent-card" aria-label="Verification Summary">
+      <div className="levi-agent-plan-top">
+        <div>
+          <h2>Verification</h2>
+          <p>{report?.summary ?? "No verification report yet."}</p>
+        </div>
+        <div className="levi-edit-actions">
+          <button type="button" className="levi-secondary-button" onClick={() => void verify()} disabled={busy !== null}>{busy === "verify" ? "Verifying..." : "Verify"}</button>
+          <button type="button" className="levi-apply-button" onClick={() => void planRepairs()} disabled={!report || report.status !== "Failed" || busy !== null}>{busy === "repair" ? "Planning..." : "Plan Repairs"}</button>
+        </div>
+      </div>
+      {report ? (
+        <>
+          <div className="levi-agent-progress" aria-label="Verification Checks">
+            {report.checks.map((check) => <span key={check.kind}>{check.kind}: {check.status}</span>)}
+          </div>
+          <div className="levi-agent-summary-grid">
+            <span>Status</span><strong>{report.status}</strong>
+            <span>Changed files</span><strong>{report.gitChangedFiles.length}</strong>
+            <span>Problems</span><strong>{report.problems.length}</strong>
+            <span>Failures</span><strong>{report.failures.length}</strong>
+          </div>
+          {report.failures.length ? (
+            <div className="levi-agent-task-problems" aria-label="Failed Verification">
+              {report.failures.map((failure) => (
+                <p key={failure.id}>{failure.classification}: {failure.message}{failure.affectedFiles.length ? ` (${failure.affectedFiles.join(", ")})` : ""}</p>
+              ))}
+            </div>
+          ) : null}
+          {report.warnings.length ? (
+            <div className="levi-agent-task-problems" aria-label="Verification Warnings">
+              {report.warnings.map((warning) => <p key={warning}>{warning}</p>)}
+            </div>
+          ) : null}
+        </>
+      ) : null}
+      {repairs.length ? (
+        <div className="levi-agent-approvals" aria-label="Suggested Repairs">
+          {repairs.map((repair) => (
+            <article key={repair.id}>
+              <div>
+                <strong>{repair.problem}</strong>
+                <span>{repair.classification} / {repair.status} / {Math.round(repair.confidence * 100)}% confidence / {repair.estimatedRisk} risk</span>
+                <p>{repair.suggestedFix}</p>
+                {repair.affectedFiles.length ? <small>{repair.affectedFiles.join(", ")}</small> : null}
+              </div>
+              <div>
+                <button type="button" onClick={() => void updateRepair(repair.id, true)} disabled={repair.status !== "Pending"}>Approve</button>
+                <button type="button" onClick={() => void updateRepair(repair.id, false)} disabled={repair.status !== "Pending"}>Reject</button>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }

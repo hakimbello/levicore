@@ -1546,6 +1546,9 @@ function createDefaultApi(): LeviApi {
                 taskRuns: [],
                 terminalRuns: [],
                 gitRuns: [],
+                verificationReports: [],
+                repairQueue: [],
+                repairProgress: [],
                 createdAt: "2026-08-01T00:00:00.000Z",
                 updatedAt: "2026-08-01T00:00:00.000Z"
               },
@@ -1595,6 +1598,9 @@ function createDefaultApi(): LeviApi {
               taskRuns: [],
               terminalRuns: [],
               gitRuns: [],
+              verificationReports: [],
+              repairQueue: [],
+              repairProgress: [],
               createdAt: "2026-08-01T00:00:00.000Z",
               updatedAt: "2026-08-01T00:00:00.000Z"
             },
@@ -1667,6 +1673,9 @@ function createDefaultApi(): LeviApi {
               taskRuns: [],
               terminalRuns: [],
               gitRuns: [],
+              verificationReports: [],
+              repairQueue: [],
+              repairProgress: [],
               createdAt: "2026-08-01T00:00:00.000Z",
               updatedAt: "2026-08-01T00:00:00.000Z"
             },
@@ -1865,6 +1874,28 @@ function createDefaultApi(): LeviApi {
         state: agentState
       })),
       gitStatus: vi.fn(async (request) => ({ sessionId: request.sessionId, gitRuns: [], state: agentState })),
+      verify: vi.fn(async (request) => ({
+        sessionId: request.sessionId,
+        report: {
+          id: "verification-1",
+          sessionId: request.sessionId,
+          status: "Succeeded" as const,
+          summary: "Verification succeeded.",
+          checks: [],
+          problems: [],
+          terminalOutputExcerpt: "",
+          taskOutputExcerpt: "",
+          gitChangedFiles: [],
+          exitCodes: [],
+          failures: [],
+          warnings: [],
+          startedAt: "2026-08-01T00:00:00.000Z",
+          completedAt: "2026-08-01T00:00:01.000Z"
+        },
+        state: agentState
+      })),
+      repairPlan: vi.fn(async (request) => ({ sessionId: request.sessionId, reportId: request.reportId ?? "verification-1", repairs: [], state: agentState })),
+      repairStatus: vi.fn(async (request) => ({ sessionId: request.sessionId, repairs: [], reports: [], progress: [], state: agentState })),
       status: vi.fn(async () => agentState),
       onEvent: vi.fn((listener: (event: AgentEvent) => void) => {
         window.__leviAgentListeners.push(listener);

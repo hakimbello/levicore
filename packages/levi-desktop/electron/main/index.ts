@@ -2409,6 +2409,18 @@ function registerIpc(): void {
     assertNoIpcArgs(args);
     return agentService.gitStatus(request);
   });
+  ipcMain.handle(IPC_CHANNELS.agentVerify, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.verify(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentRepairPlan, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.repairPlan(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentRepairStatus, (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.repairStatus(request);
+  });
   ipcMain.handle(IPC_CHANNELS.agentStatus, (_event, request, ...args) => {
     assertNoIpcArgs(args);
     return agentService.status(request);

@@ -11,6 +11,7 @@ import type {
   AgentExecuteRequest,
   AgentExecutionQueueItem,
   AgentExecutionResult,
+  AgentFailureClassification,
   AgentFileEdit,
   AgentGitExecuteRequest,
   AgentGitExecutionResult,
@@ -25,6 +26,11 @@ import type {
   AgentPreviewResult,
   AgentQueueRequest,
   AgentQueueResult,
+  AgentRepairPlanRequest,
+  AgentRepairPlanResult,
+  AgentRepairQueueItem,
+  AgentRepairStatusRequest,
+  AgentRepairStatusResult,
   AgentRiskLevel,
   AgentSession,
   AgentState,
@@ -52,7 +58,12 @@ import type {
   AgentTerminalVerificationSummary,
   AgentUndoMetadata,
   AgentUndoRequest,
-  AgentUndoResult
+  AgentUndoResult,
+  AgentVerificationCheck,
+  AgentVerificationFailure,
+  AgentVerificationReport,
+  AgentVerifyRequest,
+  AgentVerifyResult
 } from "../../src/features/agent";
 import type { AIRuntimeInvocationResponse } from "../../src/features/ai-runtime";
 import type { TaskDefinition, TaskEvent, TaskOutputEntry, TaskProblem, TaskRun } from "../../src/types/task-api";
@@ -72,6 +83,9 @@ const MAX_TASK_PROBLEMS = 40;
 const MAX_GIT_OUTPUT_CHARS = 12_000;
 const MAX_GIT_STATUS_LINES = 80;
 const MAX_TERMINAL_OUTPUT_CHARS = 12_000;
+const MAX_VERIFICATION_REPORTS = 20;
+const MAX_REPAIR_ITEMS = 20;
+const MAX_REPAIR_TEXT = 2_000;
 const MAX_TERMINAL_ARG_LENGTH = 500;
 const MAX_TERMINAL_ARGS = 80;
 const SUPPORTED_ACTIONS = new Set(["create-file", "modify-file", "delete-file", "rename-file", "create-folder", "rename-folder"]);
@@ -118,6 +132,8 @@ type AgentExecutionServiceOptions = {
   emitTerminal?: (sessionId: string, actionId: string, terminalRun: AgentTerminalRunState) => void;
   emitGitPreview?: (sessionId: string, preview: AgentGitPreview) => void;
   emitGit?: (sessionId: string, actionId: string, gitRun: AgentGitRunState) => void;
+  emitVerification?: (sessionId: string, report: AgentVerificationReport) => void;
+  emitRepairPlan?: (sessionId: string, reportId: string, repairs: AgentRepairQueueItem[]) => void;
   taskService?: TaskService;
   gitService?: GitService;
   terminalManager?: TerminalManager;
@@ -575,6 +591,59 @@ export class AgentExecutionService {
     };
   }
 
+  async verify(session: AgentSession, rawRequest: unknown): Promise<AgentVerifyResult> {
+    const request = validateVerifyRequest(rawRequest);
+    if (request.sessionId !== session.id) throw new Error("Agent verification request session does not match.");
+    if (!session.plan) throw new Error("Agent session has no execution plan.");
+    const startedAt = new Date().toISOString();
+    addRepairProgress(session, "Verification Started", { createdAt: startedAt });
+    const report = this.createVerificationReport(session, startedAt);
+    const reports = ensureVerificationReports(session);
+    reports.unshift(report);
+    session.plan.verificationReports = reports.slice(0, MAX_VERIFICATION_REPORTS);
+    addRepairProgress(session, "Verification Complete", { reportId: report.id, createdAt: report.completedAt });
+    session.status = report.status === "Failed" ? "Error" : "Ready";
+    session.error = report.status === "Failed" ? report.summary : undefined;
+    await this.touch(session);
+    this.options.emitVerification?.(session.id, report);
+    return { sessionId: session.id, report, state: this.options.snapshot() };
+  }
+
+  async repairPlan(session: AgentSession, rawRequest: unknown): Promise<AgentRepairPlanResult> {
+    const request = validateRepairPlanRequest(rawRequest);
+    if (request.sessionId !== session.id) throw new Error("Agent repair plan request session does not match.");
+    if (!session.plan) throw new Error("Agent session has no execution plan.");
+    const report = request.reportId
+      ? ensureVerificationReports(session).find((item) => item.id === request.reportId)
+      : ensureVerificationReports(session)[0];
+    if (!report) throw new Error("Agent verification report was not found.");
+    if (report.status !== "Failed" && report.failures.length === 0) {
+      throw new Error("Agent repair planning requires a failed verification report.");
+    }
+    const repairs = await this.createRepairPlan(session, report);
+    const queue = ensureRepairQueue(session);
+    const withoutReport = queue.filter((item) => item.reportId !== report.id);
+    session.plan.repairQueue = [...repairs, ...withoutReport].slice(0, MAX_REPAIR_ITEMS);
+    addRepairProgress(session, "Repair Planned", { reportId: report.id });
+    session.status = "WaitingForApproval";
+    await this.touch(session);
+    this.options.emitRepairPlan?.(session.id, report.id, repairs);
+    return { sessionId: session.id, reportId: report.id, repairs, state: this.options.snapshot() };
+  }
+
+  repairStatus(session: AgentSession, rawRequest: unknown): AgentRepairStatusResult {
+    const request = validateRepairStatusRequest(rawRequest);
+    if (request.sessionId !== session.id) throw new Error("Agent repair status request session does not match.");
+    const repairs = ensureRepairQueue(session);
+    return {
+      sessionId: session.id,
+      repairs: request.repairId ? repairs.filter((item) => item.id === request.repairId) : repairs,
+      reports: ensureVerificationReports(session),
+      progress: ensureRepairProgress(session),
+      state: this.options.snapshot()
+    };
+  }
+
   handleTaskEvent(event: TaskEvent): void {
     for (const session of this.options.snapshot().sessions) {
       for (const taskRun of session.plan?.taskRuns ?? []) {
@@ -635,6 +704,152 @@ export class AgentExecutionService {
         gitRun.failureReason = "Git operation was interrupted before Levi shut down.";
         gitRun.updatedAt = gitRun.endedAt;
       }
+    }
+  }
+
+  private createVerificationReport(session: AgentSession, startedAt: string): AgentVerificationReport {
+    const plan = session.plan;
+    if (!plan) throw new Error("Agent session has no execution plan.");
+    const taskRuns = ensureTaskRuns(session);
+    const terminalRuns = ensureTerminalRuns(session);
+    const gitRuns = ensureGitRuns(session);
+    const queue = ensureQueue(session);
+    const problems = taskRuns.flatMap((run) => run.problems ?? []).slice(0, MAX_TASK_PROBLEMS);
+    const taskOutputExcerpt = boundTerminalOutput(taskRuns.flatMap((run) => run.outputPreview ?? []).map((entry) => entry.text).join(""));
+    const terminalOutputExcerpt = boundTerminalOutput(terminalRuns.map((run) => run.outputPreview).join("\n"));
+    const gitChangedFiles = uniqueStrings([
+      ...(this.options.getChangedFiles?.() ?? []),
+      ...gitRuns.flatMap((run) => run.affectedFiles ?? [])
+    ]).slice(0, MAX_GIT_STATUS_LINES);
+    const exitCodes = [
+      ...taskRuns.map((run) => ({ source: "task" as const, actionId: run.actionId, exitCode: run.exitCode })),
+      ...terminalRuns.map((run) => ({ source: "terminal" as const, actionId: run.actionId, exitCode: run.exitCode }))
+    ];
+    const failures: AgentVerificationFailure[] = [];
+    const warnings: string[] = [];
+    for (const taskRun of taskRuns) {
+      const output = (taskRun.outputPreview ?? []).map((entry) => entry.text).join("");
+      if (taskRun.status === "Failed" || (typeof taskRun.exitCode === "number" && taskRun.exitCode !== 0)) {
+        failures.push(createVerificationFailure({
+          source: "task",
+          severity: "error",
+          message: taskRun.failureReason ?? `${taskRun.taskName} failed${taskRun.exitCode === undefined ? "" : ` with exit code ${taskRun.exitCode}`}.`,
+          text: `${taskRun.taskName}\n${taskRun.failureReason ?? ""}\n${output}`,
+          affectedFiles: taskRun.problems.map((problem) => problem.relativePath),
+          actionId: taskRun.actionId,
+          exitCode: taskRun.exitCode
+        }));
+      } else if (taskRun.status === "Cancelled" || taskRun.status === "Interrupted") {
+        warnings.push(`${taskRun.taskName} was ${taskRun.status.toLowerCase()}.`);
+      }
+    }
+    for (const terminalRun of terminalRuns) {
+      if (terminalRun.status === "Failed" || (typeof terminalRun.exitCode === "number" && terminalRun.exitCode !== 0)) {
+        failures.push(createVerificationFailure({
+          source: "terminal",
+          severity: "error",
+          message: terminalRun.failureReason ?? `${terminalRun.executable} failed${terminalRun.exitCode === undefined ? "" : ` with exit code ${terminalRun.exitCode}`}.`,
+          text: `${terminalRun.executable} ${terminalRun.args.join(" ")}\n${terminalRun.stderrPreview}\n${terminalRun.outputPreview}`,
+          affectedFiles: [],
+          actionId: terminalRun.actionId,
+          exitCode: terminalRun.exitCode
+        }));
+      } else if (terminalRun.status === "Cancelled" || terminalRun.status === "Interrupted") {
+        warnings.push(`${terminalRun.executable} was ${terminalRun.status.toLowerCase()}.`);
+      }
+      warnings.push(...(terminalRun.verification?.warnings ?? []));
+    }
+    for (const problem of problems) {
+      const severity = problem.severity === "error" ? "error" : "warning";
+      const failure = createVerificationFailure({
+        source: "problems",
+        severity,
+        message: problem.message,
+        text: `${problem.source} ${problem.message}`,
+        affectedFiles: [problem.relativePath]
+      });
+      if (severity === "error") failures.push(failure);
+      else warnings.push(problem.message);
+    }
+    for (const item of queue.filter((candidate) => candidate.status === "Failed")) {
+      failures.push(createVerificationFailure({
+        source: "execution",
+        severity: "error",
+        message: item.error ?? `${item.title} failed.`,
+        text: `${item.type} ${item.error ?? ""}`,
+        affectedFiles: [item.relativePath, item.destinationRelativePath].filter(Boolean) as string[],
+        actionId: item.actionId
+      }));
+    }
+    for (const gitRun of gitRuns) {
+      if (gitRun.status === "Failed") {
+        failures.push(createVerificationFailure({
+          source: "git",
+          severity: "error",
+          message: gitRun.failureReason ?? `${gitRun.operation} failed.`,
+          text: `${gitRun.operation}\n${gitRun.stderr ?? ""}\n${gitRun.stdout ?? ""}`,
+          affectedFiles: gitRun.affectedFiles,
+          actionId: gitRun.actionId
+        }));
+      }
+    }
+    const checks = createVerificationChecks(taskRuns, failures);
+    const hasWarnings = warnings.length > 0 || failures.some((failure) => failure.severity === "warning");
+    const status = failures.some((failure) => failure.severity === "error") ? "Failed" : hasWarnings ? "Warnings" : "Succeeded";
+    const summary = status === "Succeeded"
+      ? "Verification succeeded. No failed build, test, lint, typecheck, terminal, Git, or problem results were found."
+      : status === "Warnings"
+        ? `Verification completed with ${warnings.length} warning${warnings.length === 1 ? "" : "s"}.`
+        : `Verification failed with ${failures.filter((failure) => failure.severity === "error").length} issue${failures.filter((failure) => failure.severity === "error").length === 1 ? "" : "s"}.`;
+    return {
+      id: randomUUID(),
+      sessionId: session.id,
+      status,
+      summary,
+      checks,
+      problems,
+      terminalOutputExcerpt,
+      taskOutputExcerpt,
+      gitChangedFiles,
+      exitCodes,
+      failures: failures.slice(0, MAX_REPAIR_ITEMS),
+      warnings: uniqueStrings(warnings).slice(0, MAX_REPAIR_ITEMS),
+      startedAt,
+      completedAt: new Date().toISOString()
+    };
+  }
+
+  private async createRepairPlan(session: AgentSession, report: AgentVerificationReport): Promise<AgentRepairQueueItem[]> {
+    const fallback = fallbackRepairs(report);
+    if (!this.options.runtimeManager || !session.modelId) return fallback;
+    try {
+      const response: AIRuntimeInvocationResponse = await this.options.runtimeManager.chat({
+        providerId: session.runtimeId,
+        model: session.modelId,
+        messages: [
+          {
+            role: "system",
+            content: "Create a read-only repair plan for Levi. Return JSON only: {\"repairs\":[{\"problem\":\"...\",\"likelyCause\":\"...\",\"affectedFiles\":[\"src/file.ts\"],\"suggestedFix\":\"...\",\"confidence\":0.75,\"estimatedRisk\":\"low\",\"classification\":\"Type errors\"}]}. Do not claim to edit files, run commands, retry tasks, or perform Git operations."
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              summary: report.summary,
+              failures: report.failures,
+              warnings: report.warnings,
+              problems: report.problems,
+              gitChangedFiles: report.gitChangedFiles,
+              taskOutputExcerpt: report.taskOutputExcerpt,
+              terminalOutputExcerpt: report.terminalOutputExcerpt
+            })
+          }
+        ],
+        options: { format: "json" }
+      });
+      const repairs = parseRepairPlan(response.content, report);
+      return repairs.length ? repairs : fallback;
+    } catch {
+      return fallback;
     }
   }
 
@@ -1303,6 +1518,29 @@ function validateGitStatusRequest(value: unknown): AgentGitStatusRequest {
   };
 }
 
+function validateVerifyRequest(value: unknown): AgentVerifyRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent verify request is invalid.");
+  return { sessionId: validateId((value as Record<string, unknown>).sessionId, "sessionId") };
+}
+
+function validateRepairPlanRequest(value: unknown): AgentRepairPlanRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent repair plan request is invalid.");
+  const record = value as Record<string, unknown>;
+  return {
+    sessionId: validateId(record.sessionId, "sessionId"),
+    reportId: record.reportId === undefined ? undefined : validateId(record.reportId, "reportId")
+  };
+}
+
+function validateRepairStatusRequest(value: unknown): AgentRepairStatusRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent repair status request is invalid.");
+  const record = value as Record<string, unknown>;
+  return {
+    sessionId: validateId(record.sessionId, "sessionId"),
+    repairId: record.repairId === undefined ? undefined : validateId(record.repairId, "repairId")
+  };
+}
+
 function validateId(value: unknown, field: string): string {
   if (typeof value !== "string" || value.length === 0 || value.length > 140 || value.includes("\0")) throw new Error(`${field} is invalid.`);
   return value;
@@ -1465,6 +1703,39 @@ function ensureGitRun(session: AgentSession, action: AgentApprovalAction, previe
   return run;
 }
 
+function ensureVerificationReports(session: AgentSession): AgentVerificationReport[] {
+  if (!session.plan) throw new Error("Agent session has no execution plan.");
+  session.plan.verificationReports = Array.isArray(session.plan.verificationReports) ? session.plan.verificationReports : [];
+  return session.plan.verificationReports;
+}
+
+function ensureRepairQueue(session: AgentSession): AgentRepairQueueItem[] {
+  if (!session.plan) throw new Error("Agent session has no execution plan.");
+  session.plan.repairQueue = Array.isArray(session.plan.repairQueue) ? session.plan.repairQueue : [];
+  return session.plan.repairQueue;
+}
+
+function ensureRepairProgress(session: AgentSession): NonNullable<AgentSession["plan"]>["repairProgress"] {
+  if (!session.plan) throw new Error("Agent session has no execution plan.");
+  session.plan.repairProgress = Array.isArray(session.plan.repairProgress) ? session.plan.repairProgress : [];
+  return session.plan.repairProgress;
+}
+
+function addRepairProgress(
+  session: AgentSession,
+  stage: NonNullable<AgentSession["plan"]>["repairProgress"][number]["stage"],
+  options: { reportId?: string; repairId?: string; createdAt?: string } = {}
+): void {
+  ensureRepairProgress(session).push({
+    id: randomUUID(),
+    stage,
+    reportId: options.reportId,
+    repairId: options.repairId,
+    createdAt: options.createdAt ?? new Date().toISOString()
+  });
+  session.plan!.repairProgress = session.plan!.repairProgress.slice(-80);
+}
+
 function ensureTaskRun(session: AgentSession, action: AgentApprovalAction, preview: AgentTaskPreview): AgentTaskRunState {
   const runs = ensureTaskRuns(session);
   let run = runs.find((item) => item.actionId === action.id);
@@ -1510,6 +1781,198 @@ function progressFromSession(session: AgentSession): NonNullable<AgentSession["p
       (plan.terminalRuns ?? []).filter((item) => item.status === "Succeeded").length +
       (plan.gitRuns ?? []).filter((item) => item.status === "Succeeded").length
   };
+}
+
+function createVerificationChecks(taskRuns: AgentTaskRunState[], failures: AgentVerificationFailure[]): AgentVerificationCheck[] {
+  const kinds: AgentVerificationCheck["kind"][] = ["build", "test", "lint", "typecheck"];
+  return kinds.map((kind) => {
+    const matching = taskRuns.filter((run) => inferVerificationKind(run.taskName) === kind);
+    if (!matching.length) {
+      return { kind, status: "not-run", summary: `${kind} was not run through an approved TaskService action.` };
+    }
+    const failed = matching.find((run) => run.status === "Failed" || (typeof run.exitCode === "number" && run.exitCode !== 0));
+    const warning = failures.some((failure) => failure.severity === "warning" && matching.some((run) => run.actionId === failure.actionId));
+    const latest = matching[matching.length - 1];
+    return {
+      kind,
+      status: failed ? "failed" : warning ? "warnings" : "succeeded",
+      actionId: latest.actionId,
+      taskRunId: latest.runId,
+      exitCode: latest.exitCode,
+      durationMs: latest.durationMs,
+      summary: failed ? `${kind} failed.` : warning ? `${kind} completed with warnings.` : `${kind} succeeded.`
+    };
+  });
+}
+
+function inferVerificationKind(value: string): AgentVerificationCheck["kind"] | undefined {
+  const text = value.toLowerCase();
+  if (/\b(typecheck|type-check|tsc)\b/.test(text)) return "typecheck";
+  if (/\blint\b/.test(text)) return "lint";
+  if (/\btest|spec|vitest|jest\b/.test(text)) return "test";
+  if (/\bbuild|compile\b/.test(text)) return "build";
+  return undefined;
+}
+
+function createVerificationFailure(options: {
+  source: AgentVerificationFailure["source"];
+  severity: AgentVerificationFailure["severity"];
+  message: string;
+  text: string;
+  affectedFiles: string[];
+  actionId?: string;
+  exitCode?: number;
+}): AgentVerificationFailure {
+  return {
+    id: randomUUID(),
+    classification: classifyFailure(options.text),
+    source: options.source,
+    message: truncateText(options.message, 600),
+    affectedFiles: uniqueStrings(options.affectedFiles.filter(Boolean)).slice(0, 20),
+    actionId: options.actionId,
+    exitCode: options.exitCode,
+    severity: options.severity
+  };
+}
+
+function classifyFailure(value: string): AgentFailureClassification {
+  const text = value.toLowerCase();
+  if (/\b(module not found|cannot find module|missing dependency|enoent|package not found)\b/.test(text)) return "Missing dependency";
+  if (/\b(cannot find name|cannot find namespace|not assignable|property .* does not exist|ts\d{4}|type error|typescript)\b/.test(text)) return "Type errors";
+  if (/\b(missing import|cannot find symbol|is not defined|no-undef)\b/.test(text)) return "Missing import";
+  if (/\b(syntaxerror|unexpected token|unterminated|parse error|parsererror)\b/.test(text)) return "Syntax";
+  if (/\b(eslint|lint|prettier|stylelint)\b/.test(text)) return "Lint";
+  if (/\b(compilation|compile|build failed|failed to compile)\b/.test(text)) return "Compilation";
+  if (/\b(runtime|exception|crash|timeout|econnrefused|unhandled)\b/.test(text)) return "Runtime";
+  return "Unknown";
+}
+
+function fallbackRepairs(report: AgentVerificationReport): AgentRepairQueueItem[] {
+  const now = new Date().toISOString();
+  const failures = report.failures.filter((failure) => failure.severity === "error").slice(0, 5);
+  return failures.map((failure) => ({
+    id: randomUUID(),
+    reportId: report.id,
+    problem: failure.message,
+    likelyCause: likelyCauseFor(failure.classification),
+    affectedFiles: failure.affectedFiles,
+    suggestedFix: suggestedFixFor(failure.classification),
+    confidence: failure.classification === "Unknown" ? 0.35 : 0.6,
+    estimatedRisk: failure.affectedFiles.length > 1 ? "medium" : "low",
+    classification: failure.classification,
+    status: "Pending",
+    createdAt: now,
+    updatedAt: now
+  }));
+}
+
+function parseRepairPlan(content: string, report: AgentVerificationReport): AgentRepairQueueItem[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return [];
+  }
+  const values = Array.isArray(parsed) ? parsed : Array.isArray((parsed as { repairs?: unknown }).repairs) ? (parsed as { repairs: unknown[] }).repairs : [];
+  const now = new Date().toISOString();
+  return values.slice(0, MAX_REPAIR_ITEMS).map((value) => {
+    const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
+    const classification = parseFailureClassification(record.classification);
+    return {
+      id: randomUUID(),
+      reportId: report.id,
+      problem: sanitizeRepairText(record.problem, "Verification failure needs repair planning."),
+      likelyCause: sanitizeRepairText(record.likelyCause, likelyCauseFor(classification)),
+      affectedFiles: parseAffectedFiles(record.affectedFiles),
+      suggestedFix: sanitizeRepairText(record.suggestedFix, suggestedFixFor(classification)),
+      confidence: clampConfidence(record.confidence),
+      estimatedRisk: parseRisk(record.estimatedRisk),
+      classification,
+      status: "Pending" as const,
+      createdAt: now,
+      updatedAt: now
+    };
+  }).filter((item) => item.problem && item.suggestedFix);
+}
+
+function parseFailureClassification(value: unknown): AgentFailureClassification {
+  const normalized = typeof value === "string" ? value.toLowerCase() : "";
+  if (normalized === "compilation") return "Compilation";
+  if (normalized === "type errors" || normalized === "type error") return "Type errors";
+  if (normalized === "lint") return "Lint";
+  if (normalized === "runtime") return "Runtime";
+  if (normalized === "missing dependency") return "Missing dependency";
+  if (normalized === "missing import") return "Missing import";
+  if (normalized === "syntax") return "Syntax";
+  return "Unknown";
+}
+
+function parseRisk(value: unknown): AgentRiskLevel {
+  return value === "low" || value === "medium" || value === "high" ? value : "medium";
+}
+
+function parseAffectedFiles(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return uniqueStrings(value.filter((item): item is string => typeof item === "string" && item.length > 0 && item.length <= 500 && !path.isAbsolute(item) && !item.includes("\0")).map((item) => normalizeSlashes(item).replace(/^\.\//, "")).filter((item) => !item.split("/").includes(".."))).slice(0, 20);
+}
+
+function sanitizeRepairText(value: unknown, fallback: string): string {
+  return truncateText(typeof value === "string" ? value.replace(/\0/g, "").trim() : fallback, MAX_REPAIR_TEXT);
+}
+
+function clampConfidence(value: unknown): number {
+  const numeric = typeof value === "number" && Number.isFinite(value) ? value : 0.5;
+  return Math.max(0, Math.min(1, numeric));
+}
+
+function likelyCauseFor(classification: AgentFailureClassification): string {
+  switch (classification) {
+    case "Missing dependency":
+      return "A required package or module is not installed or cannot be resolved.";
+    case "Missing import":
+      return "A referenced symbol is not imported or is outside the visible module scope.";
+    case "Type errors":
+      return "The current implementation does not satisfy the project's TypeScript contracts.";
+    case "Syntax":
+      return "The changed source likely contains malformed syntax.";
+    case "Lint":
+      return "The change violates configured lint or formatting rules.";
+    case "Compilation":
+      return "The build pipeline failed while compiling the project.";
+    case "Runtime":
+      return "The executed code failed at runtime or timed out.";
+    default:
+      return "The verification output did not match a known failure pattern.";
+  }
+}
+
+function suggestedFixFor(classification: AgentFailureClassification): string {
+  switch (classification) {
+    case "Missing dependency":
+      return "Review imports and package manifests, then propose an approved dependency or import correction.";
+    case "Missing import":
+      return "Inspect the affected file and propose an approved import or symbol reference fix.";
+    case "Type errors":
+      return "Inspect the reported type mismatch and propose an approved code change that preserves the intended API.";
+    case "Syntax":
+      return "Inspect the reported file region and propose an approved syntax correction.";
+    case "Lint":
+      return "Inspect the lint output and propose an approved style-safe source change.";
+    case "Compilation":
+      return "Inspect build output and affected files, then propose the smallest approved source correction.";
+    case "Runtime":
+      return "Inspect the failing path and propose an approved guard, initialization, or logic fix.";
+    default:
+      return "Review the bounded output and propose a minimal approved follow-up action.";
+  }
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function truncateText(value: string, max: number): string {
+  return value.length > max ? value.slice(0, max) : value;
 }
 
 function validateTerminalCommand(action: AgentApprovalAction): { executable: string; args: string[]; cwd: string; commandId: string } {

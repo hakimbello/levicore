@@ -25,6 +25,8 @@ import type {
   AgentPreviewRequest,
   AgentProjectSummary,
   AgentQueueRequest,
+  AgentRepairPlanRequest,
+  AgentRepairStatusRequest,
   AgentRenameRequest,
   AgentSession,
   AgentState,
@@ -33,7 +35,8 @@ import type {
   AgentTerminalExecuteRequest,
   AgentTerminalPreviewRequest,
   AgentTerminalStatusRequest,
-  AgentUndoRequest
+  AgentUndoRequest,
+  AgentVerifyRequest
 } from "../../src/features/agent";
 import type { AIChatAttachment } from "../../src/features/ai-chat";
 import type { AIRuntimeProviderId } from "../../src/features/ai-runtime";
@@ -112,6 +115,8 @@ export class AgentService {
       emitTerminal: (sessionId, actionId, terminalRun) => this.emit({ type: "terminal", sessionId, actionId, terminalRun, state: this.snapshot() }),
       emitGitPreview: (sessionId, preview) => this.emit({ type: "git-preview", sessionId, preview, state: this.snapshot() }),
       emitGit: (sessionId, actionId, gitRun) => this.emit({ type: "git", sessionId, actionId, gitRun, state: this.snapshot() }),
+      emitVerification: (sessionId, report) => this.emit({ type: "verification", sessionId, report, state: this.snapshot() }),
+      emitRepairPlan: (sessionId, reportId, repairs) => this.emit({ type: "repair-plan", sessionId, reportId, repairs, state: this.snapshot() }),
       taskService: this.options.taskService,
       gitService: this.options.gitService,
       terminalManager: this.options.terminalManager,
@@ -345,11 +350,50 @@ export class AgentService {
     return this.executionService.gitStatus(session, rawRequest);
   }
 
+  async verify(rawRequest: unknown) {
+    const session = this.requireSession(sessionIdFromRequest<AgentVerifyRequest>(rawRequest, "Agent verify request is invalid."));
+    return this.executionService.verify(session, rawRequest);
+  }
+
+  async repairPlan(rawRequest: unknown) {
+    const session = this.requireSession(sessionIdFromRequest<AgentRepairPlanRequest>(rawRequest, "Agent repair plan request is invalid."));
+    return this.executionService.repairPlan(session, rawRequest);
+  }
+
+  repairStatus(rawRequest: unknown) {
+    const session = this.requireSession(sessionIdFromRequest<AgentRepairStatusRequest>(rawRequest, "Agent repair status request is invalid."));
+    return this.executionService.repairStatus(session, rawRequest);
+  }
+
   private async setApprovalState(request: AgentApprovalRequest, status: "Approved" | "Rejected"): Promise<AgentState> {
     const session = this.requireSession(request.sessionId);
     if (!session.plan) throw new Error("Agent session has no execution plan.");
     const action = session.plan.approvals.find((item) => item.id === request.actionId);
-    if (!action) throw new Error("Agent approval action was not found.");
+    if (!action) {
+      const repair = session.plan.repairQueue?.find((item) => item.id === request.actionId);
+      if (!repair) throw new Error("Agent approval action was not found.");
+      if (repair.status === "Cancelled" || repair.status === "Completed") throw new Error("Completed or cancelled repair items cannot be changed.");
+      repair.status = status === "Approved" ? "Approved" : "Rejected";
+      repair.updatedAt = new Date().toISOString();
+      if (status === "Approved") {
+        session.plan.repairProgress = [
+          ...(session.plan.repairProgress ?? []),
+          {
+            id: randomUUID(),
+            stage: "Repair Approved" as const,
+            reportId: repair.reportId,
+            repairId: repair.id,
+            createdAt: repair.updatedAt
+          }
+        ].slice(-80);
+      }
+      session.plan.updatedAt = new Date().toISOString();
+      session.status = "Ready";
+      session.updatedAt = new Date().toISOString();
+      await this.persistAndEmit();
+      this.emit({ type: "progress", sessionId: session.id, state: this.snapshot() });
+      return this.snapshot();
+    }
     if (action.status === "Cancelled") throw new Error("Cancelled agent actions cannot be changed.");
     action.status = status;
     action.updatedAt = new Date().toISOString();
@@ -668,6 +712,9 @@ function createExecutionPlan(objective: string, modelContent: string, projectSum
     taskRuns: [],
     terminalRuns: [],
     gitRuns: [],
+    verificationReports: [],
+    repairQueue: [],
+    repairProgress: [],
     estimatedFiles: Array.from(new Set(steps.flatMap((step) => step.estimatedFiles))).slice(0, 40),
     progress: { totalSteps: steps.length, pendingActions: 0, approvedActions: 0, rejectedActions: 0, completedActions: 0 },
     createdAt: now,
@@ -733,6 +780,9 @@ function createFallbackPlan(objective: string, projectSummary: AgentProjectSumma
     taskRuns: [],
     terminalRuns: [],
     gitRuns: [],
+    verificationReports: [],
+    repairQueue: [],
+    repairProgress: [],
     estimatedFiles: Array.from(new Set(steps.flatMap((step) => step.estimatedFiles))).slice(0, 40),
     progress: { totalSteps: steps.length, pendingActions: approvals.length, approvedActions: 0, rejectedActions: 0, completedActions: 0 },
     createdAt: now,
@@ -968,6 +1018,9 @@ function coercePlan(value: unknown): AgentExecutionPlan | undefined {
     taskRuns: Array.isArray(record.taskRuns) ? record.taskRuns.slice(0, MAX_ACTIONS) : [],
     terminalRuns: Array.isArray(record.terminalRuns) ? record.terminalRuns.slice(0, MAX_ACTIONS) : [],
     gitRuns: Array.isArray(record.gitRuns) ? record.gitRuns.slice(0, MAX_ACTIONS) : [],
+    verificationReports: Array.isArray(record.verificationReports) ? record.verificationReports.slice(0, 20) : [],
+    repairQueue: Array.isArray(record.repairQueue) ? record.repairQueue.slice(0, MAX_ACTIONS) : [],
+    repairProgress: Array.isArray(record.repairProgress) ? record.repairProgress.slice(-80) : [],
     lastUndo: record.lastUndo && typeof record.lastUndo === "object" ? record.lastUndo : undefined,
     progress: progressFromApprovals(record),
     estimatedFiles: Array.isArray(record.estimatedFiles) ? record.estimatedFiles.slice(0, 40) : [],

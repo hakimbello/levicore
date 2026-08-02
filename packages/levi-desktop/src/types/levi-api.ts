@@ -93,6 +93,10 @@ import type {
   AgentPreviewResult,
   AgentQueueRequest,
   AgentQueueResult,
+  AgentRepairPlanRequest,
+  AgentRepairPlanResult,
+  AgentRepairStatusRequest,
+  AgentRepairStatusResult,
   AgentRenameRequest,
   AgentSession,
   AgentState,
@@ -114,7 +118,9 @@ import type {
   AgentTerminalStatusRequest,
   AgentTerminalStatusResult,
   AgentUndoRequest,
-  AgentUndoResult
+  AgentUndoResult,
+  AgentVerifyRequest,
+  AgentVerifyResult
 } from "../features/agent";
 
 export type {
@@ -160,6 +166,13 @@ export type {
   AgentProjectSummary,
   AgentQueueRequest,
   AgentQueueResult,
+  AgentRepairPlanRequest,
+  AgentRepairPlanResult,
+  AgentRepairProgressEntry,
+  AgentRepairQueueItem,
+  AgentRepairStatus,
+  AgentRepairStatusRequest,
+  AgentRepairStatusResult,
   AgentRenameRequest,
   AgentRiskLevel,
   AgentSession,
@@ -192,7 +205,14 @@ export type {
   AgentTerminalVerificationSummary,
   AgentUndoMetadata,
   AgentUndoRequest,
-  AgentUndoResult
+  AgentUndoResult,
+  AgentVerificationCheck,
+  AgentVerificationCheckStatus,
+  AgentVerificationFailure,
+  AgentVerificationReport,
+  AgentVerificationStatus,
+  AgentVerifyRequest,
+  AgentVerifyResult
 } from "../features/agent";
 
 export type {
@@ -1242,6 +1262,9 @@ export type LeviApi = {
     gitPreview: (request: AgentGitPreviewRequest) => Promise<AgentGitPreviewResult>;
     gitExecute: (request: AgentGitExecuteRequest) => Promise<AgentGitExecutionResult>;
     gitStatus: (request: AgentGitStatusRequest) => Promise<AgentGitStatusResult>;
+    verify: (request: AgentVerifyRequest) => Promise<AgentVerifyResult>;
+    repairPlan: (request: AgentRepairPlanRequest) => Promise<AgentRepairPlanResult>;
+    repairStatus: (request: AgentRepairStatusRequest) => Promise<AgentRepairStatusResult>;
     status: (request?: AgentStatusRequest) => Promise<AgentState | AgentSession>;
     onEvent: (listener: (event: AgentEvent) => void) => () => void;
   };

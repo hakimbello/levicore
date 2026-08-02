@@ -51,6 +51,8 @@ import type {
   AgentPlanRequest,
   AgentPreviewRequest,
   AgentQueueRequest,
+  AgentRepairPlanRequest,
+  AgentRepairStatusRequest,
   AgentRenameRequest,
   AgentStatusRequest,
   AgentTaskCancelRequest,
@@ -62,7 +64,8 @@ import type {
   AgentTerminalExecuteRequest,
   AgentTerminalPreviewRequest,
   AgentTerminalStatusRequest,
-  AgentUndoRequest
+  AgentUndoRequest,
+  AgentVerifyRequest
 } from "../../src/types/levi-api";
 import type { TaskEvent } from "../../src/types/task-api";
 import type {
@@ -251,6 +254,9 @@ const IPC_CHANNELS = {
   agentGitPreview: "levi:agent:git-preview",
   agentGitExecute: "levi:agent:git-execute",
   agentGitStatus: "levi:agent:git-status",
+  agentVerify: "levi:agent:verify",
+  agentRepairPlan: "levi:agent:repair-plan",
+  agentRepairStatus: "levi:agent:repair-status",
   agentStatus: "levi:agent:status",
   agentEvent: "levi:agent:event",
   conversationStart: "levi:conversation:start",
@@ -679,6 +685,9 @@ const leviApi: LeviApiWithWorkspaceTree = {
     gitPreview: (request: AgentGitPreviewRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentGitPreview, request),
     gitExecute: (request: AgentGitExecuteRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentGitExecute, request),
     gitStatus: (request: AgentGitStatusRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentGitStatus, request),
+    verify: (request: AgentVerifyRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentVerify, request),
+    repairPlan: (request: AgentRepairPlanRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentRepairPlan, request),
+    repairStatus: (request: AgentRepairStatusRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentRepairStatus, request),
     status: (request?: AgentStatusRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentStatus, request ?? {}),
     onEvent: (listener: (event: AgentEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: AgentEvent) => listener(payload);

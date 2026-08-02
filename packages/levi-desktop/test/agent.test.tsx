@@ -97,6 +97,17 @@ function providerWithActions(actions: Array<Record<string, unknown>>): AIRuntime
   }));
 }
 
+function providerWithResponses(contents: string[]): AIRuntimeProvider {
+  const runtime = provider(contents[0]);
+  let index = 0;
+  runtime.chat = vi.fn(async (request: AIRuntimeRequest): Promise<AIRuntimeInvocationResponse> => {
+    const content = contents[Math.min(index, contents.length - 1)];
+    index += 1;
+    return { requestId: request.requestId ?? `agent-chat-${index}`, providerId: runtime.id, model: request.model, content, latencyMs: 1 };
+  });
+  return runtime;
+}
+
 function fakeWindow() {
   return { isDestroyed: () => false, webContents: { send: vi.fn() } };
 }
@@ -387,18 +398,25 @@ describe("Coding Agent foundation", () => {
     expect(channels).toContain('agentTerminalExecute: "levi:agent:terminal-execute"');
     expect(channels).toContain('agentTerminalCancel: "levi:agent:terminal-cancel"');
     expect(channels).toContain('agentTerminalStatus: "levi:agent:terminal-status"');
+    expect(channels).toContain('agentVerify: "levi:agent:verify"');
+    expect(channels).toContain('agentRepairPlan: "levi:agent:repair-plan"');
+    expect(channels).toContain('agentRepairStatus: "levi:agent:repair-status"');
     expect(main).toContain("const agentService = new AgentService(aiRuntimeManager");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentPlan");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentExecute");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentTaskExecute");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentGitExecute");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentTerminalExecute");
+    expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentVerify");
+    expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentRepairPlan");
     expect(preload).toContain("agent: {");
     expect(preload).toContain("plan: (request: AgentPlanRequest)");
     expect(preload).toContain("execute: (request: AgentExecuteRequest)");
     expect(preload).toContain("taskExecute: (request: AgentTaskExecuteRequest)");
     expect(preload).toContain("gitExecute: (request: AgentGitExecuteRequest)");
     expect(preload).toContain("terminalExecute: (request: AgentTerminalExecuteRequest)");
+    expect(preload).toContain("verify: (request: AgentVerifyRequest)");
+    expect(preload).toContain("repairPlan: (request: AgentRepairPlanRequest)");
     expect(service).toContain("this.runtimeManager.chat");
     expect(service).not.toContain("writeWorkspacePath");
     expect(service).not.toContain("taskService.run");
@@ -525,6 +543,80 @@ describe("Coding Agent foundation", () => {
     const verification = await service.taskVerify({ sessionId, actionId: action.id });
     expect(runtimeProvider.chat).toHaveBeenCalledTimes(2);
     expect(verification.verification).toMatchObject({ changedFiles: ["src/Login.tsx"] });
+  });
+
+  it("creates successful verification reports from approved TaskService results without running tasks", async () => {
+    const task: TaskDefinition = { id: "npm:test", label: "test", source: "detected", group: "test", command: "npm.cmd", args: ["test"], cwd: ".", problemMatchers: [] };
+    const taskService = createFakeTaskService([task]);
+    const { service } = await createService(providerWithActions([{ type: "run-task", title: "Run tests", description: "Verify tests.", taskId: "npm:test" }]), { taskService, getWindow: fakeWindow, getChangedFiles: () => ["src/Login.tsx"] });
+    const planned = await service.plan({ prompt: "Verify success", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const action = planned.state.sessions[0].plan!.approvals[0];
+
+    await service.approve({ sessionId, actionId: action.id });
+    const preview = await service.taskPreview({ sessionId, actionId: action.id });
+    await service.taskExecute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    taskService.emitOutput({ id: "out-success", source: "task", channel: "test", text: "tests passed\n", timestamp: "2026-08-02T00:00:01.000Z", taskRunId: "task-run-1" });
+    taskService.finish("succeeded", 0);
+
+    const verified = await service.verify({ sessionId });
+    expect(taskService.run).toHaveBeenCalledTimes(1);
+    expect(verified.report).toMatchObject({ status: "Succeeded", gitChangedFiles: ["src/Login.tsx"] });
+    expect(verified.report.checks.find((check) => check.kind === "test")).toMatchObject({ status: "succeeded", exitCode: 0 });
+    expect(verified.state.sessions[0].plan?.verificationReports[0].id).toBe(verified.report.id);
+  });
+
+  it("classifies failed verification, plans pending repairs, and requires approval flow", async () => {
+    const planContent = JSON.stringify({
+      summary: "Run typecheck.",
+      steps: [{
+        title: "Verify types",
+        description: "Run typecheck.",
+        estimatedFiles: ["src/Login.tsx"],
+        actions: [{ type: "run-task", title: "Run typecheck", description: "Verify TypeScript.", taskId: "npm:typecheck" }]
+      }]
+    });
+    const repairContent = JSON.stringify({
+      repairs: [{
+        problem: "TypeScript cannot find name LoginProps.",
+        likelyCause: "The component props type is missing or not imported.",
+        affectedFiles: ["src/Login.tsx"],
+        suggestedFix: "Add or import the LoginProps type in src/Login.tsx.",
+        confidence: 0.82,
+        estimatedRisk: "low",
+        classification: "Type errors"
+      }]
+    });
+    const task: TaskDefinition = { id: "npm:typecheck", label: "typecheck", source: "detected", group: "build", command: "npm.cmd", args: ["run", "typecheck"], cwd: ".", problemMatchers: ["$tsc"] };
+    const taskService = createFakeTaskService([task]);
+    const runtimeProvider = providerWithResponses([planContent, repairContent]);
+    const { service } = await createService(runtimeProvider, { taskService, getWindow: fakeWindow });
+    const planned = await service.plan({ prompt: "Verify failure", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const action = planned.state.sessions[0].plan!.approvals[0];
+
+    await expect(service.verify({ sessionId: "" })).rejects.toThrow(/sessionId/i);
+    await service.approve({ sessionId, actionId: action.id });
+    const preview = await service.taskPreview({ sessionId, actionId: action.id });
+    await service.taskExecute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    taskService.emitOutput({ id: "out-fail", source: "task", channel: "typecheck", text: "error TS2304: Cannot find name 'LoginProps'.\n", timestamp: "2026-08-02T00:00:01.000Z", taskRunId: "task-run-1" });
+    taskService.emitProblems([{ id: "problem-ts", relativePath: "src/Login.tsx", line: 4, column: 12, severity: "error", message: "Cannot find name 'LoginProps'.", source: "tsc", taskRunId: "task-run-1" }]);
+    taskService.finish("failed", 2);
+
+    const verified = await service.verify({ sessionId });
+    expect(verified.report.status).toBe("Failed");
+    expect(verified.report.failures.map((failure) => failure.classification)).toContain("Type errors");
+    expect(verified.report.checks.find((check) => check.kind === "typecheck")).toMatchObject({ status: "failed", exitCode: 2 });
+
+    const plannedRepair = await service.repairPlan({ sessionId, reportId: verified.report.id });
+    expect(plannedRepair.repairs[0]).toMatchObject({ status: "Pending", classification: "Type errors", affectedFiles: ["src/Login.tsx"] });
+    const repairId = plannedRepair.repairs[0].id;
+    const approved = await service.approve({ sessionId, actionId: repairId });
+    expect(approved.sessions[0].plan?.repairQueue[0]).toMatchObject({ id: repairId, status: "Approved" });
+    expect(approved.sessions[0].plan?.repairProgress.map((entry) => entry.stage)).toContain("Repair Approved");
+    const status = service.repairStatus({ sessionId });
+    expect(status.repairs[0]).toMatchObject({ id: repairId, status: "Approved" });
+    await expect(service.repairPlan({ sessionId: "missing", reportId: verified.report.id })).rejects.toThrow(/not found/i);
   });
 
   it("executes approved terminal commands through TerminalManager and records live output", async () => {
@@ -864,6 +956,9 @@ describe("Coding Agent foundation", () => {
             taskRuns: [],
             terminalRuns: [],
             gitRuns: [],
+            verificationReports: [],
+            repairQueue: [],
+            repairProgress: [],
             createdAt: "2026-08-01T00:00:00.000Z",
             updatedAt: "2026-08-01T00:00:00.000Z"
           },
@@ -905,6 +1000,9 @@ describe("Coding Agent foundation", () => {
           taskRuns: [],
           terminalRuns: [],
           gitRuns: [],
+          verificationReports: [],
+          repairQueue: [],
+          repairProgress: [],
           createdAt: "2026-08-01T00:00:00.000Z",
           updatedAt: "2026-08-01T00:00:00.000Z"
         },
@@ -965,6 +1063,9 @@ describe("Coding Agent foundation", () => {
             }],
             terminalRuns: [],
             gitRuns: [],
+            verificationReports: [],
+            repairQueue: [],
+            repairProgress: [],
             createdAt: "2026-08-01T00:00:00.000Z",
             updatedAt: "2026-08-01T00:00:00.000Z"
           },
@@ -1029,6 +1130,9 @@ describe("Coding Agent foundation", () => {
             taskRuns: [],
             terminalRuns: [],
             gitRuns: [],
+            verificationReports: [],
+            repairQueue: [],
+            repairProgress: [],
             createdAt: "2026-08-01T00:00:00.000Z",
             updatedAt: "2026-08-01T00:00:00.000Z"
           },
@@ -1071,6 +1175,9 @@ describe("Coding Agent foundation", () => {
           taskRuns: [],
           terminalRuns: [],
           gitRuns: [],
+          verificationReports: [],
+          repairQueue: [],
+          repairProgress: [],
           createdAt: "2026-08-01T00:00:00.000Z",
           updatedAt: "2026-08-01T00:00:00.000Z"
         },
@@ -1151,6 +1258,9 @@ describe("Coding Agent foundation", () => {
               },
               updatedAt: "2026-08-01T00:00:00.000Z"
             }],
+            verificationReports: [],
+            repairQueue: [],
+            repairProgress: [],
             createdAt: "2026-08-01T00:00:00.000Z",
             updatedAt: "2026-08-01T00:00:00.000Z"
           },
@@ -1176,5 +1286,106 @@ describe("Coding Agent foundation", () => {
     expect(within(panel).getByRole("group", { name: "Git Diff Review" })).toBeInTheDocument();
     expect(within(panel).getByText("Commit created successfully.")).toBeInTheDocument();
     expect(within(panel).getByRole("button", { name: "Approve Git Operation" })).toBeInTheDocument();
+  });
+
+  it("renders verification reports and approval-gated repair suggestions", async () => {
+    const user = userEvent.setup();
+    const report = {
+      id: "verification-ui-1",
+      sessionId: "agent-verify-ui",
+      status: "Failed" as const,
+      summary: "Verification failed with 1 issue.",
+      checks: [{ kind: "typecheck" as const, status: "failed" as const, actionId: "task-1", taskRunId: "run-1", exitCode: 2, durationMs: 1000, summary: "typecheck failed." }],
+      problems: [{ id: "problem-1", relativePath: "src/Login.tsx", line: 4, column: 12, severity: "error" as const, message: "Cannot find name LoginProps.", source: "tsc", taskRunId: "run-1" }],
+      terminalOutputExcerpt: "",
+      taskOutputExcerpt: "error TS2304: Cannot find name LoginProps.\n",
+      gitChangedFiles: ["src/Login.tsx"],
+      exitCodes: [{ source: "task" as const, actionId: "task-1", exitCode: 2 }],
+      failures: [{ id: "failure-1", classification: "Type errors" as const, source: "problems" as const, message: "Cannot find name LoginProps.", affectedFiles: ["src/Login.tsx"], severity: "error" as const }],
+      warnings: [],
+      startedAt: "2026-08-01T00:00:00.000Z",
+      completedAt: "2026-08-01T00:00:01.000Z"
+    };
+    const repair = {
+      id: "repair-1",
+      reportId: report.id,
+      problem: "Cannot find name LoginProps.",
+      likelyCause: "The props type is missing.",
+      affectedFiles: ["src/Login.tsx"],
+      suggestedFix: "Add or import LoginProps.",
+      confidence: 0.82,
+      estimatedRisk: "low" as const,
+      classification: "Type errors" as const,
+      status: "Pending" as const,
+      createdAt: "2026-08-01T00:00:01.000Z",
+      updatedAt: "2026-08-01T00:00:01.000Z"
+    };
+    const baseState = {
+      sessions: [{
+        id: "agent-verify-ui",
+        title: "Verify changes",
+        status: "Ready" as const,
+        archived: false,
+        attachments: [],
+        messages: [],
+        plan: {
+          id: "plan-verify-ui",
+          objective: "Verify changes",
+          summary: "Verify completed work.",
+          estimatedFiles: ["src/Login.tsx"],
+          progress: { totalSteps: 1, pendingActions: 0, approvedActions: 0, rejectedActions: 0, completedActions: 0 },
+          steps: [],
+          approvals: [],
+          executionQueue: [],
+          taskRuns: [],
+          terminalRuns: [],
+          gitRuns: [],
+          verificationReports: [],
+          repairQueue: [],
+          repairProgress: [],
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z"
+        },
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z"
+      }],
+      activeSessionId: "agent-verify-ui",
+      updatedAt: "2026-08-01T00:00:00.000Z"
+    };
+    window.levi.agent.plan = vi.fn(async () => ({ sessionId: "agent-verify-ui", state: baseState }));
+    window.levi.agent.verify = vi.fn(async () => ({
+      sessionId: "agent-verify-ui",
+      report,
+      state: {
+        ...baseState,
+        sessions: [{ ...baseState.sessions[0], plan: { ...baseState.sessions[0].plan, verificationReports: [report] } }]
+      }
+    }));
+    window.levi.agent.repairPlan = vi.fn(async () => ({
+      sessionId: "agent-verify-ui",
+      reportId: report.id,
+      repairs: [repair],
+      state: {
+        ...baseState,
+        sessions: [{ ...baseState.sessions[0], plan: { ...baseState.sessions[0].plan, verificationReports: [report], repairQueue: [repair] } }]
+      }
+    }));
+    window.levi.agent.approve = vi.fn(async () => ({
+      ...baseState,
+      sessions: [{ ...baseState.sessions[0], plan: { ...baseState.sessions[0].plan, verificationReports: [report], repairQueue: [{ ...repair, status: "Approved" as const }] } }]
+    }));
+
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Coding Agent" }));
+    const panel = await screen.findByRole("region", { name: "Coding Agent" });
+    await user.type(within(panel).getByRole("textbox", { name: "Agent Request" }), "Verify changes");
+    await user.click(within(panel).getByRole("button", { name: "Generate Plan" }));
+    await user.click(await within(panel).findByRole("button", { name: "Verify" }));
+    expect(await within(panel).findByText("Verification failed with 1 issue.")).toBeInTheDocument();
+    expect(within(panel).getByText("Type errors: Cannot find name LoginProps. (src/Login.tsx)")).toBeInTheDocument();
+    await user.click(within(panel).getByRole("button", { name: "Plan Repairs" }));
+    expect(await within(panel).findByText("Add or import LoginProps.")).toBeInTheDocument();
+    await user.click(within(panel).getByRole("button", { name: "Approve" }));
+    expect(window.levi.agent.approve).toHaveBeenCalledWith({ sessionId: "agent-verify-ui", actionId: "repair-1" });
   });
 });
