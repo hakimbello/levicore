@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { AIRuntimeDiagnostics, AIRuntimeProviderId, AIRuntimeState } from "./types";
 import { Icon } from "../../components/Icon";
 
@@ -7,6 +8,12 @@ type RuntimeManagerPanelProps = {
   onDetect: () => Promise<void>;
   onSelectRuntime: (runtimeId: AIRuntimeProviderId) => Promise<void>;
   onSetAutomatic: () => Promise<void>;
+  onPullModel: (providerId: AIRuntimeProviderId, modelId: string) => Promise<void>;
+  onDeleteModel: (providerId: AIRuntimeProviderId, modelId: string) => Promise<void>;
+  onStartRuntime: (providerId: AIRuntimeProviderId) => Promise<void>;
+  onStopRuntime: (providerId: AIRuntimeProviderId) => Promise<void>;
+  onRestartRuntime: (providerId: AIRuntimeProviderId) => Promise<void>;
+  onCancelRequest: (requestId: string) => Promise<void>;
 };
 
 function statusClass(status: string): string {
@@ -17,7 +24,20 @@ function formatBool(value: boolean): string {
   return value ? "Yes" : "No";
 }
 
-export function RuntimeManagerPanel({ state, onRefresh, onDetect, onSelectRuntime, onSetAutomatic }: RuntimeManagerPanelProps) {
+export function RuntimeManagerPanel({
+  state,
+  onRefresh,
+  onDetect,
+  onSelectRuntime,
+  onSetAutomatic,
+  onPullModel,
+  onDeleteModel,
+  onStartRuntime,
+  onStopRuntime,
+  onRestartRuntime,
+  onCancelRequest
+}: RuntimeManagerPanelProps) {
+  const [modelInputs, setModelInputs] = useState<Record<string, string>>({});
   const selected = state.providers.find((provider) => provider.id === state.selectedRuntimeId);
   return (
     <section className="levi-runtime-panel" aria-label="Runtime Manager">
@@ -79,12 +99,26 @@ export function RuntimeManagerPanel({ state, onRefresh, onDetect, onSelectRuntim
               <div><dt>Running</dt><dd>{formatBool(provider.running)}</dd></div>
               <div><dt>Version</dt><dd>{provider.version ?? "Unknown"}</dd></div>
               <div><dt>Latency</dt><dd>{typeof provider.latencyMs === "number" ? `${provider.latencyMs} ms` : "Unknown"}</dd></div>
+              <div><dt>Requests</dt><dd>{provider.requestCount}</dd></div>
+              <div><dt>Failures</dt><dd>{provider.failureCount}</dd></div>
             </dl>
             {provider.error ? <p className="levi-runtime-error">{provider.error}</p> : null}
             <div className="levi-runtime-card-actions">
-              <button type="button" className="levi-button levi-button-secondary" onClick={() => void onSelectRuntime(provider.id)}>
+              <button type="button" className="levi-button levi-button-secondary" onClick={() => void onSelectRuntime(provider.id)} aria-label={`Select ${provider.name}`}>
                 <Icon name="cpu" />
                 <span>Select</span>
+              </button>
+              <button type="button" className="levi-button levi-button-secondary" onClick={() => void onStartRuntime(provider.id)}>
+                <Icon name="debug" />
+                <span>Start</span>
+              </button>
+              <button type="button" className="levi-button levi-button-secondary" onClick={() => void onRestartRuntime(provider.id)}>
+                <Icon name="refresh" />
+                <span>Restart</span>
+              </button>
+              <button type="button" className="levi-button levi-button-secondary" onClick={() => void onStopRuntime(provider.id)}>
+                <Icon name="stop" />
+                <span>Stop</span>
               </button>
             </div>
             <div className="levi-runtime-models" aria-label={`${provider.name} models`}>
@@ -97,12 +131,67 @@ export function RuntimeManagerPanel({ state, onRefresh, onDetect, onSelectRuntim
                   <small>
                     Embeddings {formatBool(model.embeddingSupport)} / Vision {formatBool(model.visionSupport)} / Tools {formatBool(model.toolSupport)}
                   </small>
+                  <button type="button" className="levi-button levi-button-secondary levi-runtime-inline-button" onClick={() => void onDeleteModel(provider.id, model.id)}>
+                    Delete
+                  </button>
                 </div>
               ))}
+            </div>
+            <div className="levi-runtime-model-download" aria-label={`${provider.name} model download`}>
+              <h3>Available Models</h3>
+              <div>
+                <input
+                  type="text"
+                  value={modelInputs[provider.id] ?? ""}
+                  onChange={(event) => setModelInputs((current) => ({ ...current, [provider.id]: event.target.value }))}
+                  placeholder="model name"
+                  aria-label={`${provider.name} model name`}
+                />
+                <button
+                  type="button"
+                  className="levi-button levi-button-secondary"
+                  onClick={() => void onPullModel(provider.id, modelInputs[provider.id] ?? "")}
+                  disabled={!modelInputs[provider.id]?.trim()}
+                >
+                  <Icon name="refresh" />
+                  <span>Download</span>
+                </button>
+              </div>
             </div>
           </section>
         ))}
       </div>
+
+      <section className="levi-runtime-diagnostics" aria-label="Runtime operations">
+        <h2>Running Requests</h2>
+        {state.requests.length === 0 ? <p className="levi-runtime-muted">No runtime requests have run yet.</p> : null}
+        {state.requests.map((request) => (
+          <div key={request.id} className="levi-runtime-operation-row">
+            <span>{request.type}</span>
+            <strong>{request.modelId || request.providerId}</strong>
+            <span>{request.status}</span>
+            <span>{request.latencyMs ? `${request.latencyMs} ms` : request.error ?? "Queued"}</span>
+            {(request.status === "Queued" || request.status === "Running") ? (
+              <button type="button" className="levi-button levi-button-secondary levi-runtime-inline-button" onClick={() => void onCancelRequest(request.id)}>
+                Cancel
+              </button>
+            ) : null}
+          </div>
+        ))}
+      </section>
+
+      <section className="levi-runtime-diagnostics" aria-label="Download Progress">
+        <h2>Download Progress</h2>
+        {state.downloads.length === 0 ? <p className="levi-runtime-muted">No model downloads have run yet.</p> : null}
+        {state.downloads.map((download) => (
+          <div key={download.id} className="levi-runtime-operation-row">
+            <span>{download.providerId}</span>
+            <strong>{download.modelId}</strong>
+            <span>{download.status}</span>
+            <span>{typeof download.progress === "number" ? `${Math.round(download.progress * 100)}%` : download.message ?? download.error ?? "Waiting"}</span>
+          </div>
+        ))}
+      </section>
 
       <section className="levi-runtime-diagnostics" aria-label="Provider diagnostics">
         <h2>Diagnostics</h2>
@@ -111,6 +200,7 @@ export function RuntimeManagerPanel({ state, onRefresh, onDetect, onSelectRuntim
             <span role="columnheader">Provider</span>
             <span role="columnheader">Status</span>
             <span role="columnheader">Models</span>
+            <span role="columnheader">Requests</span>
             <span role="columnheader">Health</span>
           </div>
           {state.diagnostics.map((diagnostic) => (
@@ -128,6 +218,7 @@ function DiagnosticRow({ diagnostic }: { diagnostic: AIRuntimeDiagnostics }) {
       <span role="cell">{diagnostic.providerName}</span>
       <span role="cell">{diagnostic.health}</span>
       <span role="cell">{diagnostic.supportedModels.length}</span>
+      <span role="cell">{diagnostic.requestCount} / {diagnostic.failureCount} failed</span>
       <span role="cell">{diagnostic.error ?? diagnostic.version ?? diagnostic.endpoint ?? "No details"}</span>
     </div>
   );

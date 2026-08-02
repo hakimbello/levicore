@@ -10,6 +10,7 @@ import { SearchPanel } from "../features/search/SearchPanel";
 import { BottomPanel } from "../features/terminal/BottomPanel";
 import { TasksPanel } from "../features/tasks/TasksPanel";
 import { useTasks } from "../features/tasks/useTasks";
+import { RuntimeManagerPanel } from "../features/ai-runtime/RuntimeManagerPanel";
 import { type EditorTab, useEditorTabs } from "../hooks/use-editor-tabs";
 import type {
   AIRuntimeProviderId,
@@ -43,8 +44,9 @@ const HistoryPanel = lazy(async () => {
   return { default: module.HistoryPanel };
 });
 
+const settingsPanelModule = import("../features/settings/SettingsPanel");
 const SettingsPanel = lazy(async () => {
-  const module = await import("../features/settings/SettingsPanel");
+  const module = await settingsPanelModule;
   return { default: module.SettingsPanel };
 });
 
@@ -53,16 +55,13 @@ const RunDebugPanel = lazy(async () => {
   return { default: module.RunDebugPanel };
 });
 
-const RuntimeManagerPanel = lazy(async () => {
-  const module = await import("../features/ai-runtime/RuntimeManagerPanel");
-  return { default: module.RuntimeManagerPanel };
-});
-
 const unknownStatus: OllamaStatus = { ready: false, modelCount: 0, models: [] };
 const idleRuntimeState: AIRuntimeState = {
   providers: [],
   selectionMode: "automatic",
-  diagnostics: []
+  diagnostics: [],
+  requests: [],
+  downloads: []
 };
 const idleWorkspaceStatus: WorkspaceStatus = { state: "idle" };
 const idleDebugState: DebugState = {
@@ -514,6 +513,12 @@ export function App() {
             onDetect={detectRuntimes}
             onSelectRuntime={selectRuntime}
             onSetAutomatic={setAutomaticRuntime}
+            onPullModel={pullRuntimeModel}
+            onDeleteModel={deleteRuntimeModel}
+            onStartRuntime={startRuntimeProvider}
+            onStopRuntime={stopRuntimeProvider}
+            onRestartRuntime={restartRuntimeProvider}
+            onCancelRequest={cancelRuntimeRequest}
           />
         </LazySurface>
       );
@@ -556,6 +561,35 @@ export function App() {
 
   async function setAutomaticRuntime() {
     setRuntimeState(await window.levi.runtime.select({ mode: "automatic" }));
+  }
+
+  async function pullRuntimeModel(providerId: AIRuntimeProviderId, modelId: string) {
+    await window.levi.runtime.pullModel({ providerId, modelId });
+    setRuntimeState(await window.levi.runtime.health(providerId));
+  }
+
+  async function deleteRuntimeModel(providerId: AIRuntimeProviderId, modelId: string) {
+    await window.levi.runtime.deleteModel({ providerId, modelId });
+    setRuntimeState(await window.levi.runtime.health(providerId));
+  }
+
+  async function startRuntimeProvider(providerId: AIRuntimeProviderId) {
+    await window.levi.runtime.start({ providerId });
+    setRuntimeState(await window.levi.runtime.health(providerId));
+  }
+
+  async function stopRuntimeProvider(providerId: AIRuntimeProviderId) {
+    await window.levi.runtime.stop({ providerId });
+    setRuntimeState(await window.levi.runtime.health(providerId));
+  }
+
+  async function restartRuntimeProvider(providerId: AIRuntimeProviderId) {
+    await window.levi.runtime.restart({ providerId });
+    setRuntimeState(await window.levi.runtime.health(providerId));
+  }
+
+  async function cancelRuntimeRequest(requestId: string) {
+    setRuntimeState(await window.levi.runtime.cancel({ requestId }));
   }
 
   async function downloadUpdate() {

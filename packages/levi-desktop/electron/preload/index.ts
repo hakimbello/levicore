@@ -19,6 +19,9 @@ import type {
   UpdateStatusEvent,
   WorkspaceOpenFileRequest,
   AIRuntimeProviderId,
+  AIRuntimeRequest,
+  AIRuntimeModelOperationRequest,
+  AIRuntimeLifecycleRequest,
   AIRuntimeSelectRequest
 } from "../../src/types/levi-api";
 import type { TaskEvent } from "../../src/types/task-api";
@@ -155,6 +158,16 @@ const IPC_CHANNELS = {
   runtimeModels: "levi:runtime:models",
   runtimeSelect: "levi:runtime:select",
   runtimeDiagnostics: "levi:runtime:diagnostics",
+  runtimeChat: "levi:runtime:chat",
+  runtimeCompletion: "levi:runtime:completion",
+  runtimeStream: "levi:runtime:stream",
+  runtimeEmbeddings: "levi:runtime:embeddings",
+  runtimePullModel: "levi:runtime:pull-model",
+  runtimeDeleteModel: "levi:runtime:delete-model",
+  runtimeStart: "levi:runtime:start",
+  runtimeStop: "levi:runtime:stop",
+  runtimeRestart: "levi:runtime:restart",
+  runtimeCancel: "levi:runtime:cancel",
   conversationStart: "levi:conversation:start",
   conversationCancel: "levi:conversation:cancel",
   conversationEvent: "levi:conversation:event"
@@ -519,7 +532,17 @@ const leviApi: LeviApiWithWorkspaceTree = {
     health: (providerId?: AIRuntimeProviderId) => ipcRenderer.invoke(IPC_CHANNELS.runtimeHealth, providerId),
     models: (providerId?: AIRuntimeProviderId) => ipcRenderer.invoke(IPC_CHANNELS.runtimeModels, providerId),
     select: (request: AIRuntimeSelectRequest) => ipcRenderer.invoke(IPC_CHANNELS.runtimeSelect, request),
-    diagnostics: () => ipcRenderer.invoke(IPC_CHANNELS.runtimeDiagnostics)
+    diagnostics: () => ipcRenderer.invoke(IPC_CHANNELS.runtimeDiagnostics),
+    chat: (request: AIRuntimeRequest) => ipcRenderer.invoke(IPC_CHANNELS.runtimeChat, request),
+    completion: (request: AIRuntimeRequest) => ipcRenderer.invoke(IPC_CHANNELS.runtimeCompletion, request),
+    stream: (request: AIRuntimeRequest) => ipcRenderer.invoke(IPC_CHANNELS.runtimeStream, request),
+    embeddings: (request: AIRuntimeRequest) => ipcRenderer.invoke(IPC_CHANNELS.runtimeEmbeddings, request),
+    pullModel: (request: AIRuntimeModelOperationRequest) => ipcRenderer.invoke(IPC_CHANNELS.runtimePullModel, request),
+    deleteModel: (request: AIRuntimeModelOperationRequest) => ipcRenderer.invoke(IPC_CHANNELS.runtimeDeleteModel, request),
+    start: (request: AIRuntimeLifecycleRequest) => ipcRenderer.invoke(IPC_CHANNELS.runtimeStart, request),
+    stop: (request: AIRuntimeLifecycleRequest) => ipcRenderer.invoke(IPC_CHANNELS.runtimeStop, request),
+    restart: (request: AIRuntimeLifecycleRequest) => ipcRenderer.invoke(IPC_CHANNELS.runtimeRestart, request),
+    cancel: (request: { requestId: string }) => ipcRenderer.invoke(IPC_CHANNELS.runtimeCancel, request)
   },
   conversation: {
     start: (request: ConversationStartRequest) => ipcRenderer.invoke(IPC_CHANNELS.conversationStart, request),

@@ -1135,7 +1135,11 @@ function createDefaultApi(): LeviApi {
                 toolSupport: false
               }
             ],
-            latencyMs: 12
+            latencyMs: 12,
+            requestCount: 0,
+            failureCount: 0,
+            runningRequestCount: 0,
+            queuedRequestCount: 0
           },
           {
             id: "lm-studio" as const,
@@ -1143,7 +1147,11 @@ function createDefaultApi(): LeviApi {
             installed: false,
             running: false,
             status: "Stopped" as const,
-            models: []
+            models: [],
+            requestCount: 0,
+            failureCount: 0,
+            runningRequestCount: 0,
+            queuedRequestCount: 0
           }
         ],
         selectedRuntimeId: "ollama" as const,
@@ -1152,6 +1160,8 @@ function createDefaultApi(): LeviApi {
         lastSuccessfulRuntimeId: "ollama" as const,
         lastSelectedModelId: "qwen3.6:latest",
         selectionMode: "manual" as const,
+        requests: [],
+        downloads: [],
         diagnostics: [
           {
             providerId: "ollama" as const,
@@ -1165,7 +1175,11 @@ function createDefaultApi(): LeviApi {
             latencyMs: 12,
             checkedAt: "2026-08-01T00:00:00.000Z",
             selected: true,
-            preferred: true
+            preferred: true,
+            requestCount: 0,
+            failureCount: 0,
+            runningRequestCount: 0,
+            queuedRequestCount: 0
           }
         ]
       })),
@@ -1186,9 +1200,70 @@ function createDefaultApi(): LeviApi {
         preferredRuntimeId: request.preferred ? request.runtimeId : undefined,
         lastSelectedModelId: request.modelId,
         selectionMode: request.mode ?? "manual",
+        requests: [],
+        downloads: [],
         diagnostics: []
       })),
-      diagnostics: vi.fn(async () => [])
+      diagnostics: vi.fn(async () => []),
+      chat: vi.fn(async (request) => ({
+        requestId: "runtime-chat-1",
+        providerId: request.providerId ?? "ollama",
+        model: request.model,
+        content: "ok",
+        latencyMs: 4
+      })),
+      completion: vi.fn(async (request) => ({
+        requestId: "runtime-completion-1",
+        providerId: request.providerId ?? "ollama",
+        model: request.model,
+        content: "ok",
+        latencyMs: 4
+      })),
+      stream: vi.fn(async (request) => ({
+        requestId: "runtime-stream-1",
+        providerId: request.providerId ?? "ollama",
+        model: request.model,
+        events: [],
+        content: "ok"
+      })),
+      embeddings: vi.fn(async (request) => ({
+        requestId: "runtime-embeddings-1",
+        providerId: request.providerId ?? "ollama",
+        model: request.model,
+        embeddings: [[0.1, 0.2]],
+        latencyMs: 4
+      })),
+      pullModel: vi.fn(async (request) => ({
+        providerId: request.providerId ?? "ollama",
+        modelId: request.modelId,
+        status: "Completed" as const,
+        progress: 1
+      })),
+      deleteModel: vi.fn(async (request) => ({
+        providerId: request.providerId ?? "ollama",
+        modelId: request.modelId,
+        status: "Completed" as const,
+        progress: 1
+      })),
+      start: vi.fn(async (request) => ({
+        providerId: request.providerId ?? "ollama",
+        modelId: request.modelId ?? "",
+        status: "Completed" as const,
+        progress: 1
+      })),
+      stop: vi.fn(async (request) => ({
+        providerId: request.providerId ?? "ollama",
+        modelId: request.modelId ?? "",
+        status: "Failed" as const,
+        error: "Provider-managed stop is unavailable."
+      })),
+      restart: vi.fn(async (request) => ({
+        providerId: request.providerId ?? "ollama",
+        modelId: request.modelId ?? "",
+        status: "Completed" as const,
+        progress: 1
+      })),
+      cancel: vi.fn(async () => window.levi.runtime.list())
     },
     conversation: {
       start: vi.fn(async () => ({

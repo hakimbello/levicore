@@ -2326,6 +2326,46 @@ function registerIpc(): void {
     assertNoIpcArgs(args);
     return aiRuntimeManager.diagnostics();
   });
+  ipcMain.handle(IPC_CHANNELS.runtimeChat, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return aiRuntimeManager.chat(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.runtimeCompletion, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return aiRuntimeManager.completion(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.runtimeStream, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return aiRuntimeManager.stream(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.runtimeEmbeddings, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return aiRuntimeManager.embeddings(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.runtimePullModel, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return aiRuntimeManager.pullModel(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.runtimeDeleteModel, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return aiRuntimeManager.deleteModel(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.runtimeStart, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return aiRuntimeManager.start(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.runtimeStop, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return aiRuntimeManager.stop(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.runtimeRestart, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return aiRuntimeManager.restart(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.runtimeCancel, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return aiRuntimeManager.cancel(request);
+  });
   ipcMain.handle(IPC_CHANNELS.conversationStart, (event, rawRequest) => {
     const eventWindow = BrowserWindow.fromWebContents(event.sender);
     if (!eventWindow) {

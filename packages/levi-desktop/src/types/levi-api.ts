@@ -36,22 +36,40 @@ import type {
 } from "./task-api";
 import type {
   AIRuntimeDiagnostics,
+  AIRuntimeEmbeddingsResponse,
+  AIRuntimeInvocationResponse,
+  AIRuntimeLifecycleRequest,
   AIRuntimeModel,
+  AIRuntimeModelOperationRequest,
+  AIRuntimeModelOperationResult,
   AIRuntimeProviderId,
+  AIRuntimeRequest,
   AIRuntimeSelectRequest,
-  AIRuntimeState
+  AIRuntimeState,
+  AIRuntimeStreamResult
 } from "../features/ai-runtime";
 
 export type {
   AIRuntimeDetection,
   AIRuntimeDiagnostics,
+  AIRuntimeEmbeddingsResponse,
   AIRuntimeHealthState,
+  AIRuntimeInvocationResponse,
+  AIRuntimeLifecycleRequest,
   AIRuntimeModel,
+  AIRuntimeModelDownload,
+  AIRuntimeModelOperationRequest,
+  AIRuntimeModelOperationResult,
   AIRuntimeProviderId,
   AIRuntimeProviderSummary,
+  AIRuntimeRequest,
+  AIRuntimeRequestStatus,
+  AIRuntimeRequestSummary,
   AIRuntimeSelectRequest,
   AIRuntimeSelectionMode,
-  AIRuntimeState
+  AIRuntimeState,
+  AIRuntimeStreamEvent,
+  AIRuntimeStreamResult
 } from "../features/ai-runtime";
 
 export type {
@@ -990,6 +1008,16 @@ export type LeviApi = {
     models: (providerId?: AIRuntimeProviderId) => Promise<AIRuntimeModel[]>;
     select: (request: AIRuntimeSelectRequest) => Promise<AIRuntimeState>;
     diagnostics: () => Promise<AIRuntimeDiagnostics[]>;
+    chat: (request: AIRuntimeRequest) => Promise<AIRuntimeInvocationResponse>;
+    completion: (request: AIRuntimeRequest) => Promise<AIRuntimeInvocationResponse>;
+    stream: (request: AIRuntimeRequest) => Promise<AIRuntimeStreamResult>;
+    embeddings: (request: AIRuntimeRequest) => Promise<AIRuntimeEmbeddingsResponse>;
+    pullModel: (request: AIRuntimeModelOperationRequest) => Promise<AIRuntimeModelOperationResult>;
+    deleteModel: (request: AIRuntimeModelOperationRequest) => Promise<AIRuntimeModelOperationResult>;
+    start: (request: AIRuntimeLifecycleRequest) => Promise<AIRuntimeModelOperationResult>;
+    stop: (request: AIRuntimeLifecycleRequest) => Promise<AIRuntimeModelOperationResult>;
+    restart: (request: AIRuntimeLifecycleRequest) => Promise<AIRuntimeModelOperationResult>;
+    cancel: (request: { requestId: string }) => Promise<AIRuntimeState>;
   };
   conversation: {
     start: (request: ConversationStartRequest) => Promise<ConversationStartResult>;
