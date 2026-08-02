@@ -22,7 +22,17 @@ import type {
   AIRuntimeRequest,
   AIRuntimeModelOperationRequest,
   AIRuntimeLifecycleRequest,
-  AIRuntimeSelectRequest
+  AIRuntimeSelectRequest,
+  AIChatCancelRequest,
+  AIChatDeleteMessageRequest,
+  AIChatDeleteRequest,
+  AIChatEvent,
+  AIChatExportRequest,
+  AIChatForkRequest,
+  AIChatNewRequest,
+  AIChatRenameRequest,
+  AIChatSendRequest,
+  AIChatSetPanelRequest
 } from "../../src/types/levi-api";
 import type { TaskEvent } from "../../src/types/task-api";
 import type {
@@ -168,6 +178,18 @@ const IPC_CHANNELS = {
   runtimeStop: "levi:runtime:stop",
   runtimeRestart: "levi:runtime:restart",
   runtimeCancel: "levi:runtime:cancel",
+  chatNew: "levi:chat:new",
+  chatList: "levi:chat:list",
+  chatDelete: "levi:chat:delete",
+  chatRename: "levi:chat:rename",
+  chatDeleteMessage: "levi:chat:delete-message",
+  chatFork: "levi:chat:fork",
+  chatSend: "levi:chat:send",
+  chatCancel: "levi:chat:cancel",
+  chatExport: "levi:chat:export",
+  chatSetPanel: "levi:chat:set-panel",
+  chatPin: "levi:chat:pin",
+  chatEvent: "levi:chat:event",
   conversationStart: "levi:conversation:start",
   conversationCancel: "levi:conversation:cancel",
   conversationEvent: "levi:conversation:event"
@@ -543,6 +565,24 @@ const leviApi: LeviApiWithWorkspaceTree = {
     stop: (request: AIRuntimeLifecycleRequest) => ipcRenderer.invoke(IPC_CHANNELS.runtimeStop, request),
     restart: (request: AIRuntimeLifecycleRequest) => ipcRenderer.invoke(IPC_CHANNELS.runtimeRestart, request),
     cancel: (request: { requestId: string }) => ipcRenderer.invoke(IPC_CHANNELS.runtimeCancel, request)
+  },
+  chat: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.chatList),
+    new: (request?: AIChatNewRequest) => ipcRenderer.invoke(IPC_CHANNELS.chatNew, request ?? {}),
+    delete: (request: AIChatDeleteRequest) => ipcRenderer.invoke(IPC_CHANNELS.chatDelete, request),
+    rename: (request: AIChatRenameRequest) => ipcRenderer.invoke(IPC_CHANNELS.chatRename, request),
+    deleteMessage: (request: AIChatDeleteMessageRequest) => ipcRenderer.invoke(IPC_CHANNELS.chatDeleteMessage, request),
+    fork: (request: AIChatForkRequest) => ipcRenderer.invoke(IPC_CHANNELS.chatFork, request),
+    send: (request: AIChatSendRequest) => ipcRenderer.invoke(IPC_CHANNELS.chatSend, request),
+    cancel: (request: AIChatCancelRequest) => ipcRenderer.invoke(IPC_CHANNELS.chatCancel, request),
+    export: (request: AIChatExportRequest) => ipcRenderer.invoke(IPC_CHANNELS.chatExport, request),
+    setPanel: (request: AIChatSetPanelRequest) => ipcRenderer.invoke(IPC_CHANNELS.chatSetPanel, request),
+    pin: (request: AIChatDeleteRequest) => ipcRenderer.invoke(IPC_CHANNELS.chatPin, request),
+    onEvent: (listener: (event: AIChatEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: AIChatEvent) => listener(payload);
+      ipcRenderer.on(IPC_CHANNELS.chatEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.chatEvent, handler);
+    }
   },
   conversation: {
     start: (request: ConversationStartRequest) => ipcRenderer.invoke(IPC_CHANNELS.conversationStart, request),

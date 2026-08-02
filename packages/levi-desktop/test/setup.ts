@@ -4,6 +4,8 @@ import type {
   ConversationStreamEvent,
   EditStreamEvent,
   ExecutionTransactionStatus,
+  AIChatEvent,
+  AIChatState,
   LeviApi,
   PlanningStreamEvent,
   ProjectRulesStreamEvent,
@@ -46,6 +48,7 @@ declare global {
     __leviRulesListeners: Array<(event: ProjectRulesStreamEvent) => void>;
     __leviUpdateListeners: Array<(event: UpdateStatusEvent) => void>;
     __leviDebugListeners: Array<(event: DebugEvent) => void>;
+    __leviChatListeners: Array<(event: AIChatEvent) => void>;
   }
 }
 
@@ -79,6 +82,11 @@ function mockExecutionTransaction(status: ExecutionTransactionStatus, overrides:
 }
 
 function createDefaultApi(): LeviApi {
+  const chatState: AIChatState = {
+    conversations: [],
+    panel: { dockPosition: "right" },
+    updatedAt: "2026-08-01T00:00:00.000Z"
+  };
   const summary: WorkspaceScanSummary = {
     projectName: "Project",
     rootPath: "C:\\Users\\developer\\Project",
@@ -1265,6 +1273,111 @@ function createDefaultApi(): LeviApi {
       })),
       cancel: vi.fn(async () => window.levi.runtime.list())
     },
+    chat: {
+      list: vi.fn(async () => chatState),
+      new: vi.fn(async (request = {}) => ({
+        conversations: [
+          {
+            id: "chat-1",
+            title: request.title ?? "New Chat",
+            messages: [],
+            runtimeId: request.runtimeId,
+            modelId: request.modelId,
+            pinned: false,
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z"
+          }
+        ],
+        activeConversationId: "chat-1",
+        panel: chatState.panel,
+        updatedAt: "2026-08-01T00:00:00.000Z"
+      })),
+      delete: vi.fn(async () => chatState),
+      rename: vi.fn(async (request) => ({
+        conversations: [
+          {
+            id: request.conversationId,
+            title: request.title,
+            messages: [],
+            pinned: false,
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z"
+          }
+        ],
+        activeConversationId: request.conversationId,
+        panel: chatState.panel,
+        updatedAt: "2026-08-01T00:00:00.000Z"
+      })),
+      deleteMessage: vi.fn(async () => chatState),
+      fork: vi.fn(async (request) => ({
+        conversations: [
+          {
+            id: "chat-fork-1",
+            title: "New Chat (Fork)",
+            messages: [],
+            pinned: false,
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z"
+          }
+        ],
+        activeConversationId: "chat-fork-1",
+        panel: chatState.panel,
+        updatedAt: "2026-08-01T00:00:00.000Z"
+      })),
+      send: vi.fn(async (request) => ({
+        requestId: "chat-request-1",
+        state: {
+          conversations: [
+            {
+              id: request.conversationId ?? "chat-1",
+              title: "New Chat",
+              runtimeId: request.runtimeId,
+              modelId: request.modelId,
+              pinned: false,
+              createdAt: "2026-08-01T00:00:00.000Z",
+              updatedAt: "2026-08-01T00:00:00.000Z",
+              messages: [
+                {
+                  id: "chat-message-user-1",
+                  role: "user" as const,
+                  content: request.content,
+                  attachments: request.attachments,
+                  createdAt: "2026-08-01T00:00:00.000Z",
+                  status: "done" as const
+                },
+                {
+                  id: "chat-message-assistant-1",
+                  role: "assistant" as const,
+                  content: "",
+                  createdAt: "2026-08-01T00:00:00.000Z",
+                  status: "streaming" as const
+                }
+              ]
+            }
+          ],
+          activeConversationId: request.conversationId ?? "chat-1",
+          panel: chatState.panel,
+          updatedAt: "2026-08-01T00:00:00.000Z"
+        }
+      })),
+      cancel: vi.fn(async () => chatState),
+      export: vi.fn(async (request) => ({
+        conversationId: request.conversationId,
+        markdown: "# New Chat\n"
+      })),
+      setPanel: vi.fn(async (request) => ({
+        ...chatState,
+        panel: { dockPosition: request.dockPosition },
+        updatedAt: "2026-08-01T00:00:00.000Z"
+      })),
+      pin: vi.fn(async () => chatState),
+      onEvent: vi.fn((listener: (event: AIChatEvent) => void) => {
+        window.__leviChatListeners.push(listener);
+        return () => {
+          window.__leviChatListeners = window.__leviChatListeners.filter((current) => current !== listener);
+        };
+      })
+    },
     conversation: {
       start: vi.fn(async () => ({
         requestId: "conversation-1"
@@ -1288,6 +1401,7 @@ beforeEach(() => {
   window.__leviRulesListeners = [];
   window.__leviUpdateListeners = [];
   window.__leviDebugListeners = [];
+  window.__leviChatListeners = [];
   vi.stubGlobal("levi", api);
   Object.defineProperty(window, "levi", {
     value: api,

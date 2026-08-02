@@ -207,12 +207,26 @@ textarea:focus-visible,
 
 .levi-workspace-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
   min-width: 0;
   min-height: 0;
+  position: relative;
 }
 
 .levi-workspace-layout-editor {
+  grid-template-columns:
+    minmax(var(--levi-layout-editorMinColumn), 1fr)
+    minmax(300px, 380px)
+    minmax(var(--levi-layout-editorPanelMin), 42%);
+}
+
+.levi-workspace-layout:has(.levi-ai-chat-dock-bottom),
+.levi-workspace-layout:has(.levi-ai-chat-dock-floating) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.levi-workspace-layout-editor:has(.levi-ai-chat-dock-bottom),
+.levi-workspace-layout-editor:has(.levi-ai-chat-dock-floating) {
   grid-template-columns:
     minmax(var(--levi-layout-editorMinColumn), 1fr)
     minmax(var(--levi-layout-editorPanelMin), 42%);
@@ -2479,6 +2493,200 @@ textarea:focus-visible,
   color: var(--levi-color-secondaryText);
   font-size: var(--levi-font-size-caption);
   font-weight: 600;
+}
+
+.levi-ai-chat-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--levi-space-12);
+  width: min(380px, 34vw);
+  min-width: 300px;
+  max-width: 440px;
+  height: 100%;
+  border-left: 1px solid var(--levi-color-border);
+  background: var(--levi-color-surfaceElevated);
+  color: var(--levi-color-text);
+  overflow: hidden;
+}
+
+.levi-ai-chat-dock-left {
+  order: -1;
+  border-left: 0;
+  border-right: 1px solid var(--levi-color-border);
+}
+
+.levi-ai-chat-dock-bottom {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  width: 100%;
+  max-width: none;
+  min-height: 280px;
+  height: 38%;
+  border-left: 0;
+  border-top: 1px solid var(--levi-color-border);
+}
+
+.levi-ai-chat-dock-floating {
+  position: absolute;
+  right: var(--levi-space-16);
+  bottom: var(--levi-space-16);
+  height: min(680px, calc(100% - 32px));
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-card);
+  box-shadow: var(--levi-elevation-2);
+  z-index: 12;
+}
+
+.levi-ai-chat-header,
+.levi-ai-chat-controls,
+.levi-ai-chat-history,
+.levi-ai-chat-composer {
+  padding: var(--levi-space-12);
+}
+
+.levi-ai-chat-header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--levi-space-8);
+  border-bottom: 1px solid var(--levi-color-border);
+}
+
+.levi-ai-chat-header h2 {
+  margin: 0;
+  font-size: var(--levi-font-size-body);
+}
+
+.levi-ai-chat-controls {
+  display: grid;
+  gap: var(--levi-space-8);
+}
+
+.levi-ai-chat-controls select,
+.levi-ai-chat-history input,
+.levi-ai-chat-history-item input,
+.levi-ai-chat-composer textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-control);
+  background: var(--levi-color-surface);
+  color: var(--levi-color-text);
+}
+
+.levi-ai-chat-controls select,
+.levi-ai-chat-history input,
+.levi-ai-chat-history-item input {
+  min-height: 32px;
+  padding: 0 var(--levi-space-8);
+}
+
+.levi-ai-chat-model-meta,
+.levi-ai-chat-attachment-actions,
+.levi-ai-chat-composer-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--levi-space-8);
+  color: var(--levi-color-secondaryText);
+  font-size: var(--levi-font-size-caption);
+}
+
+.levi-ai-chat-history {
+  display: grid;
+  gap: var(--levi-space-8);
+  max-height: 170px;
+  overflow: auto;
+  border-bottom: 1px solid var(--levi-color-border);
+}
+
+.levi-ai-chat-history-item {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto auto;
+  gap: 4px;
+  align-items: center;
+}
+
+.levi-ai-chat-history-item button,
+.levi-ai-chat-attachment-actions button,
+.levi-ai-chat-attachments button,
+.levi-ai-chat-message-top button {
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-control);
+  background: var(--levi-color-surface);
+  color: var(--levi-color-text);
+  min-height: 28px;
+  padding: 0 var(--levi-space-8);
+}
+
+.levi-ai-chat-history-item > button:first-of-type {
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.levi-ai-chat-history-item-active > button:first-of-type {
+  border-color: var(--levi-color-accent);
+}
+
+.levi-ai-chat-messages {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--levi-space-12);
+  min-height: 0;
+  overflow: auto;
+  padding: var(--levi-space-12);
+}
+
+.levi-ai-chat-message {
+  display: grid;
+  gap: var(--levi-space-8);
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-card);
+  background: var(--levi-color-surface);
+  padding: var(--levi-space-12);
+}
+
+.levi-ai-chat-message-user {
+  border-color: color-mix(in srgb, var(--levi-color-accent) 35%, var(--levi-color-border));
+}
+
+.levi-ai-chat-message-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--levi-space-8);
+  align-items: center;
+}
+
+.levi-ai-chat-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--levi-space-6);
+}
+
+.levi-ai-chat-attachments span,
+.levi-ai-chat-empty {
+  color: var(--levi-color-secondaryText);
+  font-size: var(--levi-font-size-caption);
+}
+
+.levi-ai-chat-composer {
+  display: grid;
+  gap: var(--levi-space-8);
+  border-top: 1px solid var(--levi-color-border);
+}
+
+.levi-ai-chat-composer textarea {
+  min-height: 84px;
+  max-height: 180px;
+  resize: vertical;
+  padding: var(--levi-space-10);
+}
+
+.levi-ai-chat-composer-footer {
+  align-items: center;
+  justify-content: space-between;
 }
 
 @media (max-width: 1280px) {

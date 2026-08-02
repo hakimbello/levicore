@@ -496,11 +496,12 @@ export class RuntimeManager {
     const prompt = record.prompt === undefined ? undefined : validatePrompt(record.prompt);
     const input = record.input === undefined ? undefined : validateInput(record.input);
     const timeoutMs = record.timeoutMs === undefined ? undefined : validateTimeout(record.timeoutMs);
+    const requestId = record.requestId === undefined ? undefined : validateRequestId(record.requestId);
     const options = record.options === undefined ? undefined : validateOptions(record.options);
     if ((kind === "chat" || kind === "stream") && !messages?.length && !prompt) throw new Error("Runtime chat request requires messages or prompt.");
     if (kind === "completion" && !prompt && !messages?.length) throw new Error("Runtime completion request requires a prompt.");
     if (kind === "embeddings" && input === undefined && prompt === undefined) throw new Error("Runtime embeddings request requires input.");
-    return { providerId, model, messages, prompt, input, timeoutMs, options };
+    return { providerId, model, messages, prompt, input, timeoutMs, options, requestId };
   }
 
   private validateModelOperationRequest(value: unknown): AIRuntimeModelOperationRequest {
@@ -768,6 +769,13 @@ function validateInput(value: unknown): string | string[] {
 function validateTimeout(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 1_000 || value > 300_000) {
     throw new Error("Runtime timeout is invalid.");
+  }
+  return value;
+}
+
+function validateRequestId(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 120 || !/^[A-Za-z0-9_.:-]+$/u.test(value)) {
+    throw new Error("Runtime request id is invalid.");
   }
   return value;
 }

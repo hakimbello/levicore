@@ -11,6 +11,7 @@ import { BottomPanel } from "../features/terminal/BottomPanel";
 import { TasksPanel } from "../features/tasks/TasksPanel";
 import { useTasks } from "../features/tasks/useTasks";
 import { RuntimeManagerPanel } from "../features/ai-runtime/RuntimeManagerPanel";
+import { AIChatPanel } from "../features/ai-chat/AIChatPanel";
 import { type EditorTab, useEditorTabs } from "../hooks/use-editor-tabs";
 import type {
   AIRuntimeProviderId,
@@ -769,6 +770,7 @@ export function App() {
         />
         <div className={activeTab ? "levi-workspace-layout levi-workspace-layout-editor" : "levi-workspace-layout"}>
           {renderActiveWorkspace()}
+          <AIChatPanel runtimeState={runtimeState} activeTab={activeTab} />
           {activeTab ? (
             <aside className="levi-editor-panel" aria-label="Workspace editor">
               <div className="levi-editor-tabs" role="tablist" aria-label="Open files">

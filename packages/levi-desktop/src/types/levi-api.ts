@@ -48,6 +48,21 @@ import type {
   AIRuntimeState,
   AIRuntimeStreamResult
 } from "../features/ai-runtime";
+import type {
+  AIChatCancelRequest,
+  AIChatDeleteMessageRequest,
+  AIChatDeleteRequest,
+  AIChatEvent,
+  AIChatExportRequest,
+  AIChatExportResult,
+  AIChatForkRequest,
+  AIChatNewRequest,
+  AIChatRenameRequest,
+  AIChatSendRequest,
+  AIChatSendResult,
+  AIChatSetPanelRequest,
+  AIChatState
+} from "../features/ai-chat";
 
 export type {
   AIRuntimeDetection,
@@ -71,6 +86,27 @@ export type {
   AIRuntimeStreamEvent,
   AIRuntimeStreamResult
 } from "../features/ai-runtime";
+
+export type {
+  AIChatAttachment,
+  AIChatCancelRequest,
+  AIChatConversation,
+  AIChatDeleteMessageRequest,
+  AIChatDeleteRequest,
+  AIChatDockPosition,
+  AIChatEvent,
+  AIChatExportRequest,
+  AIChatExportResult,
+  AIChatForkRequest,
+  AIChatMessage,
+  AIChatNewRequest,
+  AIChatPanelState,
+  AIChatRenameRequest,
+  AIChatSendRequest,
+  AIChatSendResult,
+  AIChatSetPanelRequest,
+  AIChatState
+} from "../features/ai-chat";
 
 export type {
   TaskCancelRequest,
@@ -1018,6 +1054,20 @@ export type LeviApi = {
     stop: (request: AIRuntimeLifecycleRequest) => Promise<AIRuntimeModelOperationResult>;
     restart: (request: AIRuntimeLifecycleRequest) => Promise<AIRuntimeModelOperationResult>;
     cancel: (request: { requestId: string }) => Promise<AIRuntimeState>;
+  };
+  chat: {
+    list: () => Promise<AIChatState>;
+    new: (request?: AIChatNewRequest) => Promise<AIChatState>;
+    delete: (request: AIChatDeleteRequest) => Promise<AIChatState>;
+    rename: (request: AIChatRenameRequest) => Promise<AIChatState>;
+    deleteMessage: (request: AIChatDeleteMessageRequest) => Promise<AIChatState>;
+    fork: (request: AIChatForkRequest) => Promise<AIChatState>;
+    send: (request: AIChatSendRequest) => Promise<AIChatSendResult>;
+    cancel: (request: AIChatCancelRequest) => Promise<AIChatState>;
+    export: (request: AIChatExportRequest) => Promise<AIChatExportResult>;
+    setPanel: (request: AIChatSetPanelRequest) => Promise<AIChatState>;
+    pin: (request: AIChatDeleteRequest) => Promise<AIChatState>;
+    onEvent: (listener: (event: AIChatEvent) => void) => () => void;
   };
   conversation: {
     start: (request: ConversationStartRequest) => Promise<ConversationStartResult>;
