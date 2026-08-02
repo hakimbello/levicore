@@ -75,26 +75,44 @@ import type {
 import type {
   AgentApprovalRequest,
   AgentArchiveRequest,
+  AgentCancelRequest,
   AgentDeleteRequest,
+  AgentExecuteRequest,
+  AgentExecutionResult,
   AgentEvent,
   AgentNewSessionRequest,
   AgentPlanRequest,
   AgentPlanResult,
+  AgentPreviewRequest,
+  AgentPreviewResult,
+  AgentQueueRequest,
+  AgentQueueResult,
   AgentRenameRequest,
   AgentSession,
   AgentState,
-  AgentStatusRequest
+  AgentStatusRequest,
+  AgentUndoRequest,
+  AgentUndoResult
 } from "../features/agent";
 
 export type {
   AgentActionType,
+  AgentActionPreview,
   AgentApprovalAction,
   AgentApprovalRequest,
   AgentApprovalState,
   AgentArchiveRequest,
+  AgentCancelRequest,
   AgentDeleteRequest,
+  AgentDiffLine,
+  AgentExecuteRequest,
+  AgentExecutionQueueItem,
+  AgentExecutionQueueStatus,
+  AgentExecutionResult,
   AgentEvent,
   AgentExecutionPlan,
+  AgentFileEdit,
+  AgentFileEditKind,
   AgentMessage,
   AgentMessageRole,
   AgentNewSessionRequest,
@@ -102,12 +120,20 @@ export type {
   AgentPlanResult,
   AgentPlanStep,
   AgentPlanStepStatus,
+  AgentPreviewRequest,
+  AgentPreviewResult,
   AgentProjectSummary,
+  AgentQueueRequest,
+  AgentQueueResult,
   AgentRenameRequest,
+  AgentRiskLevel,
   AgentSession,
   AgentSessionStatus,
   AgentState,
-  AgentStatusRequest
+  AgentStatusRequest,
+  AgentUndoMetadata,
+  AgentUndoRequest,
+  AgentUndoResult
 } from "../features/agent";
 
 export type {
@@ -1140,6 +1166,11 @@ export type LeviApi = {
     plan: (request: AgentPlanRequest) => Promise<AgentPlanResult>;
     approve: (request: AgentApprovalRequest) => Promise<AgentState>;
     reject: (request: AgentApprovalRequest) => Promise<AgentState>;
+    preview: (request: AgentPreviewRequest) => Promise<AgentPreviewResult>;
+    execute: (request: AgentExecuteRequest) => Promise<AgentExecutionResult>;
+    undo: (request: AgentUndoRequest) => Promise<AgentUndoResult>;
+    queue: (request: AgentQueueRequest) => Promise<AgentQueueResult>;
+    cancel: (request: AgentCancelRequest) => Promise<AgentExecutionResult>;
     status: (request?: AgentStatusRequest) => Promise<AgentState | AgentSession>;
     onEvent: (listener: (event: AgentEvent) => void) => () => void;
   };

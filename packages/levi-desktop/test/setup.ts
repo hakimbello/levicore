@@ -1537,10 +1537,12 @@ function createDefaultApi(): LeviApi {
                     status: "Pending" as const,
                     stepId: "step-2",
                     relativePath: "src/Login.tsx",
+                    content: "export function Login() {\n  return <form>Login</form>;\n}\n",
                     createdAt: "2026-08-01T00:00:00.000Z",
                     updatedAt: "2026-08-01T00:00:00.000Z"
                   }
                 ],
+                executionQueue: [],
                 createdAt: "2026-08-01T00:00:00.000Z",
                 updatedAt: "2026-08-01T00:00:00.000Z"
               },
@@ -1552,8 +1554,124 @@ function createDefaultApi(): LeviApi {
           updatedAt: "2026-08-01T00:00:00.000Z"
         }
       })),
-      approve: vi.fn(async () => agentState),
+      approve: vi.fn(async (request) => ({
+        sessions: [
+          {
+            id: request.sessionId,
+            title: "Build login page",
+            status: "Ready" as const,
+            archived: false,
+            messages: [],
+            attachments: [],
+            plan: {
+              id: "plan-1",
+              objective: "Build a login page",
+              summary: "Plan prepared.",
+              estimatedFiles: ["src/Login.tsx"],
+              progress: { totalSteps: 1, pendingActions: 0, approvedActions: 1, rejectedActions: 0, completedActions: 0 },
+              steps: [{ id: "step-1", order: 1, title: "Create UI", description: "Prepare a login page proposal.", status: "Approved" as const, estimatedFiles: ["src/Login.tsx"], actionIds: [request.actionId] }],
+              approvals: [{
+                id: request.actionId,
+                type: "modify-file" as const,
+                title: "Approve file proposal",
+                description: "Review future file changes.",
+                status: "Approved" as const,
+                stepId: "step-1",
+                relativePath: "src/Login.tsx",
+                content: "export function Login() {\n  return <form>Login</form>;\n}\n",
+                createdAt: "2026-08-01T00:00:00.000Z",
+                updatedAt: "2026-08-01T00:00:00.000Z"
+              }],
+              executionQueue: [{
+                actionId: request.actionId,
+                type: "modify-file" as const,
+                title: "Approve file proposal",
+                relativePath: "src/Login.tsx",
+                status: "Pending" as const
+              }],
+              createdAt: "2026-08-01T00:00:00.000Z",
+              updatedAt: "2026-08-01T00:00:00.000Z"
+            },
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z"
+          }
+        ],
+        activeSessionId: request.sessionId,
+        updatedAt: "2026-08-01T00:00:00.000Z"
+      })),
       reject: vi.fn(async () => agentState),
+      preview: vi.fn(async (request) => ({
+        sessionId: request.sessionId,
+        preview: {
+          previewId: "preview-1",
+          sessionId: request.sessionId,
+          actionId: request.actionId,
+          actionType: "modify-file" as const,
+          targetPath: "src/Login.tsx",
+          summary: "Approve file proposal: src/Login.tsx",
+          riskLevel: "medium" as const,
+          destructive: false,
+          originalContent: "export function Login() {\n  return null;\n}\n",
+          proposedContent: "export function Login() {\n  return <form>Login</form>;\n}\n",
+          addedLineCount: 1,
+          removedLineCount: 1,
+          diff: [
+            { type: "context" as const, oldLineNumber: 1, newLineNumber: 1, content: "export function Login() {" },
+            { type: "removed" as const, oldLineNumber: 2, content: "  return null;" },
+            { type: "added" as const, newLineNumber: 2, content: "  return <form>Login</form>;" },
+            { type: "context" as const, oldLineNumber: 3, newLineNumber: 3, content: "}" }
+          ],
+          createdAt: "2026-08-01T00:00:00.000Z"
+        },
+        state: {
+          sessions: [{
+            id: request.sessionId,
+            title: "Build login page",
+            status: "Ready" as const,
+            archived: false,
+            messages: [],
+            attachments: [],
+            plan: {
+              id: "plan-1",
+              objective: "Build a login page",
+              summary: "Plan prepared.",
+              estimatedFiles: ["src/Login.tsx"],
+              progress: { totalSteps: 1, pendingActions: 0, approvedActions: 1, rejectedActions: 0, completedActions: 0 },
+              steps: [{ id: "step-1", order: 1, title: "Create UI", description: "Prepare a login page proposal.", status: "Approved" as const, estimatedFiles: ["src/Login.tsx"], actionIds: [request.actionId] }],
+              approvals: [{
+                id: request.actionId,
+                type: "modify-file" as const,
+                title: "Approve file proposal",
+                description: "Review future file changes.",
+                status: "Approved" as const,
+                stepId: "step-1",
+                relativePath: "src/Login.tsx",
+                content: "export function Login() {\n  return <form>Login</form>;\n}\n",
+                createdAt: "2026-08-01T00:00:00.000Z",
+                updatedAt: "2026-08-01T00:00:00.000Z"
+              }],
+              executionQueue: [{
+                actionId: request.actionId,
+                type: "modify-file" as const,
+                title: "Approve file proposal",
+                relativePath: "src/Login.tsx",
+                status: "Pending" as const,
+                previewId: "preview-1"
+              }],
+              createdAt: "2026-08-01T00:00:00.000Z",
+              updatedAt: "2026-08-01T00:00:00.000Z"
+            },
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z"
+          }],
+          activeSessionId: request.sessionId,
+          updatedAt: "2026-08-01T00:00:00.000Z"
+        }
+      })),
+      execute: vi.fn(async (request) => ({ sessionId: request.sessionId, actionId: request.actionId, state: agentState })),
+      undo: vi.fn(async (request) => ({ sessionId: request.sessionId, actionId: "action-1", relativePath: "src/Login.tsx", state: agentState })),
+      queue: vi.fn(async (request) => ({ sessionId: request.sessionId, queue: [], progress: { completed: 0, remaining: 0, estimatedFiles: 0, elapsedMs: 0 } })),
+      cancel: vi.fn(async (request) => ({ sessionId: request.sessionId, actionId: request.actionId ?? "action-1", state: agentState })),
       status: vi.fn(async () => agentState),
       onEvent: vi.fn((listener: (event: AgentEvent) => void) => {
         window.__leviAgentListeners.push(listener);

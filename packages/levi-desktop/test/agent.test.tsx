@@ -79,6 +79,20 @@ function provider(content = JSON.stringify({
   };
 }
 
+function providerWithActions(actions: Array<Record<string, unknown>>): AIRuntimeProvider {
+  return provider(JSON.stringify({
+    summary: "Concrete file operations prepared.",
+    steps: [
+      {
+        title: "Apply safe file operations",
+        description: "Review and apply approved file actions one at a time.",
+        estimatedFiles: actions.map((action) => String(action.relativePath ?? "")).filter(Boolean),
+        actions
+      }
+    ]
+  }));
+}
+
 async function createService(runtimeProvider = provider()) {
   const statePath = path.join(await fsp.mkdtemp(path.join(os.tmpdir(), "levi-agent-")), "agent-state.json");
   const registry = new AIRuntimeProviderRegistry();
@@ -169,15 +183,113 @@ describe("Coding Agent foundation", () => {
 
     expect(channels).toContain('agentPlan: "levi:agent:plan"');
     expect(channels).toContain('agentApprove: "levi:agent:approve"');
+    expect(channels).toContain('agentExecute: "levi:agent:execute"');
+    expect(channels).toContain('agentPreview: "levi:agent:preview"');
+    expect(channels).toContain('agentUndo: "levi:agent:undo"');
+    expect(channels).toContain('agentQueue: "levi:agent:queue"');
+    expect(channels).toContain('agentCancel: "levi:agent:cancel"');
     expect(main).toContain("const agentService = new AgentService(aiRuntimeManager");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentPlan");
+    expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentExecute");
     expect(preload).toContain("agent: {");
     expect(preload).toContain("plan: (request: AgentPlanRequest)");
+    expect(preload).toContain("execute: (request: AgentExecuteRequest)");
     expect(service).toContain("this.runtimeManager.chat");
     expect(service).not.toContain("writeWorkspacePath");
     expect(service).not.toContain("terminalManager");
     expect(service).not.toContain("taskService.run");
     expect(service).not.toContain("git commit");
+  });
+
+  it("previews, executes, and undoes approved create and modify file actions safely", async () => {
+    const { service, statePath } = await createService(providerWithActions([
+      { type: "create-file", title: "Create generated file", description: "Create a text file.", relativePath: "src/generated.txt", content: "hello\n" },
+      { type: "modify-file", title: "Modify existing file", description: "Replace file content.", relativePath: "src/existing.txt", content: "after\r\n" }
+    ]));
+    const root = path.dirname(statePath);
+    await fsp.mkdir(path.join(root, "src"), { recursive: true });
+    await fsp.writeFile(path.join(root, "src", "existing.txt"), "before\r\n", "utf8");
+
+    const planned = await service.plan({ prompt: "Create and modify files", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const [createAction, modifyAction] = planned.state.sessions[0].plan!.approvals;
+
+    await service.approve({ sessionId, actionId: createAction.id });
+    const createPreview = await service.preview({ sessionId, actionId: createAction.id });
+    expect(createPreview.preview).toMatchObject({ targetPath: "src/generated.txt", riskLevel: "low", addedLineCount: 1 });
+    expect(fs.existsSync(path.join(root, "src", "generated.txt"))).toBe(false);
+    await service.execute({ sessionId, actionId: createAction.id, previewId: createPreview.preview.previewId });
+    expect(await fsp.readFile(path.join(root, "src", "generated.txt"), "utf8")).toBe("hello\n");
+    await service.undo({ sessionId });
+    expect(fs.existsSync(path.join(root, "src", "generated.txt"))).toBe(false);
+
+    await service.approve({ sessionId, actionId: modifyAction.id });
+    const modifyPreview = await service.preview({ sessionId, actionId: modifyAction.id });
+    expect(modifyPreview.preview.originalContent).toBe("before\r\n");
+    expect(modifyPreview.preview.proposedContent).toBe("after\r\n");
+    await service.execute({ sessionId, actionId: modifyAction.id, previewId: modifyPreview.preview.previewId });
+    expect(await fsp.readFile(path.join(root, "src", "existing.txt"), "utf8")).toBe("after\r\n");
+    await service.undo({ sessionId });
+    expect(await fsp.readFile(path.join(root, "src", "existing.txt"), "utf8")).toBe("before\r\n");
+  });
+
+  it("executes delete, rename file, create folder, rename folder, and stops unsupported actions", async () => {
+    const { service, statePath } = await createService(providerWithActions([
+      { type: "delete-file", title: "Delete stale file", description: "Remove stale file.", relativePath: "src/stale.txt" },
+      { type: "rename-file", title: "Rename file", description: "Move file.", relativePath: "src/old.txt", destinationRelativePath: "src/new.txt" },
+      { type: "create-folder", title: "Create folder", description: "Create folder.", relativePath: "src/new-folder" },
+      { type: "rename-folder", title: "Rename folder", description: "Rename folder.", relativePath: "src/old-folder", destinationRelativePath: "src/renamed-folder" },
+      { type: "run-task", title: "Run test", description: "Unsupported in this milestone.", taskName: "test" }
+    ]));
+    const root = path.dirname(statePath);
+    await fsp.mkdir(path.join(root, "src", "old-folder"), { recursive: true });
+    await fsp.writeFile(path.join(root, "src", "stale.txt"), "remove me\n", "utf8");
+    await fsp.writeFile(path.join(root, "src", "old.txt"), "move me\n", "utf8");
+    const planned = await service.plan({ prompt: "File operations", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const actions = planned.state.sessions[0].plan!.approvals;
+
+    for (const action of actions.slice(0, 4)) {
+      await service.approve({ sessionId, actionId: action.id });
+      const preview = await service.preview({ sessionId, actionId: action.id });
+      await service.execute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    }
+
+    expect(fs.existsSync(path.join(root, "src", "stale.txt"))).toBe(false);
+    expect(await fsp.readFile(path.join(root, "src", "new.txt"), "utf8")).toBe("move me\n");
+    expect(fs.statSync(path.join(root, "src", "new-folder")).isDirectory()).toBe(true);
+    expect(fs.statSync(path.join(root, "src", "renamed-folder")).isDirectory()).toBe(true);
+
+    await service.approve({ sessionId, actionId: actions[4].id });
+    await expect(service.preview({ sessionId, actionId: actions[4].id })).rejects.toThrow(/workspace file actions/i);
+  });
+
+  it("rejects unsafe execution payloads, malformed edits, binary files, and stale previews", async () => {
+    const { service, statePath } = await createService(providerWithActions([
+      { type: "create-file", title: "Traversal", description: "Bad path.", relativePath: "../outside.txt", content: "x" },
+      { type: "modify-file", title: "Malformed edit", description: "Bad edit.", relativePath: "src/edit.txt", edits: [{ kind: "replace", startLine: 3, endLine: 1, content: "x" }] },
+      { type: "modify-file", title: "Binary edit", description: "Bad binary.", relativePath: "src/binary.bin", content: "x" },
+      { type: "modify-file", title: "Stale edit", description: "Detect stale preview.", relativePath: "src/stale-preview.txt", content: "after\n" }
+    ]));
+    const root = path.dirname(statePath);
+    await fsp.mkdir(path.join(root, "src"), { recursive: true });
+    await fsp.writeFile(path.join(root, "src", "edit.txt"), "one\ntwo\n", "utf8");
+    await fsp.writeFile(path.join(root, "src", "binary.bin"), Buffer.from([0, 1, 2]));
+    await fsp.writeFile(path.join(root, "src", "stale-preview.txt"), "before\n", "utf8");
+
+    const planned = await service.plan({ prompt: "Unsafe file operations", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const actions = planned.state.sessions[0].plan!.approvals;
+    for (const action of actions) await service.approve({ sessionId, actionId: action.id });
+
+    await expect(service.preview({ sessionId, actionId: actions[0].id })).rejects.toThrow(/workspace path/i);
+    await expect(service.preview({ sessionId, actionId: actions[1].id })).rejects.toThrow(/range/i);
+    await expect(service.preview({ sessionId, actionId: actions[2].id })).rejects.toThrow(/Binary/i);
+    const preview = await service.preview({ sessionId, actionId: actions[3].id });
+    await fsp.writeFile(path.join(root, "src", "stale-preview.txt"), "changed\n", "utf8");
+    await expect(service.execute({ sessionId, actionId: actions[3].id, previewId: preview.preview.previewId })).rejects.toThrow(/changed/i);
+    const queue = service.queue({ sessionId });
+    expect(queue.queue.find((item: { actionId: string; status: string }) => item.actionId === actions[3].id)?.status).toBe("Failed");
   });
 
   it("renders the planning-only Agent panel and approval queue", async () => {
@@ -196,5 +308,23 @@ describe("Coding Agent foundation", () => {
     expect(await within(panel).findByRole("region", { name: "Execution Plan" })).toBeInTheDocument();
     expect(within(panel).getByText("Approve file proposal")).toBeInTheDocument();
     expect(within(panel).getByText("0 approved")).toBeInTheDocument();
+  });
+
+  it("renders execution preview diff and applies only after explicit approval", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Coding Agent" }));
+    const panel = await screen.findByRole("region", { name: "Coding Agent" });
+    await user.type(within(panel).getByRole("textbox", { name: "Agent Request" }), "Build a login page");
+    await user.click(within(panel).getByRole("button", { name: "Generate Plan" }));
+    await user.click(await within(panel).findByRole("button", { name: "Approve" }));
+    await user.click(await within(panel).findByRole("button", { name: "Preview" }));
+
+    expect(await within(panel).findByRole("group", { name: "Monaco Diff Review" })).toBeInTheDocument();
+    expect(within(panel).getByText("return <form>Login</form>;")).toBeInTheDocument();
+    const dialog = within(panel).getByRole("group", { name: "Approval Dialog" });
+    await user.click(within(dialog).getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(window.levi.agent.execute).toHaveBeenCalledWith(expect.objectContaining({ actionId: "action-1", previewId: "preview-1" })));
   });
 });

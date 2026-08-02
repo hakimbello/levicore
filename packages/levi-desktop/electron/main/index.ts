@@ -2334,6 +2334,26 @@ function registerIpc(): void {
     assertNoIpcArgs(args);
     return agentService.reject(request);
   });
+  ipcMain.handle(IPC_CHANNELS.agentPreview, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.preview(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentExecute, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.execute(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentUndo, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.undo(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentQueue, (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.queue(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentCancel, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.cancel(request);
+  });
   ipcMain.handle(IPC_CHANNELS.agentStatus, (_event, request, ...args) => {
     assertNoIpcArgs(args);
     return agentService.status(request);

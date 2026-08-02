@@ -3,7 +3,7 @@ import type { AIRuntimeProviderId, AIRuntimeState } from "../ai-runtime";
 import type { AIChatAttachment, AIChatContextDiscoveryResult, AIChatContextPreviewRequest } from "../ai-chat";
 import type { EditorTab } from "../../hooks/use-editor-tabs";
 import type { TaskOutputEntry, TaskProblem, WorkspaceStatus } from "../../types/levi-api";
-import type { AgentSession, AgentState } from "./types";
+import type { AgentActionPreview, AgentSession, AgentState } from "./types";
 
 type AgentPanelProps = {
   runtimeState: AIRuntimeState;
@@ -28,6 +28,8 @@ export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, w
   const [pathQuery, setPathQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [planning, setPlanning] = useState(false);
+  const [preview, setPreview] = useState<AgentActionPreview | null>(null);
+  const [executingActionId, setExecutingActionId] = useState<string | null>(null);
 
   const activeSession = state.sessions.find((session) => session.id === state.activeSessionId);
   const selectedRuntime = runtimeState.providers.find((provider) => provider.id === (runtimeId || activeSession?.runtimeId || runtimeState.selectedRuntimeId));
@@ -45,6 +47,11 @@ export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, w
     });
     return window.levi.agent.onEvent((event) => {
       if (event.type === "state" || event.type === "progress") setState(event.state);
+      if (event.type === "preview") {
+        setState(event.state);
+        setPreview(event.preview);
+      }
+      if (event.type === "execution") setState(event.state);
     });
   }, []);
 
@@ -243,7 +250,21 @@ export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, w
           <SessionActions session={activeSession} onState={setState} />
           <Conversation session={activeSession} />
           <ProjectSummary session={activeSession} />
-          <PlanView session={activeSession} onState={setState} />
+          <ExecutionReview
+            session={activeSession}
+            preview={preview}
+            executingActionId={executingActionId}
+            onPreview={setPreview}
+            onExecuting={setExecutingActionId}
+            onError={setError}
+            onState={setState}
+          />
+          <PlanView
+            session={activeSession}
+            onState={setState}
+            onPreview={(nextPreview) => setPreview(nextPreview)}
+            onError={setError}
+          />
         </div>
       </div>
     </section>
@@ -304,11 +325,54 @@ function ProjectSummary({ session }: { session?: AgentSession }) {
   );
 }
 
-function PlanView({ session, onState }: { session?: AgentSession; onState: (state: AgentState) => void }) {
+function PlanView({
+  session,
+  onState,
+  onPreview,
+  onError
+}: {
+  session?: AgentSession;
+  onState: (state: AgentState) => void;
+  onPreview: (preview: AgentActionPreview) => void;
+  onError: (error: string | null) => void;
+}) {
   const plan = session?.plan;
   if (!session || !plan) {
     return <section className="levi-agent-card levi-agent-empty">No execution plan yet.</section>;
   }
+
+  async function approveAction(actionId: string) {
+    if (!session) return;
+    onError(null);
+    try {
+      onState(await window.levi.agent.approve({ sessionId: session.id, actionId }));
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Could not approve agent action.");
+    }
+  }
+
+  async function rejectAction(actionId: string) {
+    if (!session) return;
+    onError(null);
+    try {
+      onState(await window.levi.agent.reject({ sessionId: session.id, actionId }));
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Could not reject agent action.");
+    }
+  }
+
+  async function previewAction(actionId: string) {
+    if (!session) return;
+    onError(null);
+    try {
+      const result = await window.levi.agent.preview({ sessionId: session.id, actionId });
+      onState(result.state);
+      onPreview(result.preview);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Could not preview agent action.");
+    }
+  }
+
   return (
     <section className="levi-agent-card" aria-label="Execution Plan">
       <div className="levi-agent-plan-top">
@@ -344,12 +408,141 @@ function PlanView({ session, onState }: { session?: AgentSession; onState: (stat
               {action.relativePath ? <small>{action.relativePath}</small> : null}
             </div>
             <div>
-              <button type="button" onClick={() => void window.levi.agent.approve({ sessionId: session.id, actionId: action.id }).then(onState)} disabled={action.status !== "Pending"}>Approve</button>
-              <button type="button" onClick={() => void window.levi.agent.reject({ sessionId: session.id, actionId: action.id }).then(onState)} disabled={action.status !== "Pending"}>Reject</button>
+              <button type="button" onClick={() => void approveAction(action.id)} disabled={action.status !== "Pending"}>Approve</button>
+              <button type="button" onClick={() => void rejectAction(action.id)} disabled={action.status !== "Pending"}>Reject</button>
+              <button type="button" onClick={() => void previewAction(action.id)} disabled={action.status !== "Approved"}>Preview</button>
             </div>
           </article>
         ))}
       </div>
+    </section>
+  );
+}
+
+function ExecutionReview({
+  session,
+  preview,
+  executingActionId,
+  onPreview,
+  onExecuting,
+  onError,
+  onState
+}: {
+  session?: AgentSession;
+  preview: AgentActionPreview | null;
+  executingActionId: string | null;
+  onPreview: (preview: AgentActionPreview | null) => void;
+  onExecuting: (actionId: string | null) => void;
+  onError: (error: string | null) => void;
+  onState: (state: AgentState) => void;
+}) {
+  const plan = session?.plan;
+  if (!session || !plan) return null;
+  const sessionId = session.id;
+  const queue = plan.executionQueue ?? [];
+
+  async function executePreview() {
+    if (!preview) return;
+    onExecuting(preview.actionId);
+    onError(null);
+    try {
+      const result = await window.levi.agent.execute({ sessionId, actionId: preview.actionId, previewId: preview.previewId });
+      onState(result.state);
+      onPreview(null);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Agent action execution failed.");
+    } finally {
+      onExecuting(null);
+    }
+  }
+
+  async function rejectPreview() {
+    if (!preview) return;
+    onError(null);
+    try {
+      const result = await window.levi.agent.cancel({ sessionId, actionId: preview.actionId });
+      onState(result.state);
+      onPreview(null);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Could not reject agent action.");
+    }
+  }
+
+  async function undoLast() {
+    onError(null);
+    try {
+      const result = await window.levi.agent.undo({ sessionId });
+      onState(result.state);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Could not undo last agent action.");
+    }
+  }
+
+  return (
+    <section className="levi-agent-card" aria-label="Execution Queue">
+      <div className="levi-agent-plan-top">
+        <div>
+          <h2>Execution Queue</h2>
+          <p>{queue.filter((item) => item.status === "Completed").length} completed / {queue.filter((item) => item.status === "Pending").length} remaining</p>
+        </div>
+        <button type="button" onClick={() => void undoLast()} disabled={!plan.lastUndo}>Undo Last Action</button>
+      </div>
+      <div className="levi-agent-execution-queue">
+        {queue.length ? queue.map((item) => (
+          <article key={item.actionId}>
+            <div>
+              <strong>{item.title}</strong>
+              <span>{item.type} / {item.status}</span>
+              {item.relativePath ? <small>{item.relativePath}{item.destinationRelativePath ? ` -> ${item.destinationRelativePath}` : ""}</small> : null}
+              {item.error ? <p>{item.error}</p> : null}
+            </div>
+          </article>
+        )) : <p>No approved file actions queued yet.</p>}
+      </div>
+
+      {preview ? (
+        <div className="levi-agent-preview" role="group" aria-label="Approval Dialog">
+          <div className="levi-agent-preview-header">
+            <div>
+              <h3>{preview.summary}</h3>
+              <p>{preview.actionType} / {preview.riskLevel} risk / {preview.targetPath}{preview.destinationPath ? ` -> ${preview.destinationPath}` : ""}</p>
+            </div>
+            <div className="levi-edit-counts" aria-label="Diff line counts">
+              <span>+{preview.addedLineCount}</span>
+              <span>-{preview.removedLineCount}</span>
+            </div>
+          </div>
+          <div className="levi-agent-monaco-diff" role="group" aria-label="Monaco Diff Review">
+            <div>
+              <strong>Current file</strong>
+              <pre>{preview.originalContent ?? ""}</pre>
+            </div>
+            <div>
+              <strong>Proposed file</strong>
+              <pre>{preview.proposedContent ?? ""}</pre>
+            </div>
+          </div>
+          {preview.diff.length ? (
+            <div className="levi-diff" role="table" aria-label="Agent diff preview">
+              {preview.diff.map((line, index) => (
+                <div key={`${index}-${line.type}`} className={`levi-diff-line levi-diff-${line.type}`} role="row">
+                  <span className="levi-diff-num" role="cell">{line.oldLineNumber ?? ""}</span>
+                  <span className="levi-diff-num" role="cell">{line.newLineNumber ?? ""}</span>
+                  <span className="levi-diff-marker" role="cell">{line.type === "added" ? "+" : line.type === "removed" ? "-" : " "}</span>
+                  <code role="cell">{line.content || " "}</code>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          <div className="levi-edit-actions">
+            <button type="button" className="levi-secondary-button" onClick={() => onPreview(null)}>Back</button>
+            <button type="button" className="levi-secondary-button" onClick={() => void rejectPreview()}>Reject</button>
+            <button type="button" className="levi-apply-button" disabled={executingActionId === preview.actionId} onClick={() => void executePreview()}>
+              {executingActionId === preview.actionId ? "Executing..." : "Approve"}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

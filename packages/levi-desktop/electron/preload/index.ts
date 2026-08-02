@@ -40,12 +40,17 @@ import type {
   AIChatSetPanelRequest,
   AgentApprovalRequest,
   AgentArchiveRequest,
+  AgentCancelRequest,
   AgentDeleteRequest,
+  AgentExecuteRequest,
   AgentEvent,
   AgentNewSessionRequest,
   AgentPlanRequest,
+  AgentPreviewRequest,
+  AgentQueueRequest,
   AgentRenameRequest,
-  AgentStatusRequest
+  AgentStatusRequest,
+  AgentUndoRequest
 } from "../../src/types/levi-api";
 import type { TaskEvent } from "../../src/types/task-api";
 import type {
@@ -217,6 +222,11 @@ const IPC_CHANNELS = {
   agentPlan: "levi:agent:plan",
   agentApprove: "levi:agent:approve",
   agentReject: "levi:agent:reject",
+  agentExecute: "levi:agent:execute",
+  agentUndo: "levi:agent:undo",
+  agentPreview: "levi:agent:preview",
+  agentQueue: "levi:agent:queue",
+  agentCancel: "levi:agent:cancel",
   agentStatus: "levi:agent:status",
   agentEvent: "levi:agent:event",
   conversationStart: "levi:conversation:start",
@@ -628,6 +638,11 @@ const leviApi: LeviApiWithWorkspaceTree = {
     plan: (request: AgentPlanRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentPlan, request),
     approve: (request: AgentApprovalRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentApprove, request),
     reject: (request: AgentApprovalRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentReject, request),
+    preview: (request: AgentPreviewRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentPreview, request),
+    execute: (request: AgentExecuteRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentExecute, request),
+    undo: (request: AgentUndoRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentUndo, request),
+    queue: (request: AgentQueueRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentQueue, request),
+    cancel: (request: AgentCancelRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentCancel, request),
     status: (request?: AgentStatusRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentStatus, request ?? {}),
     onEvent: (listener: (event: AgentEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: AgentEvent) => listener(payload);
