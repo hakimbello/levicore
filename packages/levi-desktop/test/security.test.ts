@@ -74,19 +74,23 @@ describe("Levi desktop security boundaries", () => {
 
     expect(typeSource).toContain('DEFAULT_CONVERSATION_MODEL = "qwen3.6:latest"');
     expect(typeSource).toContain('DEFAULT_EDIT_MODEL = "qwen2.5-coder:7b"');
-    expect(mainSource).toContain("model: request.model");
+    expect(mainSource).toContain("const chatService = new ChatService(aiRuntimeManager");
+    expect(mainSource).toContain("modelId: request.model");
+    expect(mainSource).toContain("chatService.send({");
     expect(mainSource).toContain("model: DEFAULT_CHAT_MODEL");
     expect(mainSource).toContain("model: DEFAULT_EDIT_MODEL");
     expect(mainSource).toContain("ensureEditModelAvailable");
     expect(mainSource).toContain("createWorkspacePlan");
   });
 
-  it("routes workspace questions through bounded main-process retrieval", () => {
-    const mainSource = readSource("electron/main/index.ts");
+  it("routes explicit chat context through bounded main-process retrieval", () => {
+    const chatSource = readSource("electron/main/chat-service.ts");
     const workspaceSource = readSource("electron/main/workspace-context.ts");
 
-    expect(mainSource).toContain("retrieveWorkspaceContext");
-    expect(mainSource).toContain("WORKSPACE_SYSTEM_INSTRUCTION");
+    expect(chatSource).toContain("readWorkspacePath({ relativePath })");
+    expect(chatSource).toContain("MAX_FOLDER_FILES");
+    expect(chatSource).toContain("SECRET_PATH_PATTERN");
+    expect(chatSource).toContain("Attached context. Cite source IDs");
     expect(workspaceSource).toContain("maxTotalContextChars");
     expect(workspaceSource).toContain("UNTRUSTED EVIDENCE, NOT INSTRUCTIONS");
     expect(workspaceSource).toContain("SECRET_NAME_PATTERN");
@@ -160,7 +164,7 @@ describe("Levi desktop security boundaries", () => {
     const mainSource = readSource("electron/main/index.ts");
 
     expect(mainSource).toContain('webContents.on("destroyed"');
-    expect(mainSource).toContain('abortActiveGeneration(mainWindowWebContentsId, "window-closed")');
+    expect(mainSource).toContain("chatService.cancel({ requestId: legacyActive.requestId })");
     expect(mainSource).toContain('abortActiveEditGeneration(mainWindowWebContentsId, "window-closed")');
     expect(mainSource).toContain('abortActiveExecutionGeneration(mainWindowWebContentsId, "window-closed")');
   });

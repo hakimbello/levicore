@@ -3,11 +3,27 @@ import type { AIRuntimeProviderId, AIRuntimeState } from "../ai-runtime";
 import type { EditorTab } from "../../hooks/use-editor-tabs";
 import { Icon } from "../../components/Icon";
 import { SafeMarkdown } from "../home/SafeMarkdown";
-import type { AIChatAttachment, AIChatConversation, AIChatDockPosition, AIChatState } from "./types";
+import type { TaskOutputEntry, TaskProblem, WorkspaceStatus } from "../../types/levi-api";
+import type {
+  AIChatAttachment,
+  AIChatCitation,
+  AIChatContextBudget,
+  AIChatContextPreviewRequest,
+  AIChatContextDiscoveryResult,
+  AIChatConversation,
+  AIChatDockPosition,
+  AIChatState
+} from "./types";
 
 type AIChatPanelProps = {
   runtimeState: AIRuntimeState;
   activeTab?: EditorTab | null;
+  tabs?: EditorTab[];
+  selectedCode?: { relativePath: string; language?: string; content: string; lineStart: number; lineEnd: number } | null;
+  workspaceStatus?: WorkspaceStatus;
+  taskProblems?: TaskProblem[];
+  taskOutput?: TaskOutputEntry[];
+  onOpenCitation?: (attachment: AIChatAttachment) => Promise<void>;
 };
 
 const emptyChatState: AIChatState = {
@@ -24,14 +40,30 @@ function estimateTokens(content: string): number {
   return Math.ceil(content.length / 4);
 }
 
-export function AIChatPanel({ runtimeState, activeTab }: AIChatPanelProps) {
+const emptyDiscovery: AIChatContextDiscoveryResult = { recentFiles: [], supports: [] };
+const emptyBudget: AIChatContextBudget = {
+  conversationTokens: 0,
+  attachmentTokens: 0,
+  draftTokens: 0,
+  totalTokens: 0,
+  exceedsBudget: false,
+  oversizedAttachments: []
+};
+
+export function AIChatPanel({ runtimeState, activeTab, tabs = [], selectedCode, workspaceStatus, taskProblems = [], taskOutput = [], onOpenCitation }: AIChatPanelProps) {
   const [state, setState] = useState<AIChatState>(emptyChatState);
   const [draft, setDraft] = useState("");
   const [search, setSearch] = useState("");
+  const [pinnedOnly, setPinnedOnly] = useState(false);
+  const [includeArchived, setIncludeArchived] = useState(false);
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
   const [runtimeId, setRuntimeId] = useState<AIRuntimeProviderId | "">("");
   const [modelId, setModelId] = useState("");
   const [attachments, setAttachments] = useState<AIChatAttachment[]>([]);
+  const [discovery, setDiscovery] = useState<AIChatContextDiscoveryResult>(emptyDiscovery);
+  const [pathQuery, setPathQuery] = useState("");
+  const [budget, setBudget] = useState<AIChatContextBudget>(emptyBudget);
+  const [contextError, setContextError] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -39,7 +71,13 @@ export function AIChatPanel({ runtimeState, activeTab }: AIChatPanelProps) {
   const selectedRuntime = runtimeState.providers.find((provider) => provider.id === (runtimeId || runtimeState.selectedRuntimeId));
   const availableModels = selectedRuntime?.models ?? [];
   const activeConversation = state.conversations.find((conversation) => conversation.id === state.activeConversationId);
-  const filteredConversations = state.conversations.filter((conversation) => conversation.title.toLowerCase().includes(search.toLowerCase()));
+  const filteredConversations = state.conversations.filter((conversation) => {
+    if (!includeArchived && conversation.archived) return false;
+    if (pinnedOnly && !conversation.pinned) return false;
+    const query = search.toLowerCase();
+    return !query || conversation.title.toLowerCase().includes(query) || conversation.messages.some((message) => message.content.toLowerCase().includes(query));
+  });
+  const filteredPaths = discovery.recentFiles.filter((file) => file.relativePath.toLowerCase().includes(pathQuery.toLowerCase())).slice(0, 12);
   const selectedModel = availableModels.find((model) => model.id === modelId) ?? availableModels[0];
   const generating = Boolean(activeRequestId);
 
@@ -48,6 +86,9 @@ export function AIChatPanel({ runtimeState, activeTab }: AIChatPanelProps) {
     window.levi.chat.list().then((next) => {
       if (!disposed) setState(next);
     });
+    window.levi.chat.discoverContext().then((next) => {
+      if (!disposed) setDiscovery(next);
+    });
     return window.levi.chat.onEvent((event) => {
       if (event.type === "state") setState(event.state);
       else if (event.type === "chunk") {
@@ -55,6 +96,8 @@ export function AIChatPanel({ runtimeState, activeTab }: AIChatPanelProps) {
       } else if (event.type === "done" || event.type === "stopped" || event.type === "error") {
         setState(event.state);
         setActiveRequestId(null);
+      } else if (event.type === "citations") {
+        setState((current) => applyCitations(current, event.conversationId, event.messageId, event.citations));
       }
     });
   }, []);
@@ -73,6 +116,20 @@ export function AIChatPanel({ runtimeState, activeTab }: AIChatPanelProps) {
     messagesEndRef.current?.scrollIntoView?.({ block: "end" });
   }, [activeConversation?.messages]);
 
+  useEffect(() => {
+    let disposed = false;
+    window.levi.chat.budget({ conversationId: activeConversation?.id, runtimeId: runtimeId || undefined, modelId: modelId || undefined, draft, attachments })
+      .then((next) => {
+        if (!disposed) setBudget(next);
+      })
+      .catch(() => {
+        if (!disposed) setBudget(emptyBudget);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [activeConversation?.id, attachments, draft, modelId, runtimeId]);
+
   const dockClass = useMemo(() => `levi-ai-chat-panel levi-ai-chat-dock-${state.panel.dockPosition}`, [state.panel.dockPosition]);
 
   async function createChat() {
@@ -81,7 +138,7 @@ export function AIChatPanel({ runtimeState, activeTab }: AIChatPanelProps) {
 
   async function sendMessage() {
     const content = draft.trim();
-    if (!content || !modelId || generating) return;
+    if (!content || !modelId || generating || budget.exceedsBudget) return;
     const result = await window.levi.chat.send({
       conversationId: activeConversation?.id,
       content,
@@ -116,8 +173,13 @@ export function AIChatPanel({ runtimeState, activeTab }: AIChatPanelProps) {
   }
 
   async function exportConversation(conversationId: string) {
-    const result = await window.levi.chat.export({ conversationId });
+    const result = await window.levi.chat.export({ conversationId, format: "markdown" });
     await navigator.clipboard?.writeText(result.markdown);
+  }
+
+  async function exportConversationJson(conversationId: string) {
+    const result = await window.levi.chat.export({ conversationId, format: "json" });
+    await navigator.clipboard?.writeText(result.json ?? result.markdown);
   }
 
   async function deleteMessage(messageId: string) {
@@ -128,6 +190,17 @@ export function AIChatPanel({ runtimeState, activeTab }: AIChatPanelProps) {
   async function forkConversation(messageId?: string) {
     if (!activeConversation) return;
     setState(await window.levi.chat.fork({ conversationId: activeConversation.id, messageId }));
+  }
+
+  async function addPreview(request: AIChatContextPreviewRequest) {
+    setContextError(null);
+    try {
+      const result = await window.levi.chat.previewContext(request);
+      setAttachments((current) => [...current.filter((item) => item.sourceId !== result.attachment.sourceId), result.attachment].slice(0, 12));
+      setBudget(result.budget);
+    } catch (error) {
+      setContextError(error instanceof Error ? error.message : "Could not attach context.");
+    }
   }
 
   async function regenerateFrom(messageId: string) {
@@ -149,25 +222,87 @@ export function AIChatPanel({ runtimeState, activeTab }: AIChatPanelProps) {
   async function attachClipboard() {
     const content = await navigator.clipboard?.readText?.();
     if (!content) return;
-    setAttachments((current) => [
-      ...current,
-      { id: createAttachmentId(), type: "clipboard", label: "Clipboard", content: content.slice(0, 40_000) }
-    ]);
+    await addPreview({ source: "clipboard", label: "Clipboard", content });
   }
 
-  function attachCurrentFile() {
+  async function attachCurrentFile() {
     if (!activeTab) return;
-    setAttachments((current) => [
-      ...current,
-      {
-        id: createAttachmentId(),
-        type: "current-file",
-        label: activeTab.relativePath,
-        relativePath: activeTab.relativePath,
-        language: activeTab.language,
-        content: activeTab.content.slice(0, 40_000)
-      }
-    ]);
+    await addPreview({ source: "current-file", relativePath: activeTab.relativePath });
+  }
+
+  async function attachSelectedCode() {
+    if (!selectedCode) return;
+    await addPreview({
+      source: "selected-code",
+      label: `${selectedCode.relativePath}:${selectedCode.lineStart}-${selectedCode.lineEnd}`,
+      relativePath: selectedCode.relativePath,
+      lineStart: selectedCode.lineStart,
+      lineEnd: selectedCode.lineEnd,
+      language: selectedCode.language,
+      content: selectedCode.content
+    });
+  }
+
+  async function attachOpenTabs() {
+    if (!tabs.length) return;
+    await addPreview({
+      source: "open-tabs",
+      label: "Open tabs",
+      entries: tabs.slice(0, 8).map((tab) => ({ label: tab.relativePath, relativePath: tab.relativePath, language: tab.language, content: tab.content }))
+    });
+  }
+
+  async function attachWorkspaceSummary() {
+    const summary = workspaceStatus?.summary;
+    if (!summary) return;
+    await addPreview({
+      source: "workspace-summary",
+      label: "Workspace summary",
+      content: [
+        `Project: ${summary.projectName}`,
+        `Languages: ${summary.languages.join(", ")}`,
+        `Frameworks: ${summary.frameworks.join(", ")}`,
+        `Entry points: ${summary.likelyEntryPoints.join(", ")}`,
+        `Source directories: ${summary.sourceDirectories.join(", ")}`,
+        `Scripts: ${Object.entries(summary.scripts).map(([name, script]) => `${name}=${script}`).join("; ")}`
+      ].join("\n")
+    });
+  }
+
+  async function attachProjectRules() {
+    const rules = await window.levi.rules.list();
+    await addPreview({
+      source: "project-rules",
+      label: "Project Rules",
+      content: rules.rules.map((rule) => `- ${rule.text} (${rule.sourcePath}:${rule.lineStart}-${rule.lineEnd})`).join("\n") || "No active project rules."
+    });
+  }
+
+  async function attachProblems() {
+    await addPreview({
+      source: "problems",
+      label: "Problems",
+      content: taskProblems.map((problem) => `${problem.relativePath}:${problem.line}:${problem.column} ${problem.severity} ${problem.message}`).join("\n") || "No current problems."
+    });
+  }
+
+  async function attachTaskOutput(source: "task-output" | "git-diff" = "task-output") {
+    const entries = taskOutput.filter((entry) => source === "git-diff" ? entry.source === "git" : entry.source !== "git").slice(-80);
+    await addPreview({
+      source,
+      label: source === "git-diff" ? "Git changes" : "Task output",
+      content: entries.map((entry) => `[${entry.source}/${entry.channel}] ${entry.text}`).join("\n") || "No output selected."
+    });
+  }
+
+  async function attachWorkspacePath(item: AIChatContextDiscoveryResult["recentFiles"][number]) {
+    const confirmed = window.confirm(`${item.kind === "folder" ? "Include bounded folder context" : "Attach file"} ${item.relativePath}?`);
+    if (!confirmed) return;
+    await addPreview({
+      source: item.kind === "folder" ? "workspace-folder" : "workspace-file",
+      relativePath: item.relativePath,
+      confirmSensitive: true
+    });
   }
 
   function handleDrop(event: React.DragEvent<HTMLElement>) {
@@ -216,11 +351,16 @@ export function AIChatPanel({ runtimeState, activeTab }: AIChatPanelProps) {
           <span>{selectedModel?.contextWindow ? `${selectedModel.contextWindow} ctx` : "Context unknown"}</span>
           <span>Tools {selectedModel?.toolSupport ? "Yes" : "No"}</span>
           <span>Vision {selectedModel?.visionSupport ? "Yes" : "No"}</span>
+          <span>{budget.remainingTokens !== undefined ? `${Math.max(0, budget.remainingTokens)} tokens left` : `${budget.totalTokens} estimated tokens`}</span>
         </div>
       </div>
 
       <section className="levi-ai-chat-history" aria-label="Conversation History">
         <input aria-label="Search Chats" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search chats" />
+        <div className="levi-ai-chat-filters">
+          <label><input type="checkbox" checked={pinnedOnly} onChange={(event) => setPinnedOnly(event.target.checked)} /> Pinned</label>
+          <label><input type="checkbox" checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} /> Archived</label>
+        </div>
         {filteredConversations.map((conversation) => (
           <div key={conversation.id} className={conversation.id === state.activeConversationId ? "levi-ai-chat-history-item levi-ai-chat-history-item-active" : "levi-ai-chat-history-item"}>
             {renamingId === conversation.id ? (
@@ -231,7 +371,9 @@ export function AIChatPanel({ runtimeState, activeTab }: AIChatPanelProps) {
             <button type="button" aria-label={`Pin ${conversation.title}`} onClick={() => void window.levi.chat.pin({ conversationId: conversation.id }).then(setState)}>Pin</button>
             <button type="button" aria-label={`Rename ${conversation.title}`} onClick={() => void renameConversation(conversation)}>Rename</button>
             <button type="button" aria-label={`Export ${conversation.title}`} onClick={() => void exportConversation(conversation.id)}>Export</button>
-            <button type="button" aria-label={`Delete ${conversation.title}`} onClick={() => void window.levi.chat.delete({ conversationId: conversation.id }).then(setState)}>Delete</button>
+            <button type="button" aria-label={`Export JSON ${conversation.title}`} onClick={() => void exportConversationJson(conversation.id)}>JSON</button>
+            <button type="button" aria-label={`Archive ${conversation.title}`} onClick={() => void window.levi.chat.archive({ conversationId: conversation.id, archived: !conversation.archived }).then(setState)}>{conversation.archived ? "Unarchive" : "Archive"}</button>
+            <button type="button" aria-label={`Delete ${conversation.title}`} onClick={() => { if (window.confirm(`Delete ${conversation.title}?`)) void window.levi.chat.delete({ conversationId: conversation.id }).then(setState); }}>Delete</button>
           </div>
         ))}
       </section>
@@ -250,7 +392,16 @@ export function AIChatPanel({ runtimeState, activeTab }: AIChatPanelProps) {
             <SafeMarkdown content={message.content || (message.status === "streaming" ? "Thinking..." : "")} />
             {message.attachments?.length ? (
               <div className="levi-ai-chat-attachments" aria-label="Attached context">
-                {message.attachments.map((attachment) => <span key={attachment.id}>{attachment.label}</span>)}
+                {message.attachments.map((attachment) => <span key={attachment.id}>{attachment.sourceId ? `${attachment.sourceId} ` : ""}{attachment.label}</span>)}
+              </div>
+            ) : null}
+            {message.citations?.length ? (
+              <div className="levi-ai-chat-citations" aria-label="Citations">
+                {message.citations.map((citation) => (
+                  <button key={citation.sourceId} type="button" onClick={() => void window.levi.chat.openCitation({ conversationId: activeConversation.id, sourceId: citation.sourceId }).then((attachment) => onOpenCitation?.(attachment))}>
+                    {citation.sourceId} {citation.relativePath}{citation.lineStart ? `:${citation.lineStart}` : ""}
+                  </button>
+                ))}
               </div>
             ) : null}
           </article>
@@ -263,17 +414,34 @@ export function AIChatPanel({ runtimeState, activeTab }: AIChatPanelProps) {
           <div className="levi-ai-chat-attachments" aria-label="Attached context before sending">
             {attachments.map((attachment) => (
               <button key={attachment.id} type="button" onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}>
-                {attachment.label}
+                {attachment.sourceId ? `${attachment.sourceId} ` : ""}{attachment.label}
+                <small>{attachment.lineStart ? `:${attachment.lineStart}-${attachment.lineEnd ?? attachment.lineStart}` : ""} {attachment.tokenEstimate ?? estimateTokens(attachment.content ?? "")} tokens</small>
               </button>
             ))}
           </div>
         ) : null}
         <div className="levi-ai-chat-attachment-actions">
-          <button type="button" onClick={attachCurrentFile} disabled={!activeTab}>Current file</button>
-          <button type="button" onClick={() => setAttachments((current) => [...current, { id: createAttachmentId(), type: "selection", label: "Workspace selection" }])}>Workspace selection</button>
+          <button type="button" onClick={() => void attachCurrentFile()} disabled={!activeTab}>Current file</button>
+          <button type="button" onClick={() => void attachSelectedCode()} disabled={!selectedCode}>Selected code</button>
+          <button type="button" onClick={() => void attachOpenTabs()} disabled={!tabs.length}>Open tabs</button>
+          <button type="button" onClick={() => void attachWorkspaceSummary()} disabled={!workspaceStatus?.summary}>Workspace summary</button>
+          <button type="button" onClick={() => void attachProjectRules()}>Project Rules</button>
+          <button type="button" onClick={() => void attachProblems()}>Problems</button>
+          <button type="button" onClick={() => void attachTaskOutput()}>Task output</button>
+          <button type="button" onClick={() => void attachTaskOutput("git-diff")}>Git changes</button>
           <button type="button" onClick={() => void attachClipboard()}>Clipboard</button>
           <button type="button" onClick={() => setAttachments((current) => [...current, { id: createAttachmentId(), type: "image-placeholder", label: "Image placeholder" }])}>Image</button>
         </div>
+        <div className="levi-ai-chat-context-picker" aria-label="Workspace Explorer">
+          <input aria-label="Search workspace paths" value={pathQuery} onChange={(event) => setPathQuery(event.target.value)} placeholder="Search workspace paths" />
+          {filteredPaths.map((item) => (
+            <button key={`${item.kind}:${item.relativePath}`} type="button" onClick={() => void attachWorkspacePath(item)}>
+              {item.kind === "folder" ? "Folder" : "File"} {item.relativePath}
+            </button>
+          ))}
+        </div>
+        {contextError ? <div className="levi-ai-chat-error" role="alert">{contextError}</div> : null}
+        {budget.exceedsBudget ? <div className="levi-ai-chat-error" role="alert">Context exceeds this model. Remove: {budget.oversizedAttachments.join(", ") || "attachments"}.</div> : null}
         <textarea
           aria-label="AI Chat Prompt"
           value={draft}
@@ -287,8 +455,8 @@ export function AIChatPanel({ runtimeState, activeTab }: AIChatPanelProps) {
           placeholder="Ask about the workspace, code, or implementation choices."
         />
         <div className="levi-ai-chat-composer-footer">
-          <span>{draft.length} chars / ~{estimateTokens(draft)} tokens</span>
-          <button type="button" className="levi-send-button" aria-label={generating ? "Stop Generation" : "Send Chat"} disabled={generating ? false : !draft.trim() || !modelId} onClick={() => generating ? void stopGeneration() : void sendMessage()}>
+          <span>{draft.length} chars / ~{estimateTokens(draft)} tokens / {budget.totalTokens} total</span>
+          <button type="button" className="levi-send-button" aria-label={generating ? "Stop Generation" : "Send Chat"} disabled={generating ? false : !draft.trim() || !modelId || budget.exceedsBudget} onClick={() => generating ? void stopGeneration() : void sendMessage()}>
             {generating ? <Icon name="stop" /> : <Icon name="send" />}
           </button>
         </div>
@@ -305,6 +473,20 @@ function updateMessageContent(state: AIChatState, conversationId: string, messag
         ? {
             ...conversation,
             messages: conversation.messages.map((message) => message.id === messageId ? { ...message, content: message.content + content, status: "streaming" } : message)
+          }
+        : conversation
+    )
+  };
+}
+
+function applyCitations(state: AIChatState, conversationId: string, messageId: string, citations: AIChatCitation[]): AIChatState {
+  return {
+    ...state,
+    conversations: state.conversations.map((conversation) =>
+      conversation.id === conversationId
+        ? {
+            ...conversation,
+            messages: conversation.messages.map((message) => message.id === messageId ? { ...message, citations } : message)
           }
         : conversation
     )

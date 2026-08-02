@@ -49,15 +49,24 @@ import type {
   AIRuntimeStreamResult
 } from "../features/ai-runtime";
 import type {
+  AIChatAttachment,
   AIChatCancelRequest,
+  AIChatArchiveRequest,
+  AIChatBudgetRequest,
   AIChatDeleteMessageRequest,
   AIChatDeleteRequest,
   AIChatEvent,
+  AIChatContextBudget,
+  AIChatContextDiscoveryResult,
+  AIChatContextPreviewRequest,
+  AIChatContextPreviewResult,
   AIChatExportRequest,
   AIChatExportResult,
   AIChatForkRequest,
+  AIChatOpenCitationRequest,
   AIChatNewRequest,
   AIChatRenameRequest,
+  AIChatSearchRequest,
   AIChatSendRequest,
   AIChatSendResult,
   AIChatSetPanelRequest,
@@ -89,8 +98,16 @@ export type {
 
 export type {
   AIChatAttachment,
+  AIChatArchiveRequest,
+  AIChatBudgetRequest,
   AIChatCancelRequest,
   AIChatConversation,
+  AIChatCitation,
+  AIChatContextBudget,
+  AIChatContextDiscoveryResult,
+  AIChatContextPreviewRequest,
+  AIChatContextPreviewResult,
+  AIChatContextSource,
   AIChatDeleteMessageRequest,
   AIChatDeleteRequest,
   AIChatDockPosition,
@@ -99,9 +116,11 @@ export type {
   AIChatExportResult,
   AIChatForkRequest,
   AIChatMessage,
+  AIChatOpenCitationRequest,
   AIChatNewRequest,
   AIChatPanelState,
   AIChatRenameRequest,
+  AIChatSearchRequest,
   AIChatSendRequest,
   AIChatSendResult,
   AIChatSetPanelRequest,
@@ -1062,6 +1081,12 @@ export type LeviApi = {
     rename: (request: AIChatRenameRequest) => Promise<AIChatState>;
     deleteMessage: (request: AIChatDeleteMessageRequest) => Promise<AIChatState>;
     fork: (request: AIChatForkRequest) => Promise<AIChatState>;
+    archive: (request: AIChatArchiveRequest) => Promise<AIChatState>;
+    search: (request: AIChatSearchRequest) => Promise<AIChatState>;
+    discoverContext: () => Promise<AIChatContextDiscoveryResult>;
+    previewContext: (request: AIChatContextPreviewRequest) => Promise<AIChatContextPreviewResult>;
+    budget: (request: AIChatBudgetRequest) => Promise<AIChatContextBudget>;
+    openCitation: (request: AIChatOpenCitationRequest) => Promise<AIChatAttachment>;
     send: (request: AIChatSendRequest) => Promise<AIChatSendResult>;
     cancel: (request: AIChatCancelRequest) => Promise<AIChatState>;
     export: (request: AIChatExportRequest) => Promise<AIChatExportResult>;

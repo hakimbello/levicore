@@ -235,7 +235,7 @@ async function enumerateDirectory(
   return nodes;
 }
 
-async function listWorkspaceTree(): Promise<WorkspaceTreeResult> {
+export async function listWorkspaceTree(): Promise<WorkspaceTreeResult> {
   const workspace = await getRecentWorkspace();
   const state = { count: 0, truncated: false };
   const nodes = await enumerateDirectory(workspace.rootPath, workspace.rootPath, 0, state);
@@ -249,7 +249,7 @@ async function listWorkspaceTree(): Promise<WorkspaceTreeResult> {
   };
 }
 
-async function readWorkspacePath(request: WorkspaceReadPathRequest): Promise<WorkspaceReadPathResult> {
+export async function readWorkspacePath(request: WorkspaceReadPathRequest): Promise<WorkspaceReadPathResult> {
   const workspace = await getRecentWorkspace();
   const realPath = await resolveExistingWorkspaceFile(workspace.rootPath, request?.relativePath);
   const stats = await fs.stat(realPath);
@@ -306,6 +306,7 @@ let registered = false;
 
 export function registerWorkspaceTreeIpc(): void {
   if (registered) return;
+  if (typeof ipcMain?.handle !== "function") return;
   registered = true;
   ipcMain.handle(WORKSPACE_TREE_CHANNEL, () => listWorkspaceTree());
   ipcMain.handle(WORKSPACE_READ_PATH_CHANNEL, (_event, request: WorkspaceReadPathRequest) => readWorkspacePath(request));

@@ -2582,12 +2582,20 @@ textarea:focus-visible,
 
 .levi-ai-chat-model-meta,
 .levi-ai-chat-attachment-actions,
+.levi-ai-chat-filters,
+.levi-ai-chat-citations,
 .levi-ai-chat-composer-footer {
   display: flex;
   flex-wrap: wrap;
   gap: var(--levi-space-8);
   color: var(--levi-color-secondaryText);
   font-size: var(--levi-font-size-caption);
+}
+
+.levi-ai-chat-filters label {
+  display: inline-flex;
+  gap: var(--levi-space-4);
+  align-items: center;
 }
 
 .levi-ai-chat-history {
@@ -2600,14 +2608,22 @@ textarea:focus-visible,
 
 .levi-ai-chat-history-item {
   display: grid;
-  grid-template-columns: 1fr auto auto auto auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 4px;
   align-items: center;
+}
+
+@container (min-width: 460px) {
+  .levi-ai-chat-history-item {
+    grid-template-columns: minmax(0, 1fr) repeat(6, auto);
+  }
 }
 
 .levi-ai-chat-history-item button,
 .levi-ai-chat-attachment-actions button,
 .levi-ai-chat-attachments button,
+.levi-ai-chat-context-picker button,
+.levi-ai-chat-citations button,
 .levi-ai-chat-message-top button {
   border: 1px solid var(--levi-color-border);
   border-radius: var(--levi-radius-control);
@@ -2665,10 +2681,57 @@ textarea:focus-visible,
   gap: var(--levi-space-6);
 }
 
+.levi-ai-chat-attachments button {
+  display: inline-grid;
+  max-width: 100%;
+  min-height: 34px;
+  text-align: left;
+}
+
+.levi-ai-chat-attachments small {
+  color: var(--levi-color-secondaryText);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
 .levi-ai-chat-attachments span,
 .levi-ai-chat-empty {
   color: var(--levi-color-secondaryText);
   font-size: var(--levi-font-size-caption);
+}
+
+.levi-ai-chat-context-picker {
+  display: grid;
+  gap: var(--levi-space-6);
+  max-height: 130px;
+  overflow: auto;
+}
+
+.levi-ai-chat-context-picker input {
+  width: 100%;
+  min-height: 30px;
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-control);
+  background: var(--levi-color-surface);
+  color: var(--levi-color-text);
+  padding: 0 var(--levi-space-8);
+}
+
+.levi-ai-chat-context-picker button,
+.levi-ai-chat-citations button {
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.levi-ai-chat-error {
+  border: 1px solid color-mix(in srgb, var(--levi-color-danger) 45%, var(--levi-color-border));
+  border-radius: var(--levi-radius-control);
+  background: color-mix(in srgb, var(--levi-color-danger) 8%, var(--levi-color-surface));
+  color: var(--levi-color-text);
+  font-size: var(--levi-font-size-caption);
+  padding: var(--levi-space-8);
 }
 
 .levi-ai-chat-composer {

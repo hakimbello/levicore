@@ -163,6 +163,71 @@ describe("AI chat foundation", () => {
     await expect(service.send({ content: "", runtimeId: "ollama", modelId: "model-a" })).rejects.toThrow(/content/i);
   });
 
+  it("archives, searches, and exports conversations as markdown or JSON", async () => {
+    const { service } = await createService();
+    const state = await service.newChat({ title: "Workspace Context", runtimeId: "ollama", modelId: "model-a" });
+    const conversationId = state.activeConversationId!;
+
+    expect(service.search({ query: "workspace" }).conversations).toHaveLength(1);
+    const archived = await service.archive({ conversationId, archived: true });
+    expect(archived.conversations.find((conversation) => conversation.id === conversationId)?.archived).toBe(true);
+    expect(service.search({ query: "workspace" }).conversations).toHaveLength(0);
+    expect(service.search({ query: "workspace", includeArchived: true }).conversations).toHaveLength(1);
+
+    const markdown = await service.export({ conversationId, format: "markdown" });
+    expect(markdown).toMatchObject({ conversationId, format: "markdown" });
+    expect(markdown.markdown).toContain("# Workspace Context");
+    const json = await service.export({ conversationId, format: "json" });
+    expect(json.format).toBe("json");
+    expect(JSON.parse(json.json ?? "{}")).toMatchObject({ title: "Workspace Context", archived: true });
+  });
+
+  it("previews explicit context, calculates budget, and blocks oversized payloads", async () => {
+    const { service } = await createService();
+    const preview = await service.previewContext({ source: "selected-code", label: "src/main.ts:1-1", relativePath: "src/main.ts", lineStart: 1, lineEnd: 1, content: "export const value = 1;" });
+
+    expect(preview.attachment).toMatchObject({ type: "selected-code", label: "src/main.ts:1-1", relativePath: "src/main.ts", lineStart: 1, sourceId: expect.stringMatching(/^S\d+/) });
+    expect(preview.budget.totalTokens).toBeGreaterThan(0);
+    expect(service.budget({ modelId: "model-a", draft: "Explain it", attachments: [preview.attachment] })).toMatchObject({ exceedsBudget: false });
+    await expect(service.previewContext({ source: "workspace-file", relativePath: ".env" })).rejects.toThrow(/Sensitive files require explicit confirmation/i);
+
+    const oversized = { ...preview.attachment, id: "huge", label: "Huge", tokenEstimate: 9_000 };
+    await expect(service.send({ content: "Explain this", runtimeId: "ollama", modelId: "model-a", attachments: [oversized] })).rejects.toThrow(/context exceeds/i);
+  });
+
+  it("extracts verified source citations from streamed responses", async () => {
+    const runtimeProvider = provider({
+      stream: async function* (request): AsyncIterable<AIRuntimeStreamEvent> {
+        const requestId = request.requestId ?? "stream-1";
+        yield { type: "started", requestId, providerId: "ollama", model: request.model };
+        yield { type: "token", requestId, providerId: "ollama", model: request.model, token: "Use [S1:1], not [S999]." };
+        yield { type: "completed", requestId, providerId: "ollama", model: request.model, response: { requestId, providerId: "ollama", model: request.model, content: "Use [S1:1], not [S999].", latencyMs: 1 } };
+      }
+    });
+    const { service, events } = await createService(runtimeProvider);
+    const done = new Promise<void>((resolve) => {
+      const timer = setInterval(() => {
+        if (events.some((item) => item.type === "done")) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, 1);
+    });
+
+    await service.send({
+      content: "Where is this defined?",
+      runtimeId: "ollama",
+      modelId: "model-a",
+      attachments: [{ id: "attachment-1", type: "selected-code", sourceId: "S1", label: "src/main.ts", relativePath: "src/main.ts", lineStart: 1, lineEnd: 1, content: "export const value = 1;" }]
+    });
+    await done;
+
+    const assistant = service.list().conversations[0].messages.at(-1);
+    expect(assistant?.citations).toEqual([{ sourceId: "S1", relativePath: "src/main.ts", lineStart: 1, lineEnd: 1, label: "src/main.ts" }]);
+    expect(events.some((event) => event.type === "citations")).toBe(true);
+    expect(service.openCitation({ conversationId: service.list().conversations[0].id, sourceId: "S1" })).toMatchObject({ relativePath: "src/main.ts" });
+  });
+
   it("forks conversations and deletes individual messages through persisted chat state", async () => {
     const { service, events } = await createService();
     const done = new Promise<void>((resolve) => {
@@ -196,12 +261,17 @@ describe("AI chat foundation", () => {
     expect(channels).toContain('chatCancel: "levi:chat:cancel"');
     expect(channels).toContain('chatFork: "levi:chat:fork"');
     expect(channels).toContain('chatDeleteMessage: "levi:chat:delete-message"');
+    expect(channels).toContain('chatContextPreview: "levi:chat:context-preview"');
+    expect(channels).toContain('chatOpenCitation: "levi:chat:open-citation"');
     expect(main).toContain("const chatService = new ChatService(aiRuntimeManager");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.chatSend");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.chatFork");
+    expect(main).toContain("chatService.send({");
+    expect(main).toContain("ipcMain.handle(IPC_CHANNELS.conversationStart");
     expect(preload).toContain("chat: {");
     expect(preload).toContain("send: (request: AIChatSendRequest)");
     expect(preload).toContain("fork: (request: AIChatForkRequest)");
+    expect(preload).toContain("previewContext: (request: AIChatContextPreviewRequest)");
     expect(preload).not.toContain("ollama.generate");
   });
 
@@ -220,5 +290,17 @@ describe("AI chat foundation", () => {
       window.__leviChatListeners.forEach((listener) => listener({ type: "chunk", requestId: "chat-request-1", conversationId: "chat-1", messageId: "chat-message-assistant-1", content: "`ok`" }));
     });
     expect(await within(panel).findByText("ok")).toBeInTheDocument();
+  });
+
+  it("renders workspace context controls and attaches selected safe context", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<App />);
+
+    const panel = await screen.findByRole("complementary", { name: "AI Chat" });
+    await user.click(await within(panel).findByRole("button", { name: /File src\/main\.tsx/i }));
+
+    await waitFor(() => expect(window.levi.chat.previewContext).toHaveBeenCalledWith(expect.objectContaining({ source: "workspace-file", relativePath: "src/main.tsx", confirmSensitive: true })));
+    expect(await within(panel).findByText(/S1 src\/main\.tsx/i)).toBeInTheDocument();
   });
 });

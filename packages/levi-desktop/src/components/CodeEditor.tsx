@@ -24,6 +24,7 @@ type CodeEditorProps = {
   onEditBreakpoint?: (line: number, request: DebugSetBreakpointRequest) => Promise<void>;
   onEvaluateHover?: (expression: string, frameId?: number) => Promise<DebugEvaluateResult | undefined>;
   onEvaluateSelection?: (expression: string) => Promise<void>;
+  onSelectionChange?: (selection: { content: string; lineStart: number; lineEnd: number } | null) => void;
 };
 
 type MountedEditor = Parameters<OnMount>[0];
@@ -80,7 +81,8 @@ export function CodeEditor({
   onToggleBreakpoint,
   onEditBreakpoint,
   onEvaluateHover,
-  onEvaluateSelection
+  onEvaluateSelection,
+  onSelectionChange
 }: CodeEditorProps) {
   const editorRef = useRef<MountedEditor | null>(null);
   const monacoRef = useRef<MountedMonaco | null>(null);
@@ -154,6 +156,17 @@ export function CodeEditor({
     editor.revealLineInCenter(lineStart);
     editor.setPosition({ lineNumber: lineStart, column: columnStart });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => onSave?.());
+    editor.onDidChangeCursorSelection((event) => {
+      if (!onSelectionChange) return;
+      const model = editor.getModel();
+      const selection = event.selection;
+      if (!model || selection.isEmpty()) {
+        onSelectionChange(null);
+        return;
+      }
+      const content = model.getValueInRange(selection);
+      onSelectionChange(content.trim() ? { content, lineStart: selection.startLineNumber, lineEnd: selection.endLineNumber } : null);
+    });
     editor.onMouseDown((event) => {
       const targetType = event.target.type;
       const gutterClick =

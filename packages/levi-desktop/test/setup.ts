@@ -4,6 +4,7 @@ import type {
   ConversationStreamEvent,
   EditStreamEvent,
   ExecutionTransactionStatus,
+  AIChatContextSource,
   AIChatEvent,
   AIChatState,
   LeviApi,
@@ -82,6 +83,7 @@ function mockExecutionTransaction(status: ExecutionTransactionStatus, overrides:
 }
 
 function createDefaultApi(): LeviApi {
+  const chatContextSources: AIChatContextSource[] = ["current-file", "workspace-file", "workspace-folder", "selected-code", "open-tabs", "workspace-summary", "project-rules", "problems", "task-output", "git-diff", "clipboard"];
   const chatState: AIChatState = {
     conversations: [],
     panel: { dockPosition: "right" },
@@ -1284,6 +1286,7 @@ function createDefaultApi(): LeviApi {
             runtimeId: request.runtimeId,
             modelId: request.modelId,
             pinned: false,
+            archived: false,
             createdAt: "2026-08-01T00:00:00.000Z",
             updatedAt: "2026-08-01T00:00:00.000Z"
           }
@@ -1300,6 +1303,7 @@ function createDefaultApi(): LeviApi {
             title: request.title,
             messages: [],
             pinned: false,
+            archived: false,
             createdAt: "2026-08-01T00:00:00.000Z",
             updatedAt: "2026-08-01T00:00:00.000Z"
           }
@@ -1316,6 +1320,7 @@ function createDefaultApi(): LeviApi {
             title: "New Chat (Fork)",
             messages: [],
             pinned: false,
+            archived: false,
             createdAt: "2026-08-01T00:00:00.000Z",
             updatedAt: "2026-08-01T00:00:00.000Z"
           }
@@ -1334,6 +1339,7 @@ function createDefaultApi(): LeviApi {
               runtimeId: request.runtimeId,
               modelId: request.modelId,
               pinned: false,
+              archived: false,
               createdAt: "2026-08-01T00:00:00.000Z",
               updatedAt: "2026-08-01T00:00:00.000Z",
               messages: [
@@ -1363,7 +1369,65 @@ function createDefaultApi(): LeviApi {
       cancel: vi.fn(async () => chatState),
       export: vi.fn(async (request) => ({
         conversationId: request.conversationId,
-        markdown: "# New Chat\n"
+        format: request.format ?? "markdown",
+        markdown: "# New Chat\n",
+        json: request.format === "json" ? "{\"title\":\"New Chat\"}" : undefined
+      })),
+      archive: vi.fn(async (request) => ({
+        ...chatState,
+        conversations: chatState.conversations.map((conversation) => conversation.id === request.conversationId ? { ...conversation, archived: request.archived } : conversation),
+        updatedAt: "2026-08-01T00:00:00.000Z"
+      })),
+      search: vi.fn(async () => chatState),
+      discoverContext: vi.fn(async () => ({
+        supports: chatContextSources,
+        recentFiles: [
+          { kind: "folder" as const, relativePath: "src", name: "src" },
+          { kind: "file" as const, relativePath: "src/main.tsx", name: "main.tsx" }
+        ]
+      })),
+      previewContext: vi.fn(async (request) => ({
+        attachment: {
+          id: `attachment-${request.source}`,
+          type: request.source,
+          sourceId: "S1",
+          label: request.label ?? request.relativePath ?? request.source,
+          relativePath: request.relativePath,
+          content: request.content ?? "preview",
+          tokenEstimate: 2,
+          confirmed: request.confirmSensitive
+        },
+        budget: {
+          conversationTokens: 0,
+          attachmentTokens: 2,
+          draftTokens: 0,
+          totalTokens: 2,
+          maxTokens: 32768,
+          remainingTokens: 31744,
+          exceedsBudget: false,
+          oversizedAttachments: []
+        }
+      })),
+      budget: vi.fn(async () => ({
+        conversationTokens: 0,
+        attachmentTokens: 0,
+        draftTokens: 0,
+        totalTokens: 0,
+        maxTokens: 32768,
+        remainingTokens: 31744,
+        exceedsBudget: false,
+        oversizedAttachments: []
+      })),
+      openCitation: vi.fn(async () => ({
+        id: "attachment-citation",
+        type: "workspace-file" as const,
+        sourceId: "S1",
+        label: "src/main.tsx",
+        relativePath: "src/main.tsx",
+        content: "console.log('read only');\n",
+        lineStart: 1,
+        lineEnd: 1,
+        tokenEstimate: 8
       })),
       setPanel: vi.fn(async (request) => ({
         ...chatState,

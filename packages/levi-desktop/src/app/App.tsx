@@ -24,7 +24,7 @@ import type {
   UpdateStatus,
   WorkspaceStatus
 } from "../types/levi-api";
-import type { TaskProblem } from "../types/task-api";
+import type { TaskOutputEntry, TaskProblem } from "../types/task-api";
 import type { DebugLaunchConfiguration, DebugSetBreakpointRequest, DebugStackFrame, DebugState, DebugExceptionBreakpoint, DebugAdapterInstallRequest } from "../features/debugger";
 import { DEFAULT_EXCEPTION_BREAKPOINTS } from "../features/debugger";
 import type { WorkspaceReadPathResult } from "../types/workspace-tree-api";
@@ -84,6 +84,14 @@ const idleDebugState: DebugState = {
 };
 const FILE_CONFLICT_CODE = "WORKSPACE_FILE_CONFLICT";
 
+export type EditorSelectionContext = {
+  relativePath: string;
+  language?: string;
+  content: string;
+  lineStart: number;
+  lineEnd: number;
+};
+
 const placeholderCopy: Partial<Record<ActivityView, { title: string; description: string }>> = {
   "source-control": { title: "Source Control", description: "Git status, staging, commits, and branch controls are scheduled for the IDE Core phase." },
   terminal: { title: "Terminal", description: "Use the terminal panel at the bottom of the workspace." }
@@ -124,6 +132,7 @@ export function App() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSummary, setSaveSummary] = useState<string | null>(null);
   const [conflictTabId, setConflictTabId] = useState<string | null>(null);
+  const [editorSelection, setEditorSelection] = useState<EditorSelectionContext | null>(null);
   const lastOpenedDebugFrameRef = useRef<string | null>(null);
   const tabButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const tasks = useTasks(Boolean(selectedProject));
@@ -770,7 +779,27 @@ export function App() {
         />
         <div className={activeTab ? "levi-workspace-layout levi-workspace-layout-editor" : "levi-workspace-layout"}>
           {renderActiveWorkspace()}
-          <AIChatPanel runtimeState={runtimeState} activeTab={activeTab} />
+          <AIChatPanel
+            runtimeState={runtimeState}
+            activeTab={activeTab}
+            tabs={tabs}
+            selectedCode={editorSelection}
+            workspaceStatus={workspaceStatus}
+            taskProblems={tasks.problems}
+            taskOutput={tasks.output as TaskOutputEntry[]}
+            onOpenCitation={async (attachment) => {
+              if (!attachment.relativePath) return;
+              const file = await window.levi.workspace.readPath({ relativePath: attachment.relativePath });
+              openFile({
+                sourceId: attachment.sourceId ?? `WORKSPACE:${file.relativePath}`,
+                relativePath: file.relativePath,
+                content: file.content,
+                language: file.language,
+                lineStart: attachment.lineStart ?? 1,
+                readOnly: false
+              });
+            }}
+          />
           {activeTab ? (
             <aside className="levi-editor-panel" aria-label="Workspace editor">
               <div className="levi-editor-tabs" role="tablist" aria-label="Open files">
@@ -826,6 +855,17 @@ export function App() {
                     onEditBreakpoint={(line, request) => editCodeEditorBreakpoint(line, request)}
                     onEvaluateHover={(expression, frameId) => evaluateDebugHover(expression, frameId)}
                     onEvaluateSelection={(expression) => evaluateDebugSelection(expression)}
+                    onSelectionChange={(selection) =>
+                      setEditorSelection(selection && activeTab
+                        ? {
+                            relativePath: activeTab.relativePath,
+                            language: activeTab.language,
+                            content: selection.content,
+                            lineStart: selection.lineStart,
+                            lineEnd: selection.lineEnd
+                          }
+                        : null)
+                    }
                     onChange={(content) => updateContent(activeTab.id, content)}
                     onSave={() => void saveActiveTab()}
                   />
