@@ -15,6 +15,7 @@ import type {
   AIRuntimeProviderId,
   AIRuntimeRequest
 } from "../src/features/ai-runtime";
+import type { TaskDefinition, TaskEvent, TaskOutputEntry, TaskProblem, TaskRun } from "../src/types/task-api";
 import { App } from "../src/app/App";
 
 function detection(providerId: AIRuntimeProviderId): AIRuntimeDetection {
@@ -93,7 +94,91 @@ function providerWithActions(actions: Array<Record<string, unknown>>): AIRuntime
   }));
 }
 
-async function createService(runtimeProvider = provider()) {
+function fakeWindow() {
+  return { isDestroyed: () => false, webContents: { send: vi.fn() } };
+}
+
+function createFakeTaskService(tasks: TaskDefinition[]) {
+  const listeners: Array<(event: TaskEvent) => void> = [];
+  const output: TaskOutputEntry[] = [];
+  const problems: TaskProblem[] = [];
+  let runStatus: TaskRun["status"] = "running";
+  let exitCode: number | undefined;
+  const service = {
+    onEvent: vi.fn((listener: (event: TaskEvent) => void) => {
+      listeners.push(listener);
+      return () => undefined;
+    }),
+    list: vi.fn(async () => ({ detected: tasks, recent: [], running: [], failed: [], pinned: [] })),
+    run: vi.fn(async (request: { taskId: string }) => {
+      const task = tasks.find((item) => item.id === request.taskId);
+      if (!task) throw new Error("Unknown task.");
+      const run: TaskRun = {
+        id: "task-run-1",
+        taskId: task.id,
+        label: task.label,
+        status: runStatus,
+        terminalSessionId: "terminal-1",
+        startedAt: "2026-08-02T00:00:00.000Z"
+      };
+      listeners.forEach((listener) => listener({ type: "status", run }));
+      return run;
+    }),
+    cancel: vi.fn(async () => {
+      const run: TaskRun = {
+        id: "task-run-1",
+        taskId: tasks[0].id,
+        label: tasks[0].label,
+        status: "cancelled",
+        terminalSessionId: "terminal-1",
+        startedAt: "2026-08-02T00:00:00.000Z",
+        endedAt: "2026-08-02T00:00:01.000Z",
+        durationMs: 1000
+      };
+      listeners.forEach((listener) => listener({ type: "status", run }));
+      return run;
+    }),
+    getOutput: vi.fn(() => output),
+    getProblems: vi.fn(() => problems),
+    emitOutput(entry: TaskOutputEntry) {
+      output.push(entry);
+      listeners.forEach((listener) => listener({ type: "output-entry", entry }));
+    },
+    emitProblems(next: TaskProblem[]) {
+      problems.splice(0, problems.length, ...next);
+      listeners.forEach((listener) => listener({ type: "problems", problems: next }));
+    },
+    finish(status: TaskRun["status"], code?: number) {
+      runStatus = status;
+      exitCode = code;
+      const run: TaskRun = {
+        id: "task-run-1",
+        taskId: tasks[0].id,
+        label: tasks[0].label,
+        status,
+        terminalSessionId: "terminal-1",
+        startedAt: "2026-08-02T00:00:00.000Z",
+        endedAt: "2026-08-02T00:00:02.000Z",
+        durationMs: 2000,
+        exitCode
+      };
+      listeners.forEach((listener) => listener({ type: "status", run }));
+    },
+    setTasks(next: TaskDefinition[]) {
+      tasks.splice(0, tasks.length, ...next);
+    },
+    setRunStatus(status: TaskRun["status"], code?: number) {
+      runStatus = status;
+      exitCode = code;
+    },
+    get exitCode() {
+      return exitCode;
+    }
+  };
+  return service;
+}
+
+async function createService(runtimeProvider = provider(), options: { taskService?: ReturnType<typeof createFakeTaskService>; getWindow?: () => ReturnType<typeof fakeWindow>; getChangedFiles?: () => string[] } = {}) {
   const statePath = path.join(await fsp.mkdtemp(path.join(os.tmpdir(), "levi-agent-")), "agent-state.json");
   const registry = new AIRuntimeProviderRegistry();
   registry.register(runtimeProvider.id, () => runtimeProvider);
@@ -120,7 +205,10 @@ async function createService(runtimeProvider = provider()) {
         excludedFileCount: 1,
         scanTimestamp: "2026-08-01T00:00:00.000Z"
       }
-    })
+    }),
+    taskService: options.taskService as never,
+    getWindow: options.getWindow as never,
+    getChangedFiles: options.getChangedFiles
   });
   await service.initialize();
   return { service, statePath, runtimeProvider, runtimeManager };
@@ -188,12 +276,16 @@ describe("Coding Agent foundation", () => {
     expect(channels).toContain('agentUndo: "levi:agent:undo"');
     expect(channels).toContain('agentQueue: "levi:agent:queue"');
     expect(channels).toContain('agentCancel: "levi:agent:cancel"');
+    expect(channels).toContain('agentTaskExecute: "levi:agent:task-execute"');
+    expect(channels).toContain('agentTaskVerify: "levi:agent:task-verify"');
     expect(main).toContain("const agentService = new AgentService(aiRuntimeManager");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentPlan");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentExecute");
+    expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentTaskExecute");
     expect(preload).toContain("agent: {");
     expect(preload).toContain("plan: (request: AgentPlanRequest)");
     expect(preload).toContain("execute: (request: AgentExecuteRequest)");
+    expect(preload).toContain("taskExecute: (request: AgentTaskExecuteRequest)");
     expect(service).toContain("this.runtimeManager.chat");
     expect(service).not.toContain("writeWorkspacePath");
     expect(service).not.toContain("terminalManager");
@@ -292,6 +384,89 @@ describe("Coding Agent foundation", () => {
     expect(queue.queue.find((item: { actionId: string; status: string }) => item.actionId === actions[3].id)?.status).toBe("Failed");
   });
 
+  it("runs approved predefined tasks, streams output and problems, and creates a read-only verification summary", async () => {
+    const task: TaskDefinition = { id: "npm:test", label: "test", source: "detected", group: "test", command: "npm.cmd", args: ["test"], cwd: ".", problemMatchers: ["$tsc"] };
+    const taskService = createFakeTaskService([task]);
+    const runtimeProvider = providerWithActions([{ type: "run-task", title: "Run tests", description: "Verify changes.", taskId: "npm:test" }]);
+    const { service } = await createService(
+      runtimeProvider,
+      { taskService, getWindow: fakeWindow, getChangedFiles: () => ["src/Login.tsx"] }
+    );
+    const planned = await service.plan({ prompt: "Run tests", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const action = planned.state.sessions[0].plan!.approvals[0];
+
+    await expect(service.taskPreview({ sessionId, actionId: action.id })).rejects.toThrow(/approved/i);
+    await service.approve({ sessionId, actionId: action.id });
+    const preview = await service.taskPreview({ sessionId, actionId: action.id });
+    expect(preview.preview).toMatchObject({ taskId: "npm:test", executable: "npm.cmd", args: ["test"], riskLevel: "low", longRunning: false });
+
+    const execution = await service.taskExecute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    expect(taskService.run).toHaveBeenCalledWith({ taskId: "npm:test" }, expect.any(Object));
+    expect(execution.taskRun).toMatchObject({ status: "Running", terminalSessionId: "terminal-1" });
+    taskService.emitOutput({ id: "out-1", source: "task", channel: "test", text: "running tests\n", timestamp: "2026-08-02T00:00:01.000Z", taskRunId: "task-run-1" });
+    taskService.emitProblems([{ id: "problem-1", relativePath: "src/app.ts", line: 2, column: 3, severity: "error", message: "boom", source: "test", taskRunId: "task-run-1" }]);
+    taskService.finish("succeeded", 0);
+
+    const status = service.taskStatus({ sessionId });
+    expect(status.taskRuns[0]).toMatchObject({ status: "Succeeded", exitCode: 0, outputPreview: [expect.objectContaining({ text: "running tests\n" })], problems: [expect.objectContaining({ message: "boom" })] });
+    const verification = await service.taskVerify({ sessionId, actionId: action.id });
+    expect(runtimeProvider.chat).toHaveBeenCalledTimes(2);
+    expect(verification.verification).toMatchObject({ changedFiles: ["src/Login.tsx"] });
+  });
+
+  it("rejects missing and stale task definitions without running them", async () => {
+    const task: TaskDefinition = { id: "npm:test", label: "test", source: "detected", group: "test", command: "npm.cmd", args: ["test"], cwd: ".", problemMatchers: [] };
+    const taskService = createFakeTaskService([task]);
+    const { service } = await createService(
+      providerWithActions([
+        { type: "run-task", title: "Missing task", description: "Missing.", taskId: "missing" },
+        { type: "run-task", title: "Stale task", description: "Stale.", taskId: "npm:test", taskFingerprint: "old" }
+      ]),
+      { taskService, getWindow: fakeWindow }
+    );
+    const planned = await service.plan({ prompt: "Task checks", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const [missing, stale] = planned.state.sessions[0].plan!.approvals;
+    await service.approve({ sessionId, actionId: missing.id });
+    await service.approve({ sessionId, actionId: stale.id });
+
+    await expect(service.taskPreview({ sessionId, actionId: missing.id })).rejects.toThrow(/missing task/i);
+    await expect(service.taskPreview({ sessionId, actionId: stale.id })).rejects.toThrow(/changed/i);
+    expect(taskService.run).not.toHaveBeenCalled();
+  });
+
+  it("tracks failed, cancelled, long-running, run-again, queue pause, and restart interruption states", async () => {
+    const task: TaskDefinition = { id: "npm:dev", label: "dev", source: "detected", group: "dev", command: "npm.cmd", args: ["run", "dev"], cwd: ".", problemMatchers: [] };
+    const taskService = createFakeTaskService([task]);
+    const { service, statePath, runtimeManager } = await createService(
+      providerWithActions([{ type: "run-task", title: "Run dev", description: "Start dev server.", taskId: "npm:dev" }]),
+      { taskService, getWindow: fakeWindow }
+    );
+    const planned = await service.plan({ prompt: "Start dev", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const action = planned.state.sessions[0].plan!.approvals[0];
+    await service.approve({ sessionId, actionId: action.id });
+    const preview = await service.taskPreview({ sessionId, actionId: action.id });
+    expect(preview.preview.longRunning).toBe(true);
+
+    await service.taskExecute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    await expect(service.taskExecute({ sessionId, actionId: action.id, previewId: preview.preview.previewId })).rejects.toThrow(/already running/i);
+    await service.taskCancel({ sessionId, actionId: action.id });
+    expect(service.taskStatus({ sessionId }).taskRuns[0].status).toBe("Cancelled");
+
+    taskService.setRunStatus("failed", 1);
+    await service.taskExecute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    taskService.finish("failed", 1);
+    expect(service.taskStatus({ sessionId }).taskRuns[0]).toMatchObject({ status: "Failed", failureReason: "Task failed with exit code 1." });
+
+    taskService.setRunStatus("running");
+    await service.taskExecute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    const restored = new AgentService(runtimeManager, { statePath, taskService: taskService as never, getWindow: fakeWindow as never });
+    const restoredState = await restored.initialize();
+    expect(restoredState.sessions[0].plan?.taskRuns[0].status).toBe("Interrupted");
+  });
+
   it("renders the planning-only Agent panel and approval queue", async () => {
     const user = userEvent.setup();
     vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -326,5 +501,163 @@ describe("Coding Agent foundation", () => {
     const dialog = within(panel).getByRole("group", { name: "Approval Dialog" });
     await user.click(within(dialog).getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(window.levi.agent.execute).toHaveBeenCalledWith(expect.objectContaining({ actionId: "action-1", previewId: "preview-1" })));
+  });
+
+  it("renders task approval, running output, terminal reveal, and verification controls", async () => {
+    const user = userEvent.setup();
+    window.levi.agent.plan = vi.fn(async (request) => ({
+      sessionId: "agent-task-1",
+      state: {
+        sessions: [{
+          id: "agent-task-1",
+          title: "Run tests",
+          status: "WaitingForApproval" as const,
+          archived: false,
+          runtimeId: request.runtimeId,
+          modelId: request.modelId,
+          attachments: [],
+          messages: [],
+          plan: {
+            id: "plan-task-1",
+            objective: request.prompt,
+            summary: "Run validation.",
+            estimatedFiles: [],
+            progress: { totalSteps: 1, pendingActions: 1, approvedActions: 0, rejectedActions: 0, completedActions: 0 },
+            steps: [{ id: "step-task-1", order: 1, title: "Validate", description: "Run tests.", status: "Pending" as const, estimatedFiles: [], actionIds: ["task-action-1"] }],
+            approvals: [{
+              id: "task-action-1",
+              type: "run-task" as const,
+              title: "Run test task",
+              description: "Run validation tests.",
+              status: "Pending" as const,
+              stepId: "step-task-1",
+              taskId: "npm:test",
+              taskName: "test",
+              createdAt: "2026-08-01T00:00:00.000Z",
+              updatedAt: "2026-08-01T00:00:00.000Z"
+            }],
+            executionQueue: [],
+            taskRuns: [],
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z"
+          },
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z"
+        }],
+        activeSessionId: "agent-task-1",
+        updatedAt: "2026-08-01T00:00:00.000Z"
+      }
+    }));
+    window.levi.agent.approve = vi.fn(async (request) => ({
+      sessions: [{
+        id: request.sessionId,
+        title: "Run tests",
+        status: "Ready" as const,
+        archived: false,
+        messages: [],
+        attachments: [],
+        plan: {
+          id: "plan-task-1",
+          objective: "Run tests",
+          summary: "Run validation.",
+          estimatedFiles: [],
+          progress: { totalSteps: 1, pendingActions: 0, approvedActions: 1, rejectedActions: 0, completedActions: 0 },
+          steps: [{ id: "step-task-1", order: 1, title: "Validate", description: "Run tests.", status: "Approved" as const, estimatedFiles: [], actionIds: [request.actionId] }],
+          approvals: [{
+            id: request.actionId,
+            type: "run-task" as const,
+            title: "Run test task",
+            description: "Run validation tests.",
+            status: "Approved" as const,
+            stepId: "step-task-1",
+            taskId: "npm:test",
+            taskName: "test",
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z"
+          }],
+          executionQueue: [],
+          taskRuns: [],
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z"
+        },
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z"
+      }],
+      activeSessionId: request.sessionId,
+      updatedAt: "2026-08-01T00:00:00.000Z"
+    }));
+    window.levi.agent.taskPreview = vi.fn(async (request) => ({
+      sessionId: request.sessionId,
+      preview: {
+        previewId: "task-preview-1",
+        sessionId: request.sessionId,
+        actionId: request.actionId,
+        taskId: "npm:test",
+        taskName: "test",
+        source: "detected" as const,
+        executable: "npm.cmd",
+        args: ["test"],
+        cwd: ".",
+        expectedPurpose: "Run validation tests.",
+        riskLevel: "low" as const,
+        longRunning: false,
+        definitionFingerprint: "fingerprint",
+        createdAt: "2026-08-01T00:00:00.000Z"
+      },
+      state: {
+        sessions: [{
+          id: request.sessionId,
+          title: "Run tests",
+          status: "Ready" as const,
+          archived: false,
+          messages: [],
+          attachments: [],
+          plan: {
+            id: "plan-task-1",
+            objective: "Run tests",
+            summary: "Run validation.",
+            estimatedFiles: [],
+            progress: { totalSteps: 1, pendingActions: 0, approvedActions: 1, rejectedActions: 0, completedActions: 0 },
+            steps: [],
+            approvals: [],
+            executionQueue: [],
+            taskRuns: [{
+              actionId: request.actionId,
+              taskId: "npm:test",
+              taskName: "test",
+              status: "Running" as const,
+              runId: "task-run-1",
+              terminalSessionId: "terminal-1",
+              startedAt: "2026-08-01T00:00:00.000Z",
+              longRunning: false,
+              definitionFingerprint: "fingerprint",
+              outputPreview: [{ id: "out-1", source: "task" as const, channel: "test", text: "pass\n", timestamp: "2026-08-01T00:00:00.000Z", taskRunId: "task-run-1" }],
+              problems: [],
+              updatedAt: "2026-08-01T00:00:00.000Z"
+            }],
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z"
+          },
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z"
+        }],
+        activeSessionId: request.sessionId,
+        updatedAt: "2026-08-01T00:00:00.000Z"
+      }
+    }));
+
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Coding Agent" }));
+    const panel = await screen.findByRole("region", { name: "Coding Agent" });
+    await user.type(within(panel).getByRole("textbox", { name: "Agent Request" }), "Run tests");
+    await user.click(within(panel).getByRole("button", { name: "Generate Plan" }));
+    await user.click(await within(panel).findByRole("button", { name: "Approve" }));
+    await user.click(await within(panel).findByRole("button", { name: "Preview" }));
+
+    expect(await within(panel).findByRole("group", { name: "Task Approval Card" })).toBeInTheDocument();
+    expect(within(panel).getByText("npm.cmd")).toBeInTheDocument();
+    expect(within(panel).getByText("pass")).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "Cancel Task" })).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "Reveal Terminal" })).toBeInTheDocument();
   });
 });

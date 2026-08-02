@@ -50,6 +50,11 @@ import type {
   AgentQueueRequest,
   AgentRenameRequest,
   AgentStatusRequest,
+  AgentTaskCancelRequest,
+  AgentTaskExecuteRequest,
+  AgentTaskPreviewRequest,
+  AgentTaskStatusRequest,
+  AgentTaskVerifyRequest,
   AgentUndoRequest
 } from "../../src/types/levi-api";
 import type { TaskEvent } from "../../src/types/task-api";
@@ -227,6 +232,11 @@ const IPC_CHANNELS = {
   agentPreview: "levi:agent:preview",
   agentQueue: "levi:agent:queue",
   agentCancel: "levi:agent:cancel",
+  agentTaskPreview: "levi:agent:task-preview",
+  agentTaskExecute: "levi:agent:task-execute",
+  agentTaskCancel: "levi:agent:task-cancel",
+  agentTaskStatus: "levi:agent:task-status",
+  agentTaskVerify: "levi:agent:task-verify",
   agentStatus: "levi:agent:status",
   agentEvent: "levi:agent:event",
   conversationStart: "levi:conversation:start",
@@ -643,6 +653,11 @@ const leviApi: LeviApiWithWorkspaceTree = {
     undo: (request: AgentUndoRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentUndo, request),
     queue: (request: AgentQueueRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentQueue, request),
     cancel: (request: AgentCancelRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentCancel, request),
+    taskPreview: (request: AgentTaskPreviewRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentTaskPreview, request),
+    taskExecute: (request: AgentTaskExecuteRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentTaskExecute, request),
+    taskCancel: (request: AgentTaskCancelRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentTaskCancel, request),
+    taskStatus: (request: AgentTaskStatusRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentTaskStatus, request),
+    taskVerify: (request: AgentTaskVerifyRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentTaskVerify, request),
     status: (request?: AgentStatusRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentStatus, request ?? {}),
     onEvent: (listener: (event: AgentEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: AgentEvent) => listener(payload);

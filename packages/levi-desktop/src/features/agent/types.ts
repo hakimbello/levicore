@@ -1,5 +1,6 @@
 import type { AIChatAttachment } from "../ai-chat";
 import type { AIRuntimeProviderId } from "../ai-runtime";
+import type { TaskDefinition, TaskOutputEntry, TaskProblem, TaskRun } from "../../types/task-api";
 
 export type AgentSessionStatus = "Idle" | "Planning" | "WaitingForApproval" | "Ready" | "Executing" | "Archived" | "Error";
 
@@ -60,6 +61,8 @@ export type AgentApprovalAction = {
   destinationRelativePath?: string;
   content?: string;
   edits?: AgentFileEdit[];
+  taskId?: string;
+  taskFingerprint?: string;
   taskName?: string;
   command?: string;
   gitOperation?: string;
@@ -117,6 +120,58 @@ export type AgentUndoMetadata = {
   timestamp: string;
 };
 
+export type AgentTaskActionStatus = "Pending" | "Approved" | "Running" | "Succeeded" | "Failed" | "Cancelled" | "Interrupted";
+
+export type AgentTaskPreview = {
+  previewId: string;
+  sessionId: string;
+  actionId: string;
+  taskId: string;
+  taskName: string;
+  source: TaskDefinition["source"];
+  executable: string;
+  args: string[];
+  cwd?: string;
+  expectedPurpose: string;
+  riskLevel: AgentRiskLevel;
+  longRunning: boolean;
+  definitionFingerprint: string;
+  createdAt: string;
+};
+
+export type AgentTaskRunState = {
+  actionId: string;
+  taskId: string;
+  taskName: string;
+  status: AgentTaskActionStatus;
+  runId?: string;
+  terminalSessionId?: string;
+  startedAt?: string;
+  endedAt?: string;
+  exitCode?: number;
+  durationMs?: number;
+  longRunning: boolean;
+  definitionFingerprint: string;
+  outputPreview: TaskOutputEntry[];
+  problems: TaskProblem[];
+  failureReason?: string;
+  verification?: AgentTaskVerificationSummary;
+  updatedAt: string;
+};
+
+export type AgentTaskVerificationSummary = {
+  id: string;
+  actionId: string;
+  taskRunId?: string;
+  summary: string;
+  exitCode?: number;
+  durationMs?: number;
+  outputExcerpt: string;
+  problems: TaskProblem[];
+  changedFiles: string[];
+  createdAt: string;
+};
+
 export type AgentExecutionPlan = {
   id: string;
   objective: string;
@@ -124,6 +179,7 @@ export type AgentExecutionPlan = {
   steps: AgentPlanStep[];
   approvals: AgentApprovalAction[];
   executionQueue: AgentExecutionQueueItem[];
+  taskRuns: AgentTaskRunState[];
   lastUndo?: AgentUndoMetadata;
   estimatedFiles: string[];
   progress: {
@@ -239,6 +295,32 @@ export type AgentCancelRequest = {
   actionId?: string;
 };
 
+export type AgentTaskPreviewRequest = {
+  sessionId: string;
+  actionId: string;
+};
+
+export type AgentTaskExecuteRequest = {
+  sessionId: string;
+  actionId: string;
+  previewId?: string;
+};
+
+export type AgentTaskCancelRequest = {
+  sessionId: string;
+  actionId: string;
+};
+
+export type AgentTaskStatusRequest = {
+  sessionId: string;
+  actionId?: string;
+};
+
+export type AgentTaskVerifyRequest = {
+  sessionId: string;
+  actionId: string;
+};
+
 export type AgentStatusRequest = {
   sessionId?: string;
 };
@@ -279,8 +361,37 @@ export type AgentUndoResult = {
   state: AgentState;
 };
 
+export type AgentTaskPreviewResult = {
+  sessionId: string;
+  preview: AgentTaskPreview;
+  state: AgentState;
+};
+
+export type AgentTaskExecutionResult = {
+  sessionId: string;
+  actionId: string;
+  taskRun: AgentTaskRunState;
+  state: AgentState;
+};
+
+export type AgentTaskStatusResult = {
+  sessionId: string;
+  taskRuns: AgentTaskRunState[];
+  state: AgentState;
+};
+
+export type AgentTaskVerificationResult = {
+  sessionId: string;
+  actionId: string;
+  verification: AgentTaskVerificationSummary;
+  state: AgentState;
+};
+
 export type AgentEvent =
   | { type: "state"; state: AgentState }
   | { type: "progress"; sessionId: string; state: AgentState }
   | { type: "preview"; sessionId: string; preview: AgentActionPreview; state: AgentState }
-  | { type: "execution"; sessionId: string; actionId: string; state: AgentState };
+  | { type: "execution"; sessionId: string; actionId: string; state: AgentState }
+  | { type: "task-preview"; sessionId: string; preview: AgentTaskPreview; state: AgentState }
+  | { type: "task"; sessionId: string; actionId: string; taskRun: AgentTaskRunState; state: AgentState }
+  | { type: "task-verification"; sessionId: string; actionId: string; verification: AgentTaskVerificationSummary; state: AgentState };

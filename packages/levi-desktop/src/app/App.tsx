@@ -545,6 +545,7 @@ export function App() {
             workspaceStatus={workspaceStatus}
             taskProblems={tasks.problems}
             taskOutput={tasks.output as TaskOutputEntry[]}
+            onRevealTerminal={revealTaskTerminal}
           />
         </LazySurface>
       );

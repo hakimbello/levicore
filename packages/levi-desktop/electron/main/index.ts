@@ -121,11 +121,6 @@ const EXECUTION_TIMEOUT_MS = 240000;
 const desktopRuntimeService = new DesktopRuntimeService({ repositoryRoot: getRepositoryRoot() });
 const aiRuntimeManager = new RuntimeManager();
 const chatService = new ChatService(aiRuntimeManager, { emit: sendChatEvent });
-const agentService = new AgentService(aiRuntimeManager, {
-  emit: sendAgentEvent,
-  getWorkspaceRoot: () => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null,
-  getWorkspaceStatus: () => workspaceStatus
-});
 const updateService = new UpdateService();
 const terminalManager = new TerminalManager(
   () => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null,
@@ -136,6 +131,14 @@ const taskService = new TaskService(
   () => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null,
   () => workspaceScan?.summary
 );
+const agentService = new AgentService(aiRuntimeManager, {
+  emit: sendAgentEvent,
+  getWorkspaceRoot: () => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null,
+  getWorkspaceStatus: () => workspaceStatus,
+  getWindow: () => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null,
+  taskService,
+  getChangedFiles: () => taskService.getOutput({ source: "git" }).map((entry) => entry.text).slice(-40)
+});
 terminalManager.onTerminalData((sessionId, data) => {
   taskService.bindTerminalOutput(sessionId, data);
 });
@@ -2353,6 +2356,26 @@ function registerIpc(): void {
   ipcMain.handle(IPC_CHANNELS.agentCancel, async (_event, request, ...args) => {
     assertNoIpcArgs(args);
     return agentService.cancel(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentTaskPreview, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.taskPreview(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentTaskExecute, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.taskExecute(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentTaskCancel, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.taskCancel(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentTaskStatus, (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.taskStatus(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentTaskVerify, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.taskVerify(request);
   });
   ipcMain.handle(IPC_CHANNELS.agentStatus, (_event, request, ...args) => {
     assertNoIpcArgs(args);

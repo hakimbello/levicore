@@ -2944,7 +2944,8 @@ textarea:focus-visible,
 .levi-agent-steps li,
 .levi-agent-approvals article,
 .levi-agent-execution-queue article,
-.levi-agent-preview {
+.levi-agent-preview,
+.levi-agent-task-preview {
   border: 1px solid var(--levi-color-border);
   border-radius: var(--levi-radius-control);
   padding: var(--levi-space-10);
@@ -2959,10 +2960,32 @@ textarea:focus-visible,
   align-items: center;
 }
 
-.levi-agent-preview {
+.levi-agent-preview,
+.levi-agent-task-preview {
   display: grid;
   gap: var(--levi-space-12);
   background: var(--levi-color-surface);
+}
+
+.levi-agent-task-output {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: var(--levi-space-12);
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-control);
+  background: var(--levi-color-surfaceElevated);
+  color: var(--levi-color-text);
+  font: 12px/1.5 "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  white-space: pre-wrap;
+}
+
+.levi-agent-task-problems,
+.levi-agent-task-verification {
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-control);
+  padding: var(--levi-space-10);
+  background: var(--levi-color-surfaceElevated);
 }
 
 .levi-agent-monaco-diff {

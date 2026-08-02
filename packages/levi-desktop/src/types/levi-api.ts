@@ -91,6 +91,15 @@ import type {
   AgentSession,
   AgentState,
   AgentStatusRequest,
+  AgentTaskCancelRequest,
+  AgentTaskExecuteRequest,
+  AgentTaskExecutionResult,
+  AgentTaskPreviewRequest,
+  AgentTaskPreviewResult,
+  AgentTaskStatusRequest,
+  AgentTaskStatusResult,
+  AgentTaskVerificationResult,
+  AgentTaskVerifyRequest,
   AgentUndoRequest,
   AgentUndoResult
 } from "../features/agent";
@@ -131,6 +140,19 @@ export type {
   AgentSessionStatus,
   AgentState,
   AgentStatusRequest,
+  AgentTaskActionStatus,
+  AgentTaskCancelRequest,
+  AgentTaskExecuteRequest,
+  AgentTaskExecutionResult,
+  AgentTaskPreview,
+  AgentTaskPreviewRequest,
+  AgentTaskPreviewResult,
+  AgentTaskRunState,
+  AgentTaskStatusRequest,
+  AgentTaskStatusResult,
+  AgentTaskVerificationResult,
+  AgentTaskVerificationSummary,
+  AgentTaskVerifyRequest,
   AgentUndoMetadata,
   AgentUndoRequest,
   AgentUndoResult
@@ -1171,6 +1193,11 @@ export type LeviApi = {
     undo: (request: AgentUndoRequest) => Promise<AgentUndoResult>;
     queue: (request: AgentQueueRequest) => Promise<AgentQueueResult>;
     cancel: (request: AgentCancelRequest) => Promise<AgentExecutionResult>;
+    taskPreview: (request: AgentTaskPreviewRequest) => Promise<AgentTaskPreviewResult>;
+    taskExecute: (request: AgentTaskExecuteRequest) => Promise<AgentTaskExecutionResult>;
+    taskCancel: (request: AgentTaskCancelRequest) => Promise<AgentTaskExecutionResult>;
+    taskStatus: (request: AgentTaskStatusRequest) => Promise<AgentTaskStatusResult>;
+    taskVerify: (request: AgentTaskVerifyRequest) => Promise<AgentTaskVerificationResult>;
     status: (request?: AgentStatusRequest) => Promise<AgentState | AgentSession>;
     onEvent: (listener: (event: AgentEvent) => void) => () => void;
   };

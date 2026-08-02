@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { TextDecoder } from "node:util";
+import type { BrowserWindow } from "electron";
 import type {
   AgentActionPreview,
   AgentApprovalAction,
@@ -18,16 +19,35 @@ import type {
   AgentRiskLevel,
   AgentSession,
   AgentState,
+  AgentTaskCancelRequest,
+  AgentTaskExecuteRequest,
+  AgentTaskExecutionResult,
+  AgentTaskPreview,
+  AgentTaskPreviewRequest,
+  AgentTaskPreviewResult,
+  AgentTaskRunState,
+  AgentTaskStatusRequest,
+  AgentTaskStatusResult,
+  AgentTaskVerificationResult,
+  AgentTaskVerificationSummary,
+  AgentTaskVerifyRequest,
   AgentUndoMetadata,
   AgentUndoRequest,
   AgentUndoResult
 } from "../../src/features/agent";
+import type { AIRuntimeInvocationResponse } from "../../src/features/ai-runtime";
+import type { TaskDefinition, TaskEvent, TaskOutputEntry, TaskProblem, TaskRun } from "../../src/types/task-api";
 import { generateLocalDiff, hashContent, writeAtomically } from "./edit-context";
+import type { RuntimeManager } from "./ai-runtime";
+import type { TaskService } from "./tasks/task-service";
 import { getMonacoLanguage, isInsideRoot, normalizeSlashes } from "./workspace-context";
 
 const MAX_TEXT_BYTES = 5 * 1024 * 1024;
 const MAX_CONTENT_CHARS = 420_000;
 const MAX_DIFF_LINES = 1_000;
+const MAX_TASK_OUTPUT_ENTRIES = 40;
+const MAX_TASK_OUTPUT_CHARS = 12_000;
+const MAX_TASK_PROBLEMS = 40;
 const SUPPORTED_ACTIONS = new Set(["create-file", "modify-file", "delete-file", "rename-file", "create-folder", "rename-folder"]);
 
 type AgentExecutionServiceOptions = {
@@ -36,6 +56,13 @@ type AgentExecutionServiceOptions = {
   persistAndEmit: () => Promise<void>;
   emitExecution: (sessionId: string, actionId: string) => void;
   emitPreview: (sessionId: string, preview: AgentActionPreview) => void;
+  emitTaskPreview?: (sessionId: string, preview: AgentTaskPreview) => void;
+  emitTask?: (sessionId: string, actionId: string, taskRun: AgentTaskRunState) => void;
+  emitTaskVerification?: (sessionId: string, actionId: string, verification: AgentTaskVerificationSummary) => void;
+  taskService?: TaskService;
+  runtimeManager?: RuntimeManager;
+  getWindow?: () => BrowserWindow | null;
+  getChangedFiles?: () => string[];
 };
 
 type ResolvedWorkspacePath = {
@@ -82,6 +109,7 @@ type UndoRecord =
 
 export class AgentExecutionService {
   private readonly previews = new Map<string, AgentActionPreview>();
+  private readonly taskPreviews = new Map<string, AgentTaskPreview>();
   private readonly undoBySession = new Map<string, UndoRecord>();
 
   constructor(private readonly options: AgentExecutionServiceOptions) {}
@@ -227,6 +255,126 @@ export class AgentExecutionService {
     const actionId = request.actionId ?? targets[0].actionId;
     this.options.emitExecution(session.id, actionId);
     return { sessionId: session.id, actionId, state: this.options.snapshot() };
+  }
+
+  async taskPreview(session: AgentSession, rawRequest: unknown): Promise<AgentTaskPreviewResult> {
+    const request = validateTaskPreviewRequest(rawRequest);
+    const action = requireAction(session, request.actionId);
+    requireApprovedTaskAction(action);
+    const task = await this.resolveTask(action);
+    const preview = this.createTaskPreview(session.id, action, task);
+    this.taskPreviews.set(preview.previewId, preview);
+    const taskRun = ensureTaskRun(session, action, preview);
+    taskRun.status = "Approved";
+    taskRun.updatedAt = new Date().toISOString();
+    await this.touch(session);
+    this.options.emitTaskPreview?.(session.id, preview);
+    return { sessionId: session.id, preview, state: this.options.snapshot() };
+  }
+
+  async taskExecute(session: AgentSession, rawRequest: unknown): Promise<AgentTaskExecutionResult> {
+    const request = validateTaskExecuteRequest(rawRequest);
+    const action = requireAction(session, request.actionId);
+    requireApprovedTaskAction(action);
+    if (ensureTaskRuns(session).some((run) => run.status === "Running")) {
+      throw new Error("Another agent task action is already running.");
+    }
+    const task = await this.resolveTask(action);
+    const preview = request.previewId ? this.requireTaskPreview(request.previewId, session.id, action.id) : this.createTaskPreview(session.id, action, task);
+    assertTaskFingerprint(task, preview.definitionFingerprint);
+    const window = this.options.getWindow?.();
+    if (!window || window.isDestroyed()) {
+      throw new Error("No active Levi window is available for task execution.");
+    }
+    const taskRun = ensureTaskRun(session, action, preview);
+    const startedAt = new Date().toISOString();
+    Object.assign(taskRun, {
+      status: "Running" as const,
+      startedAt,
+      endedAt: undefined,
+      exitCode: undefined,
+      durationMs: undefined,
+      failureReason: undefined,
+      outputPreview: [],
+      problems: [],
+      verification: undefined,
+      updatedAt: startedAt
+    });
+    session.status = "Executing";
+    await this.touch(session);
+    const run = await this.options.taskService!.run({ taskId: task.id }, window);
+    taskRun.runId = run.id;
+    taskRun.terminalSessionId = run.terminalSessionId;
+    taskRun.updatedAt = new Date().toISOString();
+    await this.touch(session);
+    this.options.emitTask?.(session.id, action.id, taskRun);
+    return { sessionId: session.id, actionId: action.id, taskRun, state: this.options.snapshot() };
+  }
+
+  async taskCancel(session: AgentSession, rawRequest: unknown): Promise<AgentTaskExecutionResult> {
+    const request = validateTaskCancelRequest(rawRequest);
+    const taskRun = requireTaskRun(session, request.actionId);
+    if (!taskRun.runId) {
+      throw new Error("Agent task action has no active task run.");
+    }
+    const run = await this.options.taskService!.cancel({ runId: taskRun.runId });
+    await this.recordTaskCompletion(session, taskRun, run);
+    return { sessionId: session.id, actionId: request.actionId, taskRun, state: this.options.snapshot() };
+  }
+
+  taskStatus(session: AgentSession, rawRequest: unknown): AgentTaskStatusResult {
+    const request = validateTaskStatusRequest(rawRequest);
+    const taskRuns = ensureTaskRuns(session);
+    return {
+      sessionId: session.id,
+      taskRuns: request.actionId ? taskRuns.filter((run) => run.actionId === request.actionId) : taskRuns,
+      state: this.options.snapshot()
+    };
+  }
+
+  async taskVerify(session: AgentSession, rawRequest: unknown): Promise<AgentTaskVerificationResult> {
+    const request = validateTaskVerifyRequest(rawRequest);
+    const taskRun = requireTaskRun(session, request.actionId);
+    if (taskRun.status === "Running") {
+      throw new Error("Cannot verify a running task.");
+    }
+    const verification = await this.createVerification(session, taskRun);
+    taskRun.verification = verification;
+    taskRun.updatedAt = new Date().toISOString();
+    await this.touch(session);
+    this.options.emitTaskVerification?.(session.id, request.actionId, verification);
+    return { sessionId: session.id, actionId: request.actionId, verification, state: this.options.snapshot() };
+  }
+
+  handleTaskEvent(event: TaskEvent): void {
+    for (const session of this.options.snapshot().sessions) {
+      for (const taskRun of session.plan?.taskRuns ?? []) {
+        if (event.type === "output-entry" && taskRun.runId && event.entry.taskRunId === taskRun.runId) {
+          taskRun.outputPreview = boundedOutput([...taskRun.outputPreview, event.entry]);
+          taskRun.updatedAt = new Date().toISOString();
+          void this.touch(session);
+          this.options.emitTask?.(session.id, taskRun.actionId, taskRun);
+        } else if (event.type === "problems" && taskRun.runId) {
+          taskRun.problems = event.problems.filter((problem) => problem.taskRunId === taskRun.runId).slice(0, MAX_TASK_PROBLEMS);
+          taskRun.updatedAt = new Date().toISOString();
+          void this.touch(session);
+          this.options.emitTask?.(session.id, taskRun.actionId, taskRun);
+        } else if (event.type === "status" && taskRun.runId === event.run.id) {
+          void this.recordTaskCompletion(session, taskRun, event.run);
+        }
+      }
+    }
+  }
+
+  markInterrupted(session: AgentSession): void {
+    for (const taskRun of session.plan?.taskRuns ?? []) {
+      if (taskRun.status === "Running") {
+        taskRun.status = "Interrupted";
+        taskRun.endedAt = new Date().toISOString();
+        taskRun.failureReason = "Task was interrupted before Levi shut down.";
+        taskRun.updatedAt = taskRun.endedAt;
+      }
+    }
   }
 
   private async createPreview(sessionId: string, action: AgentApprovalAction): Promise<AgentActionPreview> {
@@ -441,6 +589,129 @@ export class AgentExecutionService {
     session.updatedAt = new Date().toISOString();
     await this.options.persistAndEmit();
   }
+
+  private async resolveTask(action: AgentApprovalAction): Promise<TaskDefinition> {
+    if (!this.options.taskService) {
+      throw new Error("TaskService is unavailable.");
+    }
+    const taskId = action.taskId ?? action.taskName;
+    if (!taskId) {
+      throw new Error("Agent task action is missing a task ID.");
+    }
+    const tasks = await this.options.taskService.list();
+    const task = tasks.detected.find((item) => item.id === taskId || item.label === taskId);
+    if (!task) {
+      throw new Error("Agent task action references a missing task.");
+    }
+    if (action.taskFingerprint && taskFingerprint(task) !== action.taskFingerprint) {
+      throw new Error("Agent task definition changed since planning.");
+    }
+    return task;
+  }
+
+  private createTaskPreview(sessionId: string, action: AgentApprovalAction, task: TaskDefinition): AgentTaskPreview {
+    return {
+      previewId: randomUUID(),
+      sessionId,
+      actionId: action.id,
+      taskId: task.id,
+      taskName: task.label,
+      source: task.source,
+      executable: task.command,
+      args: [...task.args],
+      cwd: task.cwd,
+      expectedPurpose: action.description || action.title,
+      riskLevel: taskRisk(task),
+      longRunning: isLongRunningTask(task),
+      definitionFingerprint: taskFingerprint(task),
+      createdAt: new Date().toISOString()
+    };
+  }
+
+  private requireTaskPreview(previewId: string, sessionId: string, actionId: string): AgentTaskPreview {
+    const preview = this.taskPreviews.get(previewId);
+    if (!preview || preview.sessionId !== sessionId || preview.actionId !== actionId) {
+      throw new Error("Agent task preview was not found.");
+    }
+    return preview;
+  }
+
+  private async recordTaskCompletion(session: AgentSession, taskRun: AgentTaskRunState, run: TaskRun): Promise<void> {
+    if (run.status === "running" || run.status === "queued") {
+      taskRun.status = "Running";
+    } else if (run.status === "succeeded") {
+      taskRun.status = "Succeeded";
+      session.status = "Ready";
+    } else if (run.status === "cancelled") {
+      taskRun.status = "Cancelled";
+      session.status = "Ready";
+      taskRun.failureReason = "Task was cancelled.";
+    } else {
+      taskRun.status = "Failed";
+      session.status = "Error";
+      taskRun.failureReason = `Task failed with exit code ${run.exitCode ?? 1}.`;
+      session.error = taskRun.failureReason;
+    }
+    taskRun.runId = run.id;
+    taskRun.terminalSessionId = run.terminalSessionId;
+    taskRun.startedAt = run.startedAt ?? taskRun.startedAt;
+    taskRun.endedAt = run.endedAt ?? taskRun.endedAt;
+    taskRun.exitCode = run.exitCode;
+    taskRun.durationMs = run.durationMs;
+    taskRun.outputPreview = boundedOutput(this.options.taskService?.getOutput({ source: "task" }).filter((entry) => entry.taskRunId === run.id) ?? taskRun.outputPreview);
+    taskRun.problems = (this.options.taskService?.getProblems().filter((problem) => problem.taskRunId === run.id) ?? taskRun.problems).slice(0, MAX_TASK_PROBLEMS);
+    taskRun.updatedAt = new Date().toISOString();
+    await this.touch(session);
+    this.options.emitTask?.(session.id, taskRun.actionId, taskRun);
+  }
+
+  private async createVerification(session: AgentSession, taskRun: AgentTaskRunState): Promise<AgentTaskVerificationSummary> {
+    const outputExcerpt = taskRun.outputPreview.map((entry) => entry.text).join("").slice(-MAX_TASK_OUTPUT_CHARS);
+    const changedFiles = this.options.getChangedFiles?.().slice(0, 40) ?? [];
+    const fallback = `${taskRun.taskName} ${taskRun.status.toLowerCase()}${taskRun.exitCode === undefined ? "" : ` with exit code ${taskRun.exitCode}`}.`;
+    let summary = fallback;
+    if (this.options.runtimeManager && session.modelId) {
+      try {
+        const response: AIRuntimeInvocationResponse = await this.options.runtimeManager.chat({
+          providerId: session.runtimeId,
+          model: session.modelId,
+          messages: [
+            {
+              role: "system",
+              content: "Summarize approved Levi task results. Do not propose edits, run commands, request retries, or trigger follow-up actions."
+            },
+            {
+              role: "user",
+              content: JSON.stringify({
+                task: taskRun.taskName,
+                status: taskRun.status,
+                exitCode: taskRun.exitCode,
+                durationMs: taskRun.durationMs,
+                outputExcerpt,
+                problems: taskRun.problems,
+                changedFiles
+              })
+            }
+          ]
+        });
+        summary = response.content.slice(0, 2_000);
+      } catch {
+        summary = fallback;
+      }
+    }
+    return {
+      id: randomUUID(),
+      actionId: taskRun.actionId,
+      taskRunId: taskRun.runId,
+      summary,
+      exitCode: taskRun.exitCode,
+      durationMs: taskRun.durationMs,
+      outputExcerpt,
+      problems: taskRun.problems.slice(0, MAX_TASK_PROBLEMS),
+      changedFiles,
+      createdAt: new Date().toISOString()
+    };
+  }
 }
 
 function validatePreviewRequest(value: unknown): AgentPreviewRequest {
@@ -476,6 +747,43 @@ function validateCancelRequest(value: unknown): AgentCancelRequest {
     sessionId: validateId(record.sessionId, "sessionId"),
     actionId: record.actionId === undefined ? undefined : validateId(record.actionId, "actionId")
   };
+}
+
+function validateTaskPreviewRequest(value: unknown): AgentTaskPreviewRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent task preview request is invalid.");
+  const record = value as Record<string, unknown>;
+  return { sessionId: validateId(record.sessionId, "sessionId"), actionId: validateId(record.actionId, "actionId") };
+}
+
+function validateTaskExecuteRequest(value: unknown): AgentTaskExecuteRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent task execute request is invalid.");
+  const record = value as Record<string, unknown>;
+  return {
+    sessionId: validateId(record.sessionId, "sessionId"),
+    actionId: validateId(record.actionId, "actionId"),
+    previewId: record.previewId === undefined ? undefined : validateId(record.previewId, "previewId")
+  };
+}
+
+function validateTaskCancelRequest(value: unknown): AgentTaskCancelRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent task cancel request is invalid.");
+  const record = value as Record<string, unknown>;
+  return { sessionId: validateId(record.sessionId, "sessionId"), actionId: validateId(record.actionId, "actionId") };
+}
+
+function validateTaskStatusRequest(value: unknown): AgentTaskStatusRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent task status request is invalid.");
+  const record = value as Record<string, unknown>;
+  return {
+    sessionId: validateId(record.sessionId, "sessionId"),
+    actionId: record.actionId === undefined ? undefined : validateId(record.actionId, "actionId")
+  };
+}
+
+function validateTaskVerifyRequest(value: unknown): AgentTaskVerifyRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent task verify request is invalid.");
+  const record = value as Record<string, unknown>;
+  return { sessionId: validateId(record.sessionId, "sessionId"), actionId: validateId(record.actionId, "actionId") };
 }
 
 function validateId(value: unknown, field: string): string {
@@ -517,6 +825,15 @@ function requireSupportedApprovedAction(action: AgentApprovalAction): void {
   }
 }
 
+function requireApprovedTaskAction(action: AgentApprovalAction): void {
+  if (action.status !== "Approved") {
+    throw new Error("Agent task action must be approved before execution.");
+  }
+  if (action.type !== "run-task") {
+    throw new Error("Only approved task actions can use the task executor.");
+  }
+}
+
 function ensureQueue(session: AgentSession): AgentExecutionQueueItem[] {
   if (!session.plan) throw new Error("Agent session has no execution plan.");
   const existing = new Map((session.plan.executionQueue ?? []).map((item) => [item.actionId, item]));
@@ -541,6 +858,42 @@ function ensureQueueItem(session: AgentSession, action: AgentApprovalAction): Ag
   return item;
 }
 
+function ensureTaskRuns(session: AgentSession): AgentTaskRunState[] {
+  if (!session.plan) throw new Error("Agent session has no execution plan.");
+  session.plan.taskRuns = Array.isArray(session.plan.taskRuns) ? session.plan.taskRuns : [];
+  return session.plan.taskRuns;
+}
+
+function ensureTaskRun(session: AgentSession, action: AgentApprovalAction, preview: AgentTaskPreview): AgentTaskRunState {
+  const runs = ensureTaskRuns(session);
+  let run = runs.find((item) => item.actionId === action.id);
+  if (!run) {
+    run = {
+      actionId: action.id,
+      taskId: preview.taskId,
+      taskName: preview.taskName,
+      status: "Pending",
+      longRunning: preview.longRunning,
+      definitionFingerprint: preview.definitionFingerprint,
+      outputPreview: [],
+      problems: [],
+      updatedAt: new Date().toISOString()
+    };
+    runs.push(run);
+  }
+  run.taskId = preview.taskId;
+  run.taskName = preview.taskName;
+  run.longRunning = preview.longRunning;
+  run.definitionFingerprint = preview.definitionFingerprint;
+  return run;
+}
+
+function requireTaskRun(session: AgentSession, actionId: string): AgentTaskRunState {
+  const run = ensureTaskRuns(session).find((item) => item.actionId === actionId);
+  if (!run) throw new Error("Agent task action run state was not found.");
+  return run;
+}
+
 function progressFromSession(session: AgentSession): NonNullable<AgentSession["plan"]>["progress"] {
   const plan = session.plan;
   if (!plan) return { totalSteps: 0, pendingActions: 0, approvedActions: 0, rejectedActions: 0, completedActions: 0 };
@@ -550,8 +903,44 @@ function progressFromSession(session: AgentSession): NonNullable<AgentSession["p
     pendingActions: plan.approvals.filter((item) => item.status === "Pending").length,
     approvedActions: plan.approvals.filter((item) => item.status === "Approved").length,
     rejectedActions: plan.approvals.filter((item) => item.status === "Rejected").length + queue.filter((item) => item.status === "Rejected").length,
-    completedActions: queue.filter((item) => item.status === "Completed").length
+    completedActions: queue.filter((item) => item.status === "Completed").length + (plan.taskRuns ?? []).filter((item) => item.status === "Succeeded").length
   };
+}
+
+function taskFingerprint(task: TaskDefinition): string {
+  return createHash("sha256")
+    .update(JSON.stringify({ id: task.id, label: task.label, source: task.source, group: task.group, command: task.command, args: task.args, cwd: task.cwd }))
+    .digest("hex");
+}
+
+function assertTaskFingerprint(task: TaskDefinition, fingerprint: string): void {
+  if (taskFingerprint(task) !== fingerprint) {
+    throw new Error("Agent task definition changed since preview.");
+  }
+}
+
+function isLongRunningTask(task: TaskDefinition): boolean {
+  return task.group === "dev" || task.group === "watch" || /\b(dev|watch|serve|start)\b/i.test(task.label);
+}
+
+function taskRisk(task: TaskDefinition): AgentRiskLevel {
+  if (task.group === "dev" || task.group === "watch") return "medium";
+  if (task.group === "test" || task.group === "lint" || task.group === "build") return "low";
+  return "medium";
+}
+
+function boundedOutput(entries: TaskOutputEntry[]): TaskOutputEntry[] {
+  const tail = entries.slice(-MAX_TASK_OUTPUT_ENTRIES);
+  let total = 0;
+  const bounded: TaskOutputEntry[] = [];
+  for (const entry of [...tail].reverse()) {
+    if (total >= MAX_TASK_OUTPUT_CHARS) break;
+    const remaining = MAX_TASK_OUTPUT_CHARS - total;
+    const text = entry.text.length > remaining ? entry.text.slice(entry.text.length - remaining) : entry.text;
+    bounded.unshift({ ...entry, text });
+    total += text.length;
+  }
+  return bounded;
 }
 
 async function readTextFile(absolutePath: string, rootRealPath: string): Promise<string> {

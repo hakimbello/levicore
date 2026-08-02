@@ -1543,6 +1543,7 @@ function createDefaultApi(): LeviApi {
                   }
                 ],
                 executionQueue: [],
+                taskRuns: [],
                 createdAt: "2026-08-01T00:00:00.000Z",
                 updatedAt: "2026-08-01T00:00:00.000Z"
               },
@@ -1589,6 +1590,7 @@ function createDefaultApi(): LeviApi {
                 relativePath: "src/Login.tsx",
                 status: "Pending" as const
               }],
+              taskRuns: [],
               createdAt: "2026-08-01T00:00:00.000Z",
               updatedAt: "2026-08-01T00:00:00.000Z"
             },
@@ -1658,6 +1660,7 @@ function createDefaultApi(): LeviApi {
                 status: "Pending" as const,
                 previewId: "preview-1"
               }],
+              taskRuns: [],
               createdAt: "2026-08-01T00:00:00.000Z",
               updatedAt: "2026-08-01T00:00:00.000Z"
             },
@@ -1672,6 +1675,79 @@ function createDefaultApi(): LeviApi {
       undo: vi.fn(async (request) => ({ sessionId: request.sessionId, actionId: "action-1", relativePath: "src/Login.tsx", state: agentState })),
       queue: vi.fn(async (request) => ({ sessionId: request.sessionId, queue: [], progress: { completed: 0, remaining: 0, estimatedFiles: 0, elapsedMs: 0 } })),
       cancel: vi.fn(async (request) => ({ sessionId: request.sessionId, actionId: request.actionId ?? "action-1", state: agentState })),
+      taskPreview: vi.fn(async (request) => ({
+        sessionId: request.sessionId,
+        preview: {
+          previewId: "task-preview-1",
+          sessionId: request.sessionId,
+          actionId: request.actionId,
+          taskId: "npm:test",
+          taskName: "test",
+          source: "detected" as const,
+          executable: "npm.cmd",
+          args: ["test"],
+          cwd: ".",
+          expectedPurpose: "Run validation tests.",
+          riskLevel: "low" as const,
+          longRunning: false,
+          definitionFingerprint: "fingerprint",
+          createdAt: "2026-08-01T00:00:00.000Z"
+        },
+        state: agentState
+      })),
+      taskExecute: vi.fn(async (request) => ({
+        sessionId: request.sessionId,
+        actionId: request.actionId,
+        taskRun: {
+          actionId: request.actionId,
+          taskId: "npm:test",
+          taskName: "test",
+          status: "Running" as const,
+          runId: "task-run-1",
+          terminalSessionId: "terminal-1",
+          startedAt: "2026-08-01T00:00:00.000Z",
+          longRunning: false,
+          definitionFingerprint: "fingerprint",
+          outputPreview: [],
+          problems: [],
+          updatedAt: "2026-08-01T00:00:00.000Z"
+        },
+        state: agentState
+      })),
+      taskCancel: vi.fn(async (request) => ({
+        sessionId: request.sessionId,
+        actionId: request.actionId,
+        taskRun: {
+          actionId: request.actionId,
+          taskId: "npm:test",
+          taskName: "test",
+          status: "Cancelled" as const,
+          longRunning: false,
+          definitionFingerprint: "fingerprint",
+          outputPreview: [],
+          problems: [],
+          updatedAt: "2026-08-01T00:00:00.000Z"
+        },
+        state: agentState
+      })),
+      taskStatus: vi.fn(async (request) => ({ sessionId: request.sessionId, taskRuns: [], state: agentState })),
+      taskVerify: vi.fn(async (request) => ({
+        sessionId: request.sessionId,
+        actionId: request.actionId,
+        verification: {
+          id: "verification-1",
+          actionId: request.actionId,
+          taskRunId: "task-run-1",
+          summary: "Tests passed.",
+          exitCode: 0,
+          durationMs: 120,
+          outputExcerpt: "pass",
+          problems: [],
+          changedFiles: [],
+          createdAt: "2026-08-01T00:00:00.000Z"
+        },
+        state: agentState
+      })),
       status: vi.fn(async () => agentState),
       onEvent: vi.fn((listener: (event: AgentEvent) => void) => {
         window.__leviAgentListeners.push(listener);

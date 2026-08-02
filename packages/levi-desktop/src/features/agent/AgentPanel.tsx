@@ -3,7 +3,7 @@ import type { AIRuntimeProviderId, AIRuntimeState } from "../ai-runtime";
 import type { AIChatAttachment, AIChatContextDiscoveryResult, AIChatContextPreviewRequest } from "../ai-chat";
 import type { EditorTab } from "../../hooks/use-editor-tabs";
 import type { TaskOutputEntry, TaskProblem, WorkspaceStatus } from "../../types/levi-api";
-import type { AgentActionPreview, AgentSession, AgentState } from "./types";
+import type { AgentActionPreview, AgentSession, AgentState, AgentTaskPreview } from "./types";
 
 type AgentPanelProps = {
   runtimeState: AIRuntimeState;
@@ -13,12 +13,13 @@ type AgentPanelProps = {
   workspaceStatus?: WorkspaceStatus;
   taskProblems?: TaskProblem[];
   taskOutput?: TaskOutputEntry[];
+  onRevealTerminal?: (terminalSessionId?: string) => void;
 };
 
 const emptyAgentState: AgentState = { sessions: [], updatedAt: new Date(0).toISOString() };
 const emptyDiscovery: AIChatContextDiscoveryResult = { recentFiles: [], supports: [] };
 
-export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, workspaceStatus, taskProblems = [], taskOutput = [] }: AgentPanelProps) {
+export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, workspaceStatus, taskProblems = [], taskOutput = [], onRevealTerminal }: AgentPanelProps) {
   const [state, setState] = useState<AgentState>(emptyAgentState);
   const [prompt, setPrompt] = useState("");
   const [runtimeId, setRuntimeId] = useState<AIRuntimeProviderId | "">("");
@@ -29,6 +30,7 @@ export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, w
   const [error, setError] = useState<string | null>(null);
   const [planning, setPlanning] = useState(false);
   const [preview, setPreview] = useState<AgentActionPreview | null>(null);
+  const [taskPreview, setTaskPreview] = useState<AgentTaskPreview | null>(null);
   const [executingActionId, setExecutingActionId] = useState<string | null>(null);
 
   const activeSession = state.sessions.find((session) => session.id === state.activeSessionId);
@@ -52,6 +54,11 @@ export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, w
         setPreview(event.preview);
       }
       if (event.type === "execution") setState(event.state);
+      if (event.type === "task-preview") {
+        setState(event.state);
+        setTaskPreview(event.preview);
+      }
+      if (event.type === "task" || event.type === "task-verification") setState(event.state);
     });
   }, []);
 
@@ -255,14 +262,18 @@ export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, w
             preview={preview}
             executingActionId={executingActionId}
             onPreview={setPreview}
+            taskPreview={taskPreview}
+            onTaskPreview={setTaskPreview}
             onExecuting={setExecutingActionId}
             onError={setError}
             onState={setState}
+            onRevealTerminal={onRevealTerminal}
           />
           <PlanView
             session={activeSession}
             onState={setState}
             onPreview={(nextPreview) => setPreview(nextPreview)}
+            onTaskPreview={(nextPreview) => setTaskPreview(nextPreview)}
             onError={setError}
           />
         </div>
@@ -329,11 +340,13 @@ function PlanView({
   session,
   onState,
   onPreview,
+  onTaskPreview,
   onError
 }: {
   session?: AgentSession;
   onState: (state: AgentState) => void;
   onPreview: (preview: AgentActionPreview) => void;
+  onTaskPreview: (preview: AgentTaskPreview) => void;
   onError: (error: string | null) => void;
 }) {
   const plan = session?.plan;
@@ -365,6 +378,13 @@ function PlanView({
     if (!session) return;
     onError(null);
     try {
+      const action = session.plan?.approvals.find((item) => item.id === actionId);
+      if (action?.type === "run-task") {
+        const result = await window.levi.agent.taskPreview({ sessionId: session.id, actionId });
+        onState(result.state);
+        onTaskPreview(result.preview);
+        return;
+      }
       const result = await window.levi.agent.preview({ sessionId: session.id, actionId });
       onState(result.state);
       onPreview(result.preview);
@@ -422,24 +442,32 @@ function PlanView({
 function ExecutionReview({
   session,
   preview,
+  taskPreview,
   executingActionId,
   onPreview,
+  onTaskPreview,
   onExecuting,
   onError,
-  onState
+  onState,
+  onRevealTerminal
 }: {
   session?: AgentSession;
   preview: AgentActionPreview | null;
+  taskPreview: AgentTaskPreview | null;
   executingActionId: string | null;
   onPreview: (preview: AgentActionPreview | null) => void;
+  onTaskPreview: (preview: AgentTaskPreview | null) => void;
   onExecuting: (actionId: string | null) => void;
   onError: (error: string | null) => void;
   onState: (state: AgentState) => void;
+  onRevealTerminal?: (terminalSessionId?: string) => void;
 }) {
   const plan = session?.plan;
   if (!session || !plan) return null;
   const sessionId = session.id;
   const queue = plan.executionQueue ?? [];
+  const taskRuns = plan.taskRuns ?? [];
+  const activeTaskRun = taskPreview ? taskRuns.find((run) => run.actionId === taskPreview.actionId) : undefined;
 
   async function executePreview() {
     if (!preview) return;
@@ -478,6 +506,40 @@ function ExecutionReview({
     }
   }
 
+  async function executeTaskPreview() {
+    if (!taskPreview) return;
+    onExecuting(taskPreview.actionId);
+    onError(null);
+    try {
+      const result = await window.levi.agent.taskExecute({ sessionId, actionId: taskPreview.actionId, previewId: taskPreview.previewId });
+      onState(result.state);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Agent task execution failed.");
+    } finally {
+      onExecuting(null);
+    }
+  }
+
+  async function cancelTask(actionId: string) {
+    onError(null);
+    try {
+      const result = await window.levi.agent.taskCancel({ sessionId, actionId });
+      onState(result.state);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Could not cancel agent task.");
+    }
+  }
+
+  async function verifyTask(actionId: string) {
+    onError(null);
+    try {
+      const result = await window.levi.agent.taskVerify({ sessionId, actionId });
+      onState(result.state);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Could not verify agent task.");
+    }
+  }
+
   return (
     <section className="levi-agent-card" aria-label="Execution Queue">
       <div className="levi-agent-plan-top">
@@ -499,6 +561,52 @@ function ExecutionReview({
           </article>
         )) : <p>No approved file actions queued yet.</p>}
       </div>
+
+      {taskPreview ? (
+        <div className="levi-agent-task-preview" role="group" aria-label="Task Approval Card">
+          <div className="levi-agent-preview-header">
+            <div>
+              <h3>{taskPreview.taskName}</h3>
+              <p>{taskPreview.source} / {taskPreview.riskLevel} risk / {taskPreview.longRunning ? "long-running" : "finite"}</p>
+            </div>
+            <span>{activeTaskRun?.status ?? "Approved"}</span>
+          </div>
+          <div className="levi-agent-summary-grid">
+            <span>Executable</span><strong>{taskPreview.executable}</strong>
+            <span>Arguments</span><strong>{taskPreview.args.join(" ") || "None"}</strong>
+            <span>Working directory</span><strong>{taskPreview.cwd ?? "."}</strong>
+            <span>Purpose</span><strong>{taskPreview.expectedPurpose}</strong>
+            <span>Terminal</span><strong>{activeTaskRun?.terminalSessionId ?? "Not started"}</strong>
+            <span>Exit</span><strong>{activeTaskRun?.exitCode ?? "Pending"}</strong>
+          </div>
+          {activeTaskRun?.outputPreview.length ? (
+            <pre className="levi-agent-task-output" aria-label="Streaming output preview">{activeTaskRun.outputPreview.map((entry) => entry.text).join("")}</pre>
+          ) : null}
+          {activeTaskRun?.problems.length ? (
+            <div className="levi-agent-task-problems" aria-label="Problems summary">
+              {activeTaskRun.problems.map((problem) => (
+                <p key={problem.id}>{problem.relativePath}:{problem.line}:{problem.column} {problem.severity} {problem.message}</p>
+              ))}
+            </div>
+          ) : null}
+          {activeTaskRun?.verification ? (
+            <div className="levi-agent-task-verification" aria-label="Verification result">
+              <strong>Verification</strong>
+              <p>{activeTaskRun.verification.summary}</p>
+            </div>
+          ) : null}
+          <div className="levi-edit-actions">
+            <button type="button" className="levi-secondary-button" onClick={() => onTaskPreview(null)}>Return to Plan</button>
+            {activeTaskRun?.terminalSessionId ? <button type="button" className="levi-secondary-button" onClick={() => onRevealTerminal?.(activeTaskRun.terminalSessionId)}>Reveal Terminal</button> : null}
+            {activeTaskRun?.status === "Running" ? <button type="button" className="levi-secondary-button" onClick={() => void cancelTask(taskPreview.actionId)}>Cancel Task</button> : null}
+            {activeTaskRun && activeTaskRun.status !== "Running" ? <button type="button" className="levi-secondary-button" onClick={() => void executeTaskPreview()}>Run Again</button> : null}
+            {activeTaskRun && activeTaskRun.status !== "Running" ? <button type="button" className="levi-secondary-button" onClick={() => void verifyTask(taskPreview.actionId)}>Verify</button> : null}
+            <button type="button" className="levi-apply-button" disabled={executingActionId === taskPreview.actionId || activeTaskRun?.status === "Running"} onClick={() => void executeTaskPreview()}>
+              {executingActionId === taskPreview.actionId ? "Starting..." : "Approve Task"}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {preview ? (
         <div className="levi-agent-preview" role="group" aria-label="Approval Dialog">

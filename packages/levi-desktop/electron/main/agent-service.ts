@@ -33,7 +33,9 @@ import type { AIRuntimeProviderId } from "../../src/features/ai-runtime";
 import type { WorkspaceStatus } from "../../src/types/levi-api";
 import { RuntimeManager, validateModelId, validateRuntimeProviderId } from "./ai-runtime";
 import { AgentExecutionService } from "./agent-execution-service";
+import type { TaskService } from "./tasks/task-service";
 import { listWorkspaceTree } from "./workspace-tree-ipc";
+import type { BrowserWindow } from "electron";
 
 const AGENT_STATE_FILE = "coding-agent-state.json";
 const MAX_SESSIONS = 80;
@@ -62,6 +64,9 @@ type AgentServiceOptions = {
   emit?: (event: AgentEvent) => void;
   getWorkspaceRoot?: () => string | null;
   getWorkspaceStatus?: () => WorkspaceStatus;
+  getWindow?: () => BrowserWindow | null;
+  taskService?: TaskService;
+  getChangedFiles?: () => string[];
 };
 
 type AgentPersistence = {
@@ -88,12 +93,22 @@ export class AgentService {
       snapshot: () => this.snapshot(),
       persistAndEmit: () => this.persistAndEmit(),
       emitExecution: (sessionId, actionId) => this.emit({ type: "execution", sessionId, actionId, state: this.snapshot() }),
-      emitPreview: (sessionId, preview) => this.emit({ type: "preview", sessionId, preview, state: this.snapshot() })
+      emitPreview: (sessionId, preview) => this.emit({ type: "preview", sessionId, preview, state: this.snapshot() }),
+      emitTaskPreview: (sessionId, preview) => this.emit({ type: "task-preview", sessionId, preview, state: this.snapshot() }),
+      emitTask: (sessionId, actionId, taskRun) => this.emit({ type: "task", sessionId, actionId, taskRun, state: this.snapshot() }),
+      emitTaskVerification: (sessionId, actionId, verification) => this.emit({ type: "task-verification", sessionId, actionId, verification, state: this.snapshot() }),
+      taskService: this.options.taskService,
+      runtimeManager: this.runtimeManager,
+      getWindow: () => this.options.getWindow?.() ?? null,
+      getChangedFiles: () => this.options.getChangedFiles?.() ?? []
     });
+    this.options.taskService?.onEvent((event) => this.executionService.handleTaskEvent(event));
   }
 
   async initialize(): Promise<AgentState> {
     await this.load();
+    for (const session of this.persistence.sessions) this.executionService.markInterrupted(session);
+    await this.persist();
     return this.snapshot();
   }
 
@@ -250,6 +265,31 @@ export class AgentService {
   async cancel(rawRequest: unknown) {
     const session = this.requireSession(sessionIdFromRequest<AgentCancelRequest>(rawRequest, "Agent cancel request is invalid."));
     return this.executionService.cancel(session, rawRequest);
+  }
+
+  async taskPreview(rawRequest: unknown) {
+    const session = this.requireSession(sessionIdFromRequest(rawRequest, "Agent task preview request is invalid."));
+    return this.executionService.taskPreview(session, rawRequest);
+  }
+
+  async taskExecute(rawRequest: unknown) {
+    const session = this.requireSession(sessionIdFromRequest(rawRequest, "Agent task execute request is invalid."));
+    return this.executionService.taskExecute(session, rawRequest);
+  }
+
+  async taskCancel(rawRequest: unknown) {
+    const session = this.requireSession(sessionIdFromRequest(rawRequest, "Agent task cancel request is invalid."));
+    return this.executionService.taskCancel(session, rawRequest);
+  }
+
+  taskStatus(rawRequest: unknown) {
+    const session = this.requireSession(sessionIdFromRequest(rawRequest, "Agent task status request is invalid."));
+    return this.executionService.taskStatus(session, rawRequest);
+  }
+
+  async taskVerify(rawRequest: unknown) {
+    const session = this.requireSession(sessionIdFromRequest(rawRequest, "Agent task verify request is invalid."));
+    return this.executionService.taskVerify(session, rawRequest);
   }
 
   private async setApprovalState(request: AgentApprovalRequest, status: "Approved" | "Rejected"): Promise<AgentState> {
@@ -532,6 +572,8 @@ function createExecutionPlan(objective: string, modelContent: string, projectSum
         destinationRelativePath: action.destinationRelativePath,
         content: action.content,
         edits: action.edits,
+        taskId: action.taskId,
+        taskFingerprint: action.taskFingerprint,
         taskName: action.taskName,
         command: action.command,
         gitOperation: action.gitOperation,
@@ -563,6 +605,7 @@ function createExecutionPlan(objective: string, modelContent: string, projectSum
     steps,
     approvals,
     executionQueue: [],
+    taskRuns: [],
     estimatedFiles: Array.from(new Set(steps.flatMap((step) => step.estimatedFiles))).slice(0, 40),
     progress: { totalSteps: steps.length, pendingActions: 0, approvedActions: 0, rejectedActions: 0, completedActions: 0 },
     createdAt: now,
@@ -625,6 +668,7 @@ function createFallbackPlan(objective: string, projectSummary: AgentProjectSumma
     steps,
     approvals,
     executionQueue: [],
+    taskRuns: [],
     estimatedFiles: Array.from(new Set(steps.flatMap((step) => step.estimatedFiles))).slice(0, 40),
     progress: { totalSteps: steps.length, pendingActions: approvals.length, approvedActions: 0, rejectedActions: 0, completedActions: 0 },
     createdAt: now,
@@ -650,6 +694,8 @@ type ParsedStep = {
     destinationRelativePath?: string;
     content?: string;
     edits?: AgentApprovalAction["edits"];
+    taskId?: string;
+    taskFingerprint?: string;
     taskName?: string;
     command?: string;
     gitOperation?: string;
@@ -700,6 +746,8 @@ function parseAction(value: unknown): ParsedStep["actions"][number] | null {
     destinationRelativePath: parseRelativeAlias(record.destinationRelativePath ?? record.toRelativePath ?? record.newRelativePath),
     content: typeof record.content === "string" ? record.content.slice(0, MAX_PROMPT_LENGTH) : typeof record.proposedContent === "string" ? record.proposedContent.slice(0, MAX_PROMPT_LENGTH) : undefined,
     edits: Array.isArray(record.edits) ? record.edits.map(parseFileEdit).filter(Boolean).slice(0, 40) as AgentApprovalAction["edits"] : undefined,
+    taskId: typeof record.taskId === "string" ? record.taskId.slice(0, 120) : undefined,
+    taskFingerprint: typeof record.taskFingerprint === "string" ? record.taskFingerprint.slice(0, 160) : undefined,
     taskName: typeof record.taskName === "string" ? record.taskName.slice(0, 120) : undefined,
     command: typeof record.command === "string" ? record.command.slice(0, 500) : undefined,
     gitOperation: typeof record.gitOperation === "string" ? record.gitOperation.slice(0, 120) : undefined
@@ -740,12 +788,13 @@ function actionTitle(type: AgentActionType): string {
 
 function progressFromApprovals(plan: AgentExecutionPlan): AgentExecutionPlan["progress"] {
   const queue = Array.isArray(plan.executionQueue) ? plan.executionQueue : [];
+  const taskRuns = Array.isArray(plan.taskRuns) ? plan.taskRuns : [];
   return {
     totalSteps: plan.steps.length,
     pendingActions: plan.approvals.filter((item) => item.status === "Pending").length,
     approvedActions: plan.approvals.filter((item) => item.status === "Approved").length,
     rejectedActions: plan.approvals.filter((item) => item.status === "Rejected").length + queue.filter((item) => item.status === "Rejected").length,
-    completedActions: queue.filter((item) => item.status === "Completed").length
+    completedActions: queue.filter((item) => item.status === "Completed").length + taskRuns.filter((item) => item.status === "Succeeded").length
   };
 }
 
@@ -836,6 +885,7 @@ function coercePlan(value: unknown): AgentExecutionPlan | undefined {
     steps: record.steps.slice(0, MAX_PLAN_STEPS),
     approvals: record.approvals.slice(0, MAX_ACTIONS),
     executionQueue: Array.isArray(record.executionQueue) ? record.executionQueue.slice(0, MAX_ACTIONS) : [],
+    taskRuns: Array.isArray(record.taskRuns) ? record.taskRuns.slice(0, MAX_ACTIONS) : [],
     lastUndo: record.lastUndo && typeof record.lastUndo === "object" ? record.lastUndo : undefined,
     progress: progressFromApprovals(record),
     estimatedFiles: Array.isArray(record.estimatedFiles) ? record.estimatedFiles.slice(0, 40) : [],
