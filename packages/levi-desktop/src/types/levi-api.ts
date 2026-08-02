@@ -106,6 +106,13 @@ import type {
   AgentTaskStatusResult,
   AgentTaskVerificationResult,
   AgentTaskVerifyRequest,
+  AgentTerminalCancelRequest,
+  AgentTerminalExecuteRequest,
+  AgentTerminalExecutionResult,
+  AgentTerminalPreviewRequest,
+  AgentTerminalPreviewResult,
+  AgentTerminalStatusRequest,
+  AgentTerminalStatusResult,
   AgentUndoRequest,
   AgentUndoResult
 } from "../features/agent";
@@ -172,6 +179,17 @@ export type {
   AgentTaskVerificationResult,
   AgentTaskVerificationSummary,
   AgentTaskVerifyRequest,
+  AgentTerminalActionStatus,
+  AgentTerminalCancelRequest,
+  AgentTerminalExecuteRequest,
+  AgentTerminalExecutionResult,
+  AgentTerminalPreview,
+  AgentTerminalPreviewRequest,
+  AgentTerminalPreviewResult,
+  AgentTerminalRunState,
+  AgentTerminalStatusRequest,
+  AgentTerminalStatusResult,
+  AgentTerminalVerificationSummary,
   AgentUndoMetadata,
   AgentUndoRequest,
   AgentUndoResult
@@ -1217,6 +1235,10 @@ export type LeviApi = {
     taskCancel: (request: AgentTaskCancelRequest) => Promise<AgentTaskExecutionResult>;
     taskStatus: (request: AgentTaskStatusRequest) => Promise<AgentTaskStatusResult>;
     taskVerify: (request: AgentTaskVerifyRequest) => Promise<AgentTaskVerificationResult>;
+    terminalPreview: (request: AgentTerminalPreviewRequest) => Promise<AgentTerminalPreviewResult>;
+    terminalExecute: (request: AgentTerminalExecuteRequest) => Promise<AgentTerminalExecutionResult>;
+    terminalCancel: (request: AgentTerminalCancelRequest) => Promise<AgentTerminalExecutionResult>;
+    terminalStatus: (request: AgentTerminalStatusRequest) => Promise<AgentTerminalStatusResult>;
     gitPreview: (request: AgentGitPreviewRequest) => Promise<AgentGitPreviewResult>;
     gitExecute: (request: AgentGitExecuteRequest) => Promise<AgentGitExecutionResult>;
     gitStatus: (request: AgentGitStatusRequest) => Promise<AgentGitStatusResult>;

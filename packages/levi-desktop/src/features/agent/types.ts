@@ -65,6 +65,10 @@ export type AgentApprovalAction = {
   taskFingerprint?: string;
   taskName?: string;
   command?: string;
+  args?: string[];
+  cwd?: string;
+  expectedOutput?: string;
+  estimatedDurationMs?: number;
   gitOperation?: string;
   commitMessage?: string;
   branchName?: string;
@@ -175,6 +179,55 @@ export type AgentTaskVerificationSummary = {
   createdAt: string;
 };
 
+export type AgentTerminalActionStatus = "Pending" | "Approved" | "Running" | "Succeeded" | "Failed" | "Cancelled" | "Interrupted";
+
+export type AgentTerminalPreview = {
+  previewId: string;
+  sessionId: string;
+  actionId: string;
+  executable: string;
+  args: string[];
+  cwd: string;
+  purpose: string;
+  riskLevel: AgentRiskLevel;
+  expectedOutput?: string;
+  estimatedDurationMs?: number;
+  commandId: string;
+  createdAt: string;
+};
+
+export type AgentTerminalRunState = {
+  actionId: string;
+  commandId: string;
+  executable: string;
+  args: string[];
+  cwd: string;
+  status: AgentTerminalActionStatus;
+  terminalSessionId?: string;
+  startedAt?: string;
+  endedAt?: string;
+  exitCode?: number;
+  durationMs?: number;
+  outputPreview: string;
+  stderrPreview: string;
+  failureReason?: string;
+  verification?: AgentTerminalVerificationSummary;
+  updatedAt: string;
+};
+
+export type AgentTerminalVerificationSummary = {
+  id: string;
+  actionId: string;
+  commandId: string;
+  summary: string;
+  exitCode?: number;
+  durationMs?: number;
+  outputExcerpt: string;
+  warnings: string[];
+  errors: string[];
+  createdAt: string;
+};
+
 export type AgentGitOperation =
   | "status"
   | "stage-file"
@@ -266,6 +319,7 @@ export type AgentExecutionPlan = {
   approvals: AgentApprovalAction[];
   executionQueue: AgentExecutionQueueItem[];
   taskRuns: AgentTaskRunState[];
+  terminalRuns: AgentTerminalRunState[];
   gitRuns: AgentGitRunState[];
   lastUndo?: AgentUndoMetadata;
   estimatedFiles: string[];
@@ -408,6 +462,27 @@ export type AgentTaskVerifyRequest = {
   actionId: string;
 };
 
+export type AgentTerminalPreviewRequest = {
+  sessionId: string;
+  actionId: string;
+};
+
+export type AgentTerminalExecuteRequest = {
+  sessionId: string;
+  actionId: string;
+  previewId?: string;
+};
+
+export type AgentTerminalCancelRequest = {
+  sessionId: string;
+  actionId: string;
+};
+
+export type AgentTerminalStatusRequest = {
+  sessionId: string;
+  actionId?: string;
+};
+
 export type AgentGitPreviewRequest = {
   sessionId: string;
   actionId: string;
@@ -490,6 +565,25 @@ export type AgentTaskVerificationResult = {
   state: AgentState;
 };
 
+export type AgentTerminalPreviewResult = {
+  sessionId: string;
+  preview: AgentTerminalPreview;
+  state: AgentState;
+};
+
+export type AgentTerminalExecutionResult = {
+  sessionId: string;
+  actionId: string;
+  terminalRun: AgentTerminalRunState;
+  state: AgentState;
+};
+
+export type AgentTerminalStatusResult = {
+  sessionId: string;
+  terminalRuns: AgentTerminalRunState[];
+  state: AgentState;
+};
+
 export type AgentGitPreviewResult = {
   sessionId: string;
   preview: AgentGitPreview;
@@ -517,5 +611,7 @@ export type AgentEvent =
   | { type: "task-preview"; sessionId: string; preview: AgentTaskPreview; state: AgentState }
   | { type: "task"; sessionId: string; actionId: string; taskRun: AgentTaskRunState; state: AgentState }
   | { type: "task-verification"; sessionId: string; actionId: string; verification: AgentTaskVerificationSummary; state: AgentState }
+  | { type: "terminal-preview"; sessionId: string; preview: AgentTerminalPreview; state: AgentState }
+  | { type: "terminal"; sessionId: string; actionId: string; terminalRun: AgentTerminalRunState; state: AgentState }
   | { type: "git-preview"; sessionId: string; preview: AgentGitPreview; state: AgentState }
   | { type: "git"; sessionId: string; actionId: string; gitRun: AgentGitRunState; state: AgentState };

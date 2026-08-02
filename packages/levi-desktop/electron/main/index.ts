@@ -140,6 +140,7 @@ const agentService = new AgentService(aiRuntimeManager, {
   getWindow: () => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null,
   taskService,
   gitService,
+  terminalManager,
   getChangedFiles: () => taskService.getOutput({ source: "git" }).map((entry) => entry.text).slice(-40)
 });
 terminalManager.onTerminalData((sessionId, data) => {
@@ -2379,6 +2380,22 @@ function registerIpc(): void {
   ipcMain.handle(IPC_CHANNELS.agentTaskVerify, async (_event, request, ...args) => {
     assertNoIpcArgs(args);
     return agentService.taskVerify(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentTerminalPreview, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.terminalPreview(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentTerminalExecute, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.terminalExecute(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentTerminalCancel, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.terminalCancel(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentTerminalStatus, (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.terminalStatus(request);
   });
   ipcMain.handle(IPC_CHANNELS.agentGitPreview, async (_event, request, ...args) => {
     assertNoIpcArgs(args);

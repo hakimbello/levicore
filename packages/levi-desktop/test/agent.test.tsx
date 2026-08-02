@@ -255,7 +255,30 @@ function createFakeGitService() {
   return service;
 }
 
-async function createService(runtimeProvider = provider(), options: { taskService?: ReturnType<typeof createFakeTaskService>; gitService?: ReturnType<typeof createFakeGitService>; getWindow?: () => ReturnType<typeof fakeWindow>; getChangedFiles?: () => string[] } = {}) {
+function createFakeTerminalManager() {
+  const listeners: Array<(sessionId: string, data: string) => void> = [];
+  let onExitHandler: ((exitCode: number) => void) | undefined;
+  const service = {
+    onTerminalData: vi.fn((listener: (sessionId: string, data: string) => void) => {
+      listeners.push(listener);
+      return () => undefined;
+    }),
+    createCommand: vi.fn((_window: unknown, _request: unknown, onExit?: (exitCode: number) => void) => {
+      onExitHandler = onExit;
+      return { id: "terminal-1", cwd: "C:/workspace", name: "Agent: npm.cmd", shellKind: "powershell" };
+    }),
+    kill: vi.fn(() => ({ id: "terminal-1", name: "Agent: npm.cmd", cwd: "C:/workspace", shellKind: "powershell", alive: false, createdAt: "2026-08-02T00:00:00.000Z" })),
+    emitData(data: string) {
+      listeners.forEach((listener) => listener("terminal-1", data));
+    },
+    finish(exitCode: number) {
+      onExitHandler?.(exitCode);
+    }
+  };
+  return service;
+}
+
+async function createService(runtimeProvider = provider(), options: { taskService?: ReturnType<typeof createFakeTaskService>; gitService?: ReturnType<typeof createFakeGitService>; terminalManager?: ReturnType<typeof createFakeTerminalManager>; getWindow?: () => ReturnType<typeof fakeWindow>; getChangedFiles?: () => string[] } = {}) {
   const statePath = path.join(await fsp.mkdtemp(path.join(os.tmpdir(), "levi-agent-")), "agent-state.json");
   const registry = new AIRuntimeProviderRegistry();
   registry.register(runtimeProvider.id, () => runtimeProvider);
@@ -285,6 +308,7 @@ async function createService(runtimeProvider = provider(), options: { taskServic
     }),
     taskService: options.taskService as never,
     gitService: options.gitService as never,
+    terminalManager: options.terminalManager as never,
     getWindow: options.getWindow as never,
     getChangedFiles: options.getChangedFiles
   });
@@ -341,7 +365,7 @@ describe("Coding Agent foundation", () => {
     await expect(service.approve({ sessionId: "missing", actionId: "a" })).rejects.toThrow(/not found/i);
   });
 
-  it("wires secure agent IPC through main and preload without terminal or autonomous execution", () => {
+  it("wires secure agent IPC through main and preload without autonomous execution", () => {
     const channels = fs.readFileSync(path.join(process.cwd(), "electron/main/ipc-channels.ts"), "utf8");
     const main = fs.readFileSync(path.join(process.cwd(), "electron/main/index.ts"), "utf8");
     const preload = fs.readFileSync(path.join(process.cwd(), "electron/preload/index.ts"), "utf8");
@@ -359,19 +383,24 @@ describe("Coding Agent foundation", () => {
     expect(channels).toContain('agentGitPreview: "levi:agent:git-preview"');
     expect(channels).toContain('agentGitExecute: "levi:agent:git-execute"');
     expect(channels).toContain('agentGitStatus: "levi:agent:git-status"');
+    expect(channels).toContain('agentTerminalPreview: "levi:agent:terminal-preview"');
+    expect(channels).toContain('agentTerminalExecute: "levi:agent:terminal-execute"');
+    expect(channels).toContain('agentTerminalCancel: "levi:agent:terminal-cancel"');
+    expect(channels).toContain('agentTerminalStatus: "levi:agent:terminal-status"');
     expect(main).toContain("const agentService = new AgentService(aiRuntimeManager");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentPlan");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentExecute");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentTaskExecute");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentGitExecute");
+    expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentTerminalExecute");
     expect(preload).toContain("agent: {");
     expect(preload).toContain("plan: (request: AgentPlanRequest)");
     expect(preload).toContain("execute: (request: AgentExecuteRequest)");
     expect(preload).toContain("taskExecute: (request: AgentTaskExecuteRequest)");
     expect(preload).toContain("gitExecute: (request: AgentGitExecuteRequest)");
+    expect(preload).toContain("terminalExecute: (request: AgentTerminalExecuteRequest)");
     expect(service).toContain("this.runtimeManager.chat");
     expect(service).not.toContain("writeWorkspacePath");
-    expect(service).not.toContain("terminalManager");
     expect(service).not.toContain("taskService.run");
     expect(service).not.toContain("git commit");
   });
@@ -496,6 +525,95 @@ describe("Coding Agent foundation", () => {
     const verification = await service.taskVerify({ sessionId, actionId: action.id });
     expect(runtimeProvider.chat).toHaveBeenCalledTimes(2);
     expect(verification.verification).toMatchObject({ changedFiles: ["src/Login.tsx"] });
+  });
+
+  it("executes approved terminal commands through TerminalManager and records live output", async () => {
+    const terminalManager = createFakeTerminalManager();
+    const runtimeProvider = providerWithActions([{
+      type: "run-terminal-command",
+      title: "Run terminal tests",
+      description: "Run a safe validation command.",
+      command: "npm.cmd",
+      args: ["test"],
+      cwd: ".",
+      expectedOutput: "Tests pass.",
+      estimatedDurationMs: 1000
+    }]);
+    const { service, runtimeProvider: providerInstance } = await createService(runtimeProvider, { terminalManager, getWindow: fakeWindow });
+    const planned = await service.plan({ prompt: "Run terminal command", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const action = planned.state.sessions[0].plan!.approvals[0];
+
+    await expect(service.terminalPreview({ sessionId, actionId: action.id })).rejects.toThrow(/approved/i);
+    await service.approve({ sessionId, actionId: action.id });
+    const preview = await service.terminalPreview({ sessionId, actionId: action.id });
+    expect(preview.preview).toMatchObject({ executable: "npm.cmd", args: ["test"], riskLevel: "low", expectedOutput: "Tests pass." });
+    expect(path.isAbsolute(preview.preview.cwd)).toBe(true);
+
+    const execution = await service.terminalExecute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    expect(terminalManager.createCommand).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ command: "npm.cmd", args: ["test"], cwd: preview.preview.cwd }), expect.any(Function));
+    expect(execution.terminalRun).toMatchObject({ status: "Running", terminalSessionId: "terminal-1" });
+    terminalManager.emitData("running tests\n");
+    expect(service.terminalStatus({ sessionId }).terminalRuns[0].outputPreview).toContain("running tests");
+    terminalManager.finish(0);
+    await waitFor(() => expect(service.terminalStatus({ sessionId }).terminalRuns[0].verification).toBeDefined());
+    const finished = service.terminalStatus({ sessionId }).terminalRuns[0];
+    expect(finished).toMatchObject({ status: "Succeeded", exitCode: 0, verification: expect.objectContaining({ outputExcerpt: expect.stringContaining("running tests") }) });
+    expect(providerInstance.chat).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects dangerous terminal commands, handles cancellation, run-again, queue blocking, and interrupted restore", async () => {
+    const terminalManager = createFakeTerminalManager();
+    const { service, statePath } = await createService(providerWithActions([
+      { type: "run-terminal-command", title: "Chained", description: "Bad chain.", command: "npm.cmd test && npm.cmd build" },
+      { type: "run-terminal-command", title: "Shell", description: "Bad shell.", command: "cmd", args: ["/c", "npm test"] },
+      { type: "run-terminal-command", title: "Env", description: "Bad env.", command: "npm.cmd", args: ["test", "TOKEN=value"] },
+      { type: "run-terminal-command", title: "Safe", description: "Safe command.", command: "npm.cmd", args: ["test"], cwd: "." },
+      { type: "run-terminal-command", title: "Second", description: "Second command.", command: "node", args: ["--version"], cwd: "." }
+    ]), { terminalManager, getWindow: fakeWindow });
+    const planned = await service.plan({ prompt: "Terminal safety", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const actions = planned.state.sessions[0].plan!.approvals;
+    for (const action of actions) await service.approve({ sessionId, actionId: action.id });
+
+    await expect(service.terminalPreview({ sessionId, actionId: actions[0].id })).rejects.toThrow(/shell syntax/i);
+    await expect(service.terminalPreview({ sessionId, actionId: actions[1].id })).rejects.toThrow(/not allowed/i);
+    await expect(service.terminalPreview({ sessionId, actionId: actions[2].id })).rejects.toThrow(/shell syntax/i);
+
+    const preview = await service.terminalPreview({ sessionId, actionId: actions[3].id });
+    await service.terminalExecute({ sessionId, actionId: actions[3].id, previewId: preview.preview.previewId });
+    await expect(service.terminalExecute({ sessionId, actionId: actions[4].id })).rejects.toThrow(/already running/i);
+    await service.terminalCancel({ sessionId, actionId: actions[3].id });
+    expect(terminalManager.kill).toHaveBeenCalledWith("terminal-1");
+    expect(service.terminalStatus({ sessionId }).terminalRuns.find((run) => run.actionId === actions[3].id)?.status).toBe("Cancelled");
+
+    await service.terminalExecute({ sessionId, actionId: actions[3].id, previewId: preview.preview.previewId });
+    terminalManager.finish(1);
+    await waitFor(() => expect(service.terminalStatus({ sessionId }).terminalRuns.find((run) => run.actionId === actions[3].id)?.verification).toBeDefined());
+    expect(service.terminalStatus({ sessionId }).terminalRuns.find((run) => run.actionId === actions[3].id)).toMatchObject({ status: "Failed", failureReason: "Terminal command failed with exit code 1." });
+
+    const restored = new AgentService(new RuntimeManager({ registry: new AIRuntimeProviderRegistry(), statePath: path.join(path.dirname(statePath), "runtime-restore.json"), monitorIntervalMs: 60_000 }), {
+      statePath,
+      getWorkspaceRoot: () => path.dirname(statePath),
+      terminalManager: createFakeTerminalManager() as never,
+      getWindow: fakeWindow as never
+    });
+    const raw = JSON.parse(await fsp.readFile(statePath, "utf8"));
+    raw.sessions[0].plan.terminalRuns = [{
+      actionId: actions[4].id,
+      commandId: "restore-command",
+      executable: "node",
+      args: ["--version"],
+      cwd: path.dirname(statePath),
+      status: "Running",
+      terminalSessionId: "terminal-restore",
+      outputPreview: "",
+      stderrPreview: "",
+      updatedAt: "2026-08-02T00:00:00.000Z"
+    }];
+    await fsp.writeFile(statePath, JSON.stringify(raw), "utf8");
+    const restoredState = await restored.initialize();
+    expect(restoredState.sessions[0].plan?.terminalRuns[0].status).toBe("Interrupted");
   });
 
   it("previews and executes approved Git operations through GitService only", async () => {
@@ -744,6 +862,7 @@ describe("Coding Agent foundation", () => {
             }],
             executionQueue: [],
             taskRuns: [],
+            terminalRuns: [],
             gitRuns: [],
             createdAt: "2026-08-01T00:00:00.000Z",
             updatedAt: "2026-08-01T00:00:00.000Z"
@@ -784,6 +903,7 @@ describe("Coding Agent foundation", () => {
           }],
           executionQueue: [],
           taskRuns: [],
+          terminalRuns: [],
           gitRuns: [],
           createdAt: "2026-08-01T00:00:00.000Z",
           updatedAt: "2026-08-01T00:00:00.000Z"
@@ -843,6 +963,7 @@ describe("Coding Agent foundation", () => {
               problems: [],
               updatedAt: "2026-08-01T00:00:00.000Z"
             }],
+            terminalRuns: [],
             gitRuns: [],
             createdAt: "2026-08-01T00:00:00.000Z",
             updatedAt: "2026-08-01T00:00:00.000Z"
@@ -906,6 +1027,7 @@ describe("Coding Agent foundation", () => {
             }],
             executionQueue: [],
             taskRuns: [],
+            terminalRuns: [],
             gitRuns: [],
             createdAt: "2026-08-01T00:00:00.000Z",
             updatedAt: "2026-08-01T00:00:00.000Z"
@@ -947,6 +1069,7 @@ describe("Coding Agent foundation", () => {
           }],
           executionQueue: [],
           taskRuns: [],
+          terminalRuns: [],
           gitRuns: [],
           createdAt: "2026-08-01T00:00:00.000Z",
           updatedAt: "2026-08-01T00:00:00.000Z"
@@ -1004,6 +1127,7 @@ describe("Coding Agent foundation", () => {
             approvals: [],
             executionQueue: [],
             taskRuns: [],
+            terminalRuns: [],
             gitRuns: [{
               actionId: request.actionId,
               operation: "commit" as const,

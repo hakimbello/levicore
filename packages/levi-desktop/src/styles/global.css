@@ -2946,6 +2946,7 @@ textarea:focus-visible,
 .levi-agent-execution-queue article,
 .levi-agent-preview,
 .levi-agent-task-preview,
+.levi-agent-terminal-preview,
 .levi-agent-git-preview {
   border: 1px solid var(--levi-color-border);
   border-radius: var(--levi-radius-control);
@@ -2963,6 +2964,7 @@ textarea:focus-visible,
 
 .levi-agent-preview,
 .levi-agent-task-preview,
+.levi-agent-terminal-preview,
 .levi-agent-git-preview {
   display: grid;
   gap: var(--levi-space-12);

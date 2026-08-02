@@ -29,6 +29,10 @@ import type {
   AgentSession,
   AgentState,
   AgentStatusRequest,
+  AgentTerminalCancelRequest,
+  AgentTerminalExecuteRequest,
+  AgentTerminalPreviewRequest,
+  AgentTerminalStatusRequest,
   AgentUndoRequest
 } from "../../src/features/agent";
 import type { AIChatAttachment } from "../../src/features/ai-chat";
@@ -38,6 +42,7 @@ import { RuntimeManager, validateModelId, validateRuntimeProviderId } from "./ai
 import { AgentExecutionService } from "./agent-execution-service";
 import type { TaskService } from "./tasks/task-service";
 import type { GitService } from "./git-service";
+import type { TerminalManager } from "./terminal-manager";
 import { listWorkspaceTree } from "./workspace-tree-ipc";
 import type { BrowserWindow } from "electron";
 
@@ -71,6 +76,7 @@ type AgentServiceOptions = {
   getWindow?: () => BrowserWindow | null;
   taskService?: TaskService;
   gitService?: GitService;
+  terminalManager?: TerminalManager;
   getChangedFiles?: () => string[];
 };
 
@@ -102,15 +108,19 @@ export class AgentService {
       emitTaskPreview: (sessionId, preview) => this.emit({ type: "task-preview", sessionId, preview, state: this.snapshot() }),
       emitTask: (sessionId, actionId, taskRun) => this.emit({ type: "task", sessionId, actionId, taskRun, state: this.snapshot() }),
       emitTaskVerification: (sessionId, actionId, verification) => this.emit({ type: "task-verification", sessionId, actionId, verification, state: this.snapshot() }),
+      emitTerminalPreview: (sessionId, preview) => this.emit({ type: "terminal-preview", sessionId, preview, state: this.snapshot() }),
+      emitTerminal: (sessionId, actionId, terminalRun) => this.emit({ type: "terminal", sessionId, actionId, terminalRun, state: this.snapshot() }),
       emitGitPreview: (sessionId, preview) => this.emit({ type: "git-preview", sessionId, preview, state: this.snapshot() }),
       emitGit: (sessionId, actionId, gitRun) => this.emit({ type: "git", sessionId, actionId, gitRun, state: this.snapshot() }),
       taskService: this.options.taskService,
       gitService: this.options.gitService,
+      terminalManager: this.options.terminalManager,
       runtimeManager: this.runtimeManager,
       getWindow: () => this.options.getWindow?.() ?? null,
       getChangedFiles: () => this.options.getChangedFiles?.() ?? []
     });
     this.options.taskService?.onEvent((event) => this.executionService.handleTaskEvent(event));
+    this.options.terminalManager?.onTerminalData((sessionId, data) => this.executionService.handleTerminalData(sessionId, data));
   }
 
   async initialize(): Promise<AgentState> {
@@ -298,6 +308,26 @@ export class AgentService {
   async taskVerify(rawRequest: unknown) {
     const session = this.requireSession(sessionIdFromRequest(rawRequest, "Agent task verify request is invalid."));
     return this.executionService.taskVerify(session, rawRequest);
+  }
+
+  async terminalPreview(rawRequest: unknown) {
+    const session = this.requireSession(sessionIdFromRequest<AgentTerminalPreviewRequest>(rawRequest, "Agent terminal preview request is invalid."));
+    return this.executionService.terminalPreview(session, rawRequest);
+  }
+
+  async terminalExecute(rawRequest: unknown) {
+    const session = this.requireSession(sessionIdFromRequest<AgentTerminalExecuteRequest>(rawRequest, "Agent terminal execute request is invalid."));
+    return this.executionService.terminalExecute(session, rawRequest);
+  }
+
+  async terminalCancel(rawRequest: unknown) {
+    const session = this.requireSession(sessionIdFromRequest<AgentTerminalCancelRequest>(rawRequest, "Agent terminal cancel request is invalid."));
+    return this.executionService.terminalCancel(session, rawRequest);
+  }
+
+  terminalStatus(rawRequest: unknown) {
+    const session = this.requireSession(sessionIdFromRequest<AgentTerminalStatusRequest>(rawRequest, "Agent terminal status request is invalid."));
+    return this.executionService.terminalStatus(session, rawRequest);
   }
 
   async gitPreview(rawRequest: unknown) {
@@ -599,6 +629,10 @@ function createExecutionPlan(objective: string, modelContent: string, projectSum
         taskFingerprint: action.taskFingerprint,
         taskName: action.taskName,
         command: action.command,
+        args: action.args,
+        cwd: action.cwd,
+        expectedOutput: action.expectedOutput,
+        estimatedDurationMs: action.estimatedDurationMs,
         gitOperation: action.gitOperation,
         commitMessage: action.commitMessage,
         branchName: action.branchName,
@@ -632,6 +666,7 @@ function createExecutionPlan(objective: string, modelContent: string, projectSum
     approvals,
     executionQueue: [],
     taskRuns: [],
+    terminalRuns: [],
     gitRuns: [],
     estimatedFiles: Array.from(new Set(steps.flatMap((step) => step.estimatedFiles))).slice(0, 40),
     progress: { totalSteps: steps.length, pendingActions: 0, approvedActions: 0, rejectedActions: 0, completedActions: 0 },
@@ -696,6 +731,7 @@ function createFallbackPlan(objective: string, projectSummary: AgentProjectSumma
     approvals,
     executionQueue: [],
     taskRuns: [],
+    terminalRuns: [],
     gitRuns: [],
     estimatedFiles: Array.from(new Set(steps.flatMap((step) => step.estimatedFiles))).slice(0, 40),
     progress: { totalSteps: steps.length, pendingActions: approvals.length, approvedActions: 0, rejectedActions: 0, completedActions: 0 },
@@ -726,6 +762,10 @@ type ParsedStep = {
     taskFingerprint?: string;
     taskName?: string;
     command?: string;
+    args?: string[];
+    cwd?: string;
+    expectedOutput?: string;
+    estimatedDurationMs?: number;
     gitOperation?: string;
     commitMessage?: string;
     branchName?: string;
@@ -781,6 +821,10 @@ function parseAction(value: unknown): ParsedStep["actions"][number] | null {
     taskFingerprint: typeof record.taskFingerprint === "string" ? record.taskFingerprint.slice(0, 160) : undefined,
     taskName: typeof record.taskName === "string" ? record.taskName.slice(0, 120) : undefined,
     command: typeof record.command === "string" ? record.command.slice(0, 500) : undefined,
+    args: Array.isArray(record.args) ? record.args.filter((item) => typeof item === "string").map((item) => item.slice(0, 500)).slice(0, 80) : undefined,
+    cwd: parseRelativeAlias(record.cwd ?? record.workingDirectory),
+    expectedOutput: typeof record.expectedOutput === "string" ? record.expectedOutput.slice(0, 500) : undefined,
+    estimatedDurationMs: Number.isInteger(record.estimatedDurationMs) && (record.estimatedDurationMs as number) >= 0 ? record.estimatedDurationMs as number : undefined,
     gitOperation: typeof record.gitOperation === "string" ? record.gitOperation.slice(0, 120) : undefined,
     commitMessage: typeof record.commitMessage === "string" ? record.commitMessage.trim().slice(0, 300) : undefined,
     branchName: typeof record.branchName === "string" ? record.branchName.trim().slice(0, 120) : undefined,
@@ -823,13 +867,14 @@ function actionTitle(type: AgentActionType): string {
 function progressFromApprovals(plan: AgentExecutionPlan): AgentExecutionPlan["progress"] {
   const queue = Array.isArray(plan.executionQueue) ? plan.executionQueue : [];
   const taskRuns = Array.isArray(plan.taskRuns) ? plan.taskRuns : [];
+  const terminalRuns = Array.isArray(plan.terminalRuns) ? plan.terminalRuns : [];
   const gitRuns = Array.isArray(plan.gitRuns) ? plan.gitRuns : [];
   return {
     totalSteps: plan.steps.length,
     pendingActions: plan.approvals.filter((item) => item.status === "Pending").length,
     approvedActions: plan.approvals.filter((item) => item.status === "Approved").length,
     rejectedActions: plan.approvals.filter((item) => item.status === "Rejected").length + queue.filter((item) => item.status === "Rejected").length,
-    completedActions: queue.filter((item) => item.status === "Completed").length + taskRuns.filter((item) => item.status === "Succeeded").length + gitRuns.filter((item) => item.status === "Succeeded").length
+    completedActions: queue.filter((item) => item.status === "Completed").length + taskRuns.filter((item) => item.status === "Succeeded").length + terminalRuns.filter((item) => item.status === "Succeeded").length + gitRuns.filter((item) => item.status === "Succeeded").length
   };
 }
 
@@ -921,6 +966,7 @@ function coercePlan(value: unknown): AgentExecutionPlan | undefined {
     approvals: record.approvals.slice(0, MAX_ACTIONS),
     executionQueue: Array.isArray(record.executionQueue) ? record.executionQueue.slice(0, MAX_ACTIONS) : [],
     taskRuns: Array.isArray(record.taskRuns) ? record.taskRuns.slice(0, MAX_ACTIONS) : [],
+    terminalRuns: Array.isArray(record.terminalRuns) ? record.terminalRuns.slice(0, MAX_ACTIONS) : [],
     gitRuns: Array.isArray(record.gitRuns) ? record.gitRuns.slice(0, MAX_ACTIONS) : [],
     lastUndo: record.lastUndo && typeof record.lastUndo === "object" ? record.lastUndo : undefined,
     progress: progressFromApprovals(record),

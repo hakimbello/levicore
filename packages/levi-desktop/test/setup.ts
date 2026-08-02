@@ -1544,6 +1544,7 @@ function createDefaultApi(): LeviApi {
                 ],
                 executionQueue: [],
                 taskRuns: [],
+                terminalRuns: [],
                 gitRuns: [],
                 createdAt: "2026-08-01T00:00:00.000Z",
                 updatedAt: "2026-08-01T00:00:00.000Z"
@@ -1592,6 +1593,7 @@ function createDefaultApi(): LeviApi {
                 status: "Pending" as const
               }],
               taskRuns: [],
+              terminalRuns: [],
               gitRuns: [],
               createdAt: "2026-08-01T00:00:00.000Z",
               updatedAt: "2026-08-01T00:00:00.000Z"
@@ -1663,6 +1665,7 @@ function createDefaultApi(): LeviApi {
                 previewId: "preview-1"
               }],
               taskRuns: [],
+              terminalRuns: [],
               gitRuns: [],
               createdAt: "2026-08-01T00:00:00.000Z",
               updatedAt: "2026-08-01T00:00:00.000Z"
@@ -1751,6 +1754,61 @@ function createDefaultApi(): LeviApi {
         },
         state: agentState
       })),
+      terminalPreview: vi.fn(async (request) => ({
+        sessionId: request.sessionId,
+        preview: {
+          previewId: "terminal-preview-1",
+          sessionId: request.sessionId,
+          actionId: request.actionId,
+          executable: "npm.cmd",
+          args: ["test"],
+          cwd: "C:/workspace",
+          purpose: "Run validation.",
+          riskLevel: "low" as const,
+          expectedOutput: "Tests pass.",
+          estimatedDurationMs: 1000,
+          commandId: "terminal-command-1",
+          createdAt: "2026-08-01T00:00:00.000Z"
+        },
+        state: agentState
+      })),
+      terminalExecute: vi.fn(async (request) => ({
+        sessionId: request.sessionId,
+        actionId: request.actionId,
+        terminalRun: {
+          actionId: request.actionId,
+          commandId: "terminal-command-1",
+          executable: "npm.cmd",
+          args: ["test"],
+          cwd: "C:/workspace",
+          status: "Running" as const,
+          terminalSessionId: "terminal-1",
+          startedAt: "2026-08-01T00:00:00.000Z",
+          outputPreview: "running\n",
+          stderrPreview: "",
+          updatedAt: "2026-08-01T00:00:00.000Z"
+        },
+        state: agentState
+      })),
+      terminalCancel: vi.fn(async (request) => ({
+        sessionId: request.sessionId,
+        actionId: request.actionId,
+        terminalRun: {
+          actionId: request.actionId,
+          commandId: "terminal-command-1",
+          executable: "npm.cmd",
+          args: ["test"],
+          cwd: "C:/workspace",
+          status: "Cancelled" as const,
+          terminalSessionId: "terminal-1",
+          exitCode: 1,
+          outputPreview: "cancelled\n",
+          stderrPreview: "",
+          updatedAt: "2026-08-01T00:00:00.000Z"
+        },
+        state: agentState
+      })),
+      terminalStatus: vi.fn(async (request) => ({ sessionId: request.sessionId, terminalRuns: [], state: agentState })),
       gitPreview: vi.fn(async (request) => ({
         sessionId: request.sessionId,
         preview: {

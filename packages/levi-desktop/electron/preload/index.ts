@@ -58,6 +58,10 @@ import type {
   AgentTaskPreviewRequest,
   AgentTaskStatusRequest,
   AgentTaskVerifyRequest,
+  AgentTerminalCancelRequest,
+  AgentTerminalExecuteRequest,
+  AgentTerminalPreviewRequest,
+  AgentTerminalStatusRequest,
   AgentUndoRequest
 } from "../../src/types/levi-api";
 import type { TaskEvent } from "../../src/types/task-api";
@@ -240,6 +244,10 @@ const IPC_CHANNELS = {
   agentTaskCancel: "levi:agent:task-cancel",
   agentTaskStatus: "levi:agent:task-status",
   agentTaskVerify: "levi:agent:task-verify",
+  agentTerminalPreview: "levi:agent:terminal-preview",
+  agentTerminalExecute: "levi:agent:terminal-execute",
+  agentTerminalCancel: "levi:agent:terminal-cancel",
+  agentTerminalStatus: "levi:agent:terminal-status",
   agentGitPreview: "levi:agent:git-preview",
   agentGitExecute: "levi:agent:git-execute",
   agentGitStatus: "levi:agent:git-status",
@@ -664,6 +672,10 @@ const leviApi: LeviApiWithWorkspaceTree = {
     taskCancel: (request: AgentTaskCancelRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentTaskCancel, request),
     taskStatus: (request: AgentTaskStatusRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentTaskStatus, request),
     taskVerify: (request: AgentTaskVerifyRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentTaskVerify, request),
+    terminalPreview: (request: AgentTerminalPreviewRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentTerminalPreview, request),
+    terminalExecute: (request: AgentTerminalExecuteRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentTerminalExecute, request),
+    terminalCancel: (request: AgentTerminalCancelRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentTerminalCancel, request),
+    terminalStatus: (request: AgentTerminalStatusRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentTerminalStatus, request),
     gitPreview: (request: AgentGitPreviewRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentGitPreview, request),
     gitExecute: (request: AgentGitExecuteRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentGitExecute, request),
     gitStatus: (request: AgentGitStatusRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentGitStatus, request),

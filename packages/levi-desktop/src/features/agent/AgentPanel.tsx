@@ -3,7 +3,7 @@ import type { AIRuntimeProviderId, AIRuntimeState } from "../ai-runtime";
 import type { AIChatAttachment, AIChatContextDiscoveryResult, AIChatContextPreviewRequest } from "../ai-chat";
 import type { EditorTab } from "../../hooks/use-editor-tabs";
 import type { TaskOutputEntry, TaskProblem, WorkspaceStatus } from "../../types/levi-api";
-import type { AgentActionPreview, AgentGitPreview, AgentSession, AgentState, AgentTaskPreview } from "./types";
+import type { AgentActionPreview, AgentGitPreview, AgentSession, AgentState, AgentTaskPreview, AgentTerminalPreview } from "./types";
 
 type AgentPanelProps = {
   runtimeState: AIRuntimeState;
@@ -31,6 +31,7 @@ export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, w
   const [planning, setPlanning] = useState(false);
   const [preview, setPreview] = useState<AgentActionPreview | null>(null);
   const [taskPreview, setTaskPreview] = useState<AgentTaskPreview | null>(null);
+  const [terminalPreview, setTerminalPreview] = useState<AgentTerminalPreview | null>(null);
   const [gitPreview, setGitPreview] = useState<AgentGitPreview | null>(null);
   const [executingActionId, setExecutingActionId] = useState<string | null>(null);
 
@@ -60,6 +61,11 @@ export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, w
         setTaskPreview(event.preview);
       }
       if (event.type === "task" || event.type === "task-verification") setState(event.state);
+      if (event.type === "terminal-preview") {
+        setState(event.state);
+        setTerminalPreview(event.preview);
+      }
+      if (event.type === "terminal") setState(event.state);
       if (event.type === "git-preview") {
         setState(event.state);
         setGitPreview(event.preview);
@@ -270,6 +276,8 @@ export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, w
             onPreview={setPreview}
             taskPreview={taskPreview}
             onTaskPreview={setTaskPreview}
+            terminalPreview={terminalPreview}
+            onTerminalPreview={setTerminalPreview}
             gitPreview={gitPreview}
             onGitPreview={setGitPreview}
             onExecuting={setExecutingActionId}
@@ -282,6 +290,7 @@ export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, w
             onState={setState}
             onPreview={(nextPreview) => setPreview(nextPreview)}
             onTaskPreview={(nextPreview) => setTaskPreview(nextPreview)}
+            onTerminalPreview={(nextPreview) => setTerminalPreview(nextPreview)}
             onGitPreview={(nextPreview) => setGitPreview(nextPreview)}
             onError={setError}
           />
@@ -350,6 +359,7 @@ function PlanView({
   onState,
   onPreview,
   onTaskPreview,
+  onTerminalPreview,
   onGitPreview,
   onError
 }: {
@@ -357,6 +367,7 @@ function PlanView({
   onState: (state: AgentState) => void;
   onPreview: (preview: AgentActionPreview) => void;
   onTaskPreview: (preview: AgentTaskPreview) => void;
+  onTerminalPreview: (preview: AgentTerminalPreview) => void;
   onGitPreview: (preview: AgentGitPreview) => void;
   onError: (error: string | null) => void;
 }) {
@@ -394,6 +405,12 @@ function PlanView({
         const result = await window.levi.agent.taskPreview({ sessionId: session.id, actionId });
         onState(result.state);
         onTaskPreview(result.preview);
+        return;
+      }
+      if (action?.type === "run-terminal-command") {
+        const result = await window.levi.agent.terminalPreview({ sessionId: session.id, actionId });
+        onState(result.state);
+        onTerminalPreview(result.preview);
         return;
       }
       if (action?.type === "git-operation") {
@@ -460,10 +477,12 @@ function ExecutionReview({
   session,
   preview,
   taskPreview,
+  terminalPreview,
   gitPreview,
   executingActionId,
   onPreview,
   onTaskPreview,
+  onTerminalPreview,
   onGitPreview,
   onExecuting,
   onError,
@@ -473,10 +492,12 @@ function ExecutionReview({
   session?: AgentSession;
   preview: AgentActionPreview | null;
   taskPreview: AgentTaskPreview | null;
+  terminalPreview: AgentTerminalPreview | null;
   gitPreview: AgentGitPreview | null;
   executingActionId: string | null;
   onPreview: (preview: AgentActionPreview | null) => void;
   onTaskPreview: (preview: AgentTaskPreview | null) => void;
+  onTerminalPreview: (preview: AgentTerminalPreview | null) => void;
   onGitPreview: (preview: AgentGitPreview | null) => void;
   onExecuting: (actionId: string | null) => void;
   onError: (error: string | null) => void;
@@ -488,8 +509,10 @@ function ExecutionReview({
   const sessionId = session.id;
   const queue = plan.executionQueue ?? [];
   const taskRuns = plan.taskRuns ?? [];
+  const terminalRuns = plan.terminalRuns ?? [];
   const gitRuns = plan.gitRuns ?? [];
   const activeTaskRun = taskPreview ? taskRuns.find((run) => run.actionId === taskPreview.actionId) : undefined;
+  const activeTerminalRun = terminalPreview ? terminalRuns.find((run) => run.actionId === terminalPreview.actionId) : undefined;
   const activeGitRun = gitPreview ? gitRuns.find((run) => run.actionId === gitPreview.actionId) : undefined;
 
   async function executePreview() {
@@ -560,6 +583,42 @@ function ExecutionReview({
       onState(result.state);
     } catch (error) {
       onError(error instanceof Error ? error.message : "Could not verify agent task.");
+    }
+  }
+
+  async function executeTerminalPreview() {
+    if (!terminalPreview) return;
+    onExecuting(terminalPreview.actionId);
+    onError(null);
+    try {
+      const result = await window.levi.agent.terminalExecute({ sessionId, actionId: terminalPreview.actionId, previewId: terminalPreview.previewId });
+      onState(result.state);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Agent terminal command failed.");
+    } finally {
+      onExecuting(null);
+    }
+  }
+
+  async function cancelTerminal(actionId: string) {
+    onError(null);
+    try {
+      const result = await window.levi.agent.terminalCancel({ sessionId, actionId });
+      onState(result.state);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Could not cancel terminal command.");
+    }
+  }
+
+  async function rejectTerminalPreview() {
+    if (!terminalPreview) return;
+    onError(null);
+    try {
+      const result = await window.levi.agent.cancel({ sessionId, actionId: terminalPreview.actionId });
+      onState(result.state);
+      onTerminalPreview(null);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Could not reject terminal command.");
     }
   }
 
@@ -652,6 +711,47 @@ function ExecutionReview({
             {activeTaskRun && activeTaskRun.status !== "Running" ? <button type="button" className="levi-secondary-button" onClick={() => void verifyTask(taskPreview.actionId)}>Verify</button> : null}
             <button type="button" className="levi-apply-button" disabled={executingActionId === taskPreview.actionId || activeTaskRun?.status === "Running"} onClick={() => void executeTaskPreview()}>
               {executingActionId === taskPreview.actionId ? "Starting..." : "Approve Task"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {terminalPreview ? (
+        <div className="levi-agent-terminal-preview" role="group" aria-label="Terminal Approval Card">
+          <div className="levi-agent-preview-header">
+            <div>
+              <h3>{terminalPreview.executable}</h3>
+              <p>{terminalPreview.riskLevel} risk / {terminalPreview.estimatedDurationMs ? `${terminalPreview.estimatedDurationMs} ms` : "duration unknown"}</p>
+            </div>
+            <span>{activeTerminalRun?.status ?? "Approved"}</span>
+          </div>
+          <div className="levi-agent-summary-grid">
+            <span>Executable</span><strong>{terminalPreview.executable}</strong>
+            <span>Arguments</span><strong>{terminalPreview.args.join(" ") || "None"}</strong>
+            <span>Working directory</span><strong>{terminalPreview.cwd}</strong>
+            <span>Purpose</span><strong>{terminalPreview.purpose}</strong>
+            <span>Expected output</span><strong>{terminalPreview.expectedOutput ?? "Not specified"}</strong>
+            <span>Terminal</span><strong>{activeTerminalRun?.terminalSessionId ?? "Not started"}</strong>
+            <span>Exit</span><strong>{activeTerminalRun?.exitCode ?? "Pending"}</strong>
+          </div>
+          {activeTerminalRun?.outputPreview ? (
+            <pre className="levi-agent-task-output" aria-label="Live terminal output">{activeTerminalRun.outputPreview}</pre>
+          ) : null}
+          {activeTerminalRun?.verification ? (
+            <div className="levi-agent-task-verification" aria-label="Terminal verification summary">
+              <strong>Verification</strong>
+              <p>{activeTerminalRun.verification.summary}</p>
+            </div>
+          ) : null}
+          {activeTerminalRun?.failureReason ? <div className="levi-agent-error" role="alert">{activeTerminalRun.failureReason}</div> : null}
+          <div className="levi-edit-actions">
+            <button type="button" className="levi-secondary-button" onClick={() => onTerminalPreview(null)}>Back</button>
+            {activeTerminalRun?.terminalSessionId ? <button type="button" className="levi-secondary-button" onClick={() => onRevealTerminal?.(activeTerminalRun.terminalSessionId)}>Reveal Terminal</button> : null}
+            {activeTerminalRun?.status === "Running" ? <button type="button" className="levi-secondary-button" onClick={() => void cancelTerminal(terminalPreview.actionId)}>Cancel Command</button> : null}
+            {activeTerminalRun && activeTerminalRun.status !== "Running" ? <button type="button" className="levi-secondary-button" onClick={() => void executeTerminalPreview()}>Run Again</button> : null}
+            <button type="button" className="levi-secondary-button" onClick={() => void rejectTerminalPreview()}>Reject</button>
+            <button type="button" className="levi-apply-button" disabled={executingActionId === terminalPreview.actionId || activeTerminalRun?.status === "Running"} onClick={() => void executeTerminalPreview()}>
+              {executingActionId === terminalPreview.actionId ? "Starting..." : "Approve Command"}
             </button>
           </div>
         </div>

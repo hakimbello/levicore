@@ -40,6 +40,16 @@ import type {
   AgentTaskVerificationResult,
   AgentTaskVerificationSummary,
   AgentTaskVerifyRequest,
+  AgentTerminalCancelRequest,
+  AgentTerminalExecuteRequest,
+  AgentTerminalExecutionResult,
+  AgentTerminalPreview,
+  AgentTerminalPreviewRequest,
+  AgentTerminalPreviewResult,
+  AgentTerminalRunState,
+  AgentTerminalStatusRequest,
+  AgentTerminalStatusResult,
+  AgentTerminalVerificationSummary,
   AgentUndoMetadata,
   AgentUndoRequest,
   AgentUndoResult
@@ -50,6 +60,7 @@ import { generateLocalDiff, hashContent, writeAtomically } from "./edit-context"
 import type { RuntimeManager } from "./ai-runtime";
 import type { TaskService } from "./tasks/task-service";
 import type { GitOperation, GitOperationPreview, GitRepositoryStatus, GitService } from "./git-service";
+import type { TerminalManager } from "./terminal-manager";
 import { getMonacoLanguage, isInsideRoot, normalizeSlashes } from "./workspace-context";
 
 const MAX_TEXT_BYTES = 5 * 1024 * 1024;
@@ -60,7 +71,39 @@ const MAX_TASK_OUTPUT_CHARS = 12_000;
 const MAX_TASK_PROBLEMS = 40;
 const MAX_GIT_OUTPUT_CHARS = 12_000;
 const MAX_GIT_STATUS_LINES = 80;
+const MAX_TERMINAL_OUTPUT_CHARS = 12_000;
+const MAX_TERMINAL_ARG_LENGTH = 500;
+const MAX_TERMINAL_ARGS = 80;
 const SUPPORTED_ACTIONS = new Set(["create-file", "modify-file", "delete-file", "rename-file", "create-folder", "rename-folder"]);
+const SAFE_TERMINAL_EXECUTABLES = new Set([
+  "node",
+  "node.exe",
+  "npm",
+  "npm.cmd",
+  "npx",
+  "npx.cmd",
+  "pnpm",
+  "pnpm.cmd",
+  "yarn",
+  "yarn.cmd",
+  "bun",
+  "bun.exe",
+  "python",
+  "python.exe",
+  "python3",
+  "py",
+  "py.exe",
+  "dotnet",
+  "dotnet.exe",
+  "cargo",
+  "cargo.exe",
+  "go",
+  "go.exe"
+]);
+const BLOCKED_TERMINAL_EXECUTABLES = new Set(["cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe", "bash", "zsh", "sh", "git", "git.exe"]);
+const SHELL_OPERATOR_PATTERN = /(&&|\|\||;|>>|>|<|\||`|\$\(|\$\{|\*|\?)/;
+const ENV_INJECTION_PATTERN = /(^|[\s])([A-Za-z_][A-Za-z0-9_]*=|%[A-Za-z_][A-Za-z0-9_]*%|\$[A-Za-z_][A-Za-z0-9_]*)/;
+const POWERSHELL_INVOKE_PATTERN = /\b(invoke-expression|iex)\b/i;
 
 type AgentExecutionServiceOptions = {
   getWorkspaceRoot: () => string | null;
@@ -71,10 +114,13 @@ type AgentExecutionServiceOptions = {
   emitTaskPreview?: (sessionId: string, preview: AgentTaskPreview) => void;
   emitTask?: (sessionId: string, actionId: string, taskRun: AgentTaskRunState) => void;
   emitTaskVerification?: (sessionId: string, actionId: string, verification: AgentTaskVerificationSummary) => void;
+  emitTerminalPreview?: (sessionId: string, preview: AgentTerminalPreview) => void;
+  emitTerminal?: (sessionId: string, actionId: string, terminalRun: AgentTerminalRunState) => void;
   emitGitPreview?: (sessionId: string, preview: AgentGitPreview) => void;
   emitGit?: (sessionId: string, actionId: string, gitRun: AgentGitRunState) => void;
   taskService?: TaskService;
   gitService?: GitService;
+  terminalManager?: TerminalManager;
   runtimeManager?: RuntimeManager;
   getWindow?: () => BrowserWindow | null;
   getChangedFiles?: () => string[];
@@ -125,6 +171,7 @@ type UndoRecord =
 export class AgentExecutionService {
   private readonly previews = new Map<string, AgentActionPreview>();
   private readonly taskPreviews = new Map<string, AgentTaskPreview>();
+  private readonly terminalPreviews = new Map<string, AgentTerminalPreview>();
   private readonly gitPreviews = new Map<string, AgentGitPreview>();
   private readonly undoBySession = new Map<string, UndoRecord>();
 
@@ -362,6 +409,94 @@ export class AgentExecutionService {
     return { sessionId: session.id, actionId: request.actionId, verification, state: this.options.snapshot() };
   }
 
+  async terminalPreview(session: AgentSession, rawRequest: unknown): Promise<AgentTerminalPreviewResult> {
+    const request = validateTerminalPreviewRequest(rawRequest);
+    const action = requireAction(session, request.actionId);
+    requireApprovedTerminalAction(action);
+    const preview = await this.createTerminalPreview(session.id, action);
+    this.terminalPreviews.set(preview.previewId, preview);
+    const terminalRun = ensureTerminalRun(session, action, preview);
+    terminalRun.status = "Approved";
+    terminalRun.updatedAt = new Date().toISOString();
+    await this.touch(session);
+    this.options.emitTerminalPreview?.(session.id, preview);
+    return { sessionId: session.id, preview, state: this.options.snapshot() };
+  }
+
+  async terminalExecute(session: AgentSession, rawRequest: unknown): Promise<AgentTerminalExecutionResult> {
+    const request = validateTerminalExecuteRequest(rawRequest);
+    const action = requireAction(session, request.actionId);
+    requireApprovedTerminalAction(action);
+    if (ensureTerminalRuns(session).some((run) => run.status === "Running")) {
+      throw new Error("Another agent terminal command is already running.");
+    }
+    if (!this.options.terminalManager) throw new Error("TerminalManager is unavailable.");
+    const window = this.options.getWindow?.();
+    if (!window || window.isDestroyed()) throw new Error("No active Levi window is available for terminal execution.");
+    const preview = request.previewId ? this.requireTerminalPreview(request.previewId, session.id, action.id) : await this.createTerminalPreview(session.id, action);
+    const freshPreview = await this.createTerminalPreview(session.id, action);
+    if (terminalPreviewFingerprint(preview) !== terminalPreviewFingerprint(freshPreview)) {
+      throw new Error("Terminal command changed since preview.");
+    }
+    const terminalRun = ensureTerminalRun(session, action, preview);
+    const startedAt = new Date().toISOString();
+    Object.assign(terminalRun, {
+      status: "Running" as const,
+      startedAt,
+      endedAt: undefined,
+      exitCode: undefined,
+      durationMs: undefined,
+      terminalSessionId: undefined,
+      outputPreview: "",
+      stderrPreview: "",
+      failureReason: undefined,
+      verification: undefined,
+      updatedAt: startedAt
+    });
+    session.status = "Executing";
+    await this.touch(session);
+    const terminal = this.options.terminalManager.createCommand(
+      window,
+      {
+        command: preview.executable,
+        args: preview.args,
+        cwd: preview.cwd,
+        name: `Agent: ${preview.executable}`,
+        cols: 96,
+        rows: 16
+      },
+      (exitCode) => {
+        void this.recordTerminalCompletion(session, terminalRun, exitCode);
+      }
+    );
+    terminalRun.terminalSessionId = terminal.id;
+    terminalRun.updatedAt = new Date().toISOString();
+    await this.touch(session);
+    this.options.emitTerminal?.(session.id, action.id, terminalRun);
+    return { sessionId: session.id, actionId: action.id, terminalRun, state: this.options.snapshot() };
+  }
+
+  async terminalCancel(session: AgentSession, rawRequest: unknown): Promise<AgentTerminalExecutionResult> {
+    const request = validateTerminalCancelRequest(rawRequest);
+    const terminalRun = requireTerminalRun(session, request.actionId);
+    if (!terminalRun.terminalSessionId || terminalRun.status !== "Running") {
+      throw new Error("Agent terminal command is not running.");
+    }
+    this.options.terminalManager?.kill(terminalRun.terminalSessionId);
+    await this.recordTerminalCompletion(session, terminalRun, terminalRun.exitCode ?? 1, "Cancelled");
+    return { sessionId: session.id, actionId: request.actionId, terminalRun, state: this.options.snapshot() };
+  }
+
+  terminalStatus(session: AgentSession, rawRequest: unknown): AgentTerminalStatusResult {
+    const request = validateTerminalStatusRequest(rawRequest);
+    const terminalRuns = ensureTerminalRuns(session);
+    return {
+      sessionId: session.id,
+      terminalRuns: request.actionId ? terminalRuns.filter((run) => run.actionId === request.actionId) : terminalRuns,
+      state: this.options.snapshot()
+    };
+  }
+
   async gitPreview(session: AgentSession, rawRequest: unknown): Promise<AgentGitPreviewResult> {
     const request = validateGitPreviewRequest(rawRequest);
     const action = requireAction(session, request.actionId);
@@ -460,6 +595,22 @@ export class AgentExecutionService {
     }
   }
 
+  handleTerminalData(terminalSessionId: string, data: string): void {
+    for (const session of this.options.snapshot().sessions) {
+      for (const terminalRun of session.plan?.terminalRuns ?? []) {
+        if (terminalRun.terminalSessionId === terminalSessionId && terminalRun.status === "Running") {
+          terminalRun.outputPreview = boundTerminalOutput(`${terminalRun.outputPreview}${data}`);
+          if (isLikelyStderr(data)) {
+            terminalRun.stderrPreview = boundTerminalOutput(`${terminalRun.stderrPreview}${data}`);
+          }
+          terminalRun.updatedAt = new Date().toISOString();
+          void this.touch(session);
+          this.options.emitTerminal?.(session.id, terminalRun.actionId, terminalRun);
+        }
+      }
+    }
+  }
+
   markInterrupted(session: AgentSession): void {
     for (const taskRun of session.plan?.taskRuns ?? []) {
       if (taskRun.status === "Running") {
@@ -467,6 +618,14 @@ export class AgentExecutionService {
         taskRun.endedAt = new Date().toISOString();
         taskRun.failureReason = "Task was interrupted before Levi shut down.";
         taskRun.updatedAt = taskRun.endedAt;
+      }
+    }
+    for (const terminalRun of session.plan?.terminalRuns ?? []) {
+      if (terminalRun.status === "Running") {
+        terminalRun.status = "Interrupted";
+        terminalRun.endedAt = new Date().toISOString();
+        terminalRun.failureReason = "Terminal command was interrupted before Levi shut down.";
+        terminalRun.updatedAt = terminalRun.endedAt;
       }
     }
     for (const gitRun of session.plan?.gitRuns ?? []) {
@@ -815,6 +974,118 @@ export class AgentExecutionService {
     };
   }
 
+  private async createTerminalPreview(sessionId: string, action: AgentApprovalAction): Promise<AgentTerminalPreview> {
+    const command = validateTerminalCommand(action);
+    const cwd = await this.resolveTerminalCwd(command.cwd);
+    return {
+      previewId: randomUUID(),
+      sessionId,
+      actionId: action.id,
+      executable: command.executable,
+      args: command.args,
+      cwd,
+      purpose: action.description || action.title,
+      riskLevel: terminalRisk(command.executable, command.args),
+      expectedOutput: action.expectedOutput,
+      estimatedDurationMs: action.estimatedDurationMs,
+      commandId: command.commandId,
+      createdAt: new Date().toISOString()
+    };
+  }
+
+  private async resolveTerminalCwd(relativeCwd: string): Promise<string> {
+    const workspaceRoot = this.options.getWorkspaceRoot();
+    if (!workspaceRoot) throw new Error("No workspace is open.");
+    const rootRealPath = await fs.realpath(workspaceRoot);
+    const target = path.resolve(rootRealPath, relativeCwd);
+    if (!isInsideRoot(rootRealPath, target)) throw new Error("Agent terminal working directory escapes the selected project.");
+    const realPath = await fs.realpath(target);
+    if (!isInsideRoot(rootRealPath, realPath)) throw new Error("Agent terminal working directory resolves outside the selected project.");
+    const stat = await fs.stat(realPath);
+    if (!stat.isDirectory()) throw new Error("Agent terminal working directory must be an existing folder.");
+    return realPath;
+  }
+
+  private requireTerminalPreview(previewId: string, sessionId: string, actionId: string): AgentTerminalPreview {
+    const preview = this.terminalPreviews.get(previewId);
+    if (!preview || preview.sessionId !== sessionId || preview.actionId !== actionId) {
+      throw new Error("Agent terminal preview was not found.");
+    }
+    return preview;
+  }
+
+  private async recordTerminalCompletion(session: AgentSession, terminalRun: AgentTerminalRunState, exitCode: number, forcedStatus?: AgentTerminalRunState["status"]): Promise<void> {
+    if (terminalRun.status !== "Running" && forcedStatus !== "Cancelled") return;
+    terminalRun.exitCode = exitCode;
+    terminalRun.endedAt = new Date().toISOString();
+    terminalRun.durationMs = terminalRun.startedAt ? Math.max(0, Date.parse(terminalRun.endedAt) - Date.parse(terminalRun.startedAt)) : undefined;
+    terminalRun.status = forcedStatus ?? (exitCode === 0 ? "Succeeded" : "Failed");
+    if (terminalRun.status === "Failed") {
+      terminalRun.failureReason = `Terminal command failed with exit code ${exitCode}.`;
+      session.status = "Error";
+      session.error = terminalRun.failureReason;
+    } else {
+      session.status = "Ready";
+      terminalRun.failureReason = terminalRun.status === "Cancelled" ? "Terminal command was cancelled." : undefined;
+    }
+    terminalRun.verification = await this.createTerminalVerification(session, terminalRun);
+    terminalRun.updatedAt = terminalRun.endedAt;
+    session.plan!.progress = progressFromSession(session);
+    await this.touch(session);
+    this.options.emitTerminal?.(session.id, terminalRun.actionId, terminalRun);
+  }
+
+  private async createTerminalVerification(session: AgentSession, terminalRun: AgentTerminalRunState): Promise<AgentTerminalVerificationSummary> {
+    const outputExcerpt = terminalRun.outputPreview.slice(-MAX_TERMINAL_OUTPUT_CHARS);
+    const warnings = linesMatching(outputExcerpt, /\b(warn|warning|deprecated)\b/i);
+    const errors = linesMatching(`${terminalRun.stderrPreview}\n${outputExcerpt}`, /\b(error|failed|exception)\b/i);
+    const fallback = `${terminalRun.executable} ${terminalRun.status.toLowerCase()}${terminalRun.exitCode === undefined ? "" : ` with exit code ${terminalRun.exitCode}`}.`;
+    let summary = fallback;
+    if (this.options.runtimeManager && session.modelId) {
+      try {
+        const response: AIRuntimeInvocationResponse = await this.options.runtimeManager.chat({
+          providerId: session.runtimeId,
+          model: session.modelId,
+          messages: [
+            {
+              role: "system",
+              content: "Summarize approved Levi terminal command results. Do not propose edits, run commands, request retries, or trigger follow-up actions."
+            },
+            {
+              role: "user",
+              content: JSON.stringify({
+                executable: terminalRun.executable,
+                args: terminalRun.args,
+                cwd: terminalRun.cwd,
+                status: terminalRun.status,
+                exitCode: terminalRun.exitCode,
+                durationMs: terminalRun.durationMs,
+                outputExcerpt,
+                warnings,
+                errors
+              })
+            }
+          ]
+        });
+        summary = response.content.slice(0, 2_000);
+      } catch {
+        summary = fallback;
+      }
+    }
+    return {
+      id: randomUUID(),
+      actionId: terminalRun.actionId,
+      commandId: terminalRun.commandId,
+      summary,
+      exitCode: terminalRun.exitCode,
+      durationMs: terminalRun.durationMs,
+      outputExcerpt,
+      warnings,
+      errors,
+      createdAt: new Date().toISOString()
+    };
+  }
+
   private async createGitPreview(sessionId: string, action: AgentApprovalAction): Promise<AgentGitPreview> {
     if (!this.options.gitService) throw new Error("GitService is unavailable.");
     const operation = normalizeGitOperation(action.gitOperation);
@@ -976,6 +1247,37 @@ function validateTaskVerifyRequest(value: unknown): AgentTaskVerifyRequest {
   return { sessionId: validateId(record.sessionId, "sessionId"), actionId: validateId(record.actionId, "actionId") };
 }
 
+function validateTerminalPreviewRequest(value: unknown): AgentTerminalPreviewRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent terminal preview request is invalid.");
+  const record = value as Record<string, unknown>;
+  return { sessionId: validateId(record.sessionId, "sessionId"), actionId: validateId(record.actionId, "actionId") };
+}
+
+function validateTerminalExecuteRequest(value: unknown): AgentTerminalExecuteRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent terminal execute request is invalid.");
+  const record = value as Record<string, unknown>;
+  return {
+    sessionId: validateId(record.sessionId, "sessionId"),
+    actionId: validateId(record.actionId, "actionId"),
+    previewId: record.previewId === undefined ? undefined : validateId(record.previewId, "previewId")
+  };
+}
+
+function validateTerminalCancelRequest(value: unknown): AgentTerminalCancelRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent terminal cancel request is invalid.");
+  const record = value as Record<string, unknown>;
+  return { sessionId: validateId(record.sessionId, "sessionId"), actionId: validateId(record.actionId, "actionId") };
+}
+
+function validateTerminalStatusRequest(value: unknown): AgentTerminalStatusRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent terminal status request is invalid.");
+  const record = value as Record<string, unknown>;
+  return {
+    sessionId: validateId(record.sessionId, "sessionId"),
+    actionId: record.actionId === undefined ? undefined : validateId(record.actionId, "actionId")
+  };
+}
+
 function validateGitPreviewRequest(value: unknown): AgentGitPreviewRequest {
   if (!value || typeof value !== "object") throw new Error("Agent Git preview request is invalid.");
   const record = value as Record<string, unknown>;
@@ -1049,6 +1351,15 @@ function requireApprovedTaskAction(action: AgentApprovalAction): void {
   }
 }
 
+function requireApprovedTerminalAction(action: AgentApprovalAction): void {
+  if (action.status !== "Approved") {
+    throw new Error("Agent terminal command must be approved before execution.");
+  }
+  if (action.type !== "run-terminal-command") {
+    throw new Error("Only approved terminal command actions can use the terminal executor.");
+  }
+}
+
 function requireApprovedGitAction(action: AgentApprovalAction): void {
   if (action.status !== "Approved") {
     throw new Error("Agent Git action must be approved before execution.");
@@ -1086,6 +1397,42 @@ function ensureTaskRuns(session: AgentSession): AgentTaskRunState[] {
   if (!session.plan) throw new Error("Agent session has no execution plan.");
   session.plan.taskRuns = Array.isArray(session.plan.taskRuns) ? session.plan.taskRuns : [];
   return session.plan.taskRuns;
+}
+
+function ensureTerminalRuns(session: AgentSession): AgentTerminalRunState[] {
+  if (!session.plan) throw new Error("Agent session has no execution plan.");
+  session.plan.terminalRuns = Array.isArray(session.plan.terminalRuns) ? session.plan.terminalRuns : [];
+  return session.plan.terminalRuns;
+}
+
+function ensureTerminalRun(session: AgentSession, action: AgentApprovalAction, preview: AgentTerminalPreview): AgentTerminalRunState {
+  const runs = ensureTerminalRuns(session);
+  let run = runs.find((item) => item.actionId === action.id);
+  if (!run) {
+    run = {
+      actionId: action.id,
+      commandId: preview.commandId,
+      executable: preview.executable,
+      args: preview.args,
+      cwd: preview.cwd,
+      status: "Pending",
+      outputPreview: "",
+      stderrPreview: "",
+      updatedAt: new Date().toISOString()
+    };
+    runs.push(run);
+  }
+  run.commandId = preview.commandId;
+  run.executable = preview.executable;
+  run.args = preview.args;
+  run.cwd = preview.cwd;
+  return run;
+}
+
+function requireTerminalRun(session: AgentSession, actionId: string): AgentTerminalRunState {
+  const run = ensureTerminalRuns(session).find((item) => item.actionId === actionId);
+  if (!run) throw new Error("Agent terminal command run state was not found.");
+  return run;
 }
 
 function ensureGitRuns(session: AgentSession): AgentGitRunState[] {
@@ -1160,8 +1507,94 @@ function progressFromSession(session: AgentSession): NonNullable<AgentSession["p
     completedActions:
       queue.filter((item) => item.status === "Completed").length +
       (plan.taskRuns ?? []).filter((item) => item.status === "Succeeded").length +
+      (plan.terminalRuns ?? []).filter((item) => item.status === "Succeeded").length +
       (plan.gitRuns ?? []).filter((item) => item.status === "Succeeded").length
   };
+}
+
+function validateTerminalCommand(action: AgentApprovalAction): { executable: string; args: string[]; cwd: string; commandId: string } {
+  const command = splitCommand(action.command);
+  const executable = validateTerminalExecutable(command.executable);
+  const args = validateTerminalArgs(action.args ?? command.args);
+  const cwd = validateTerminalCwd(action.cwd ?? action.relativePath);
+  return {
+    executable,
+    args,
+    cwd,
+    commandId: createHash("sha256").update(JSON.stringify({ executable, args, cwd })).digest("hex").slice(0, 24)
+  };
+}
+
+function splitCommand(value: unknown): { executable: string; args: string[] } {
+  if (typeof value !== "string" || value.trim().length === 0 || value.length > 1_000 || value.includes("\0")) {
+    throw new Error("Agent terminal command is invalid.");
+  }
+  assertNoShellSyntax(value);
+  const parts = value.trim().split(/\s+/);
+  return { executable: parts[0], args: parts.slice(1) };
+}
+
+function validateTerminalExecutable(value: string): string {
+  if (!value || value.length > 120 || value.includes("\0") || SHELL_OPERATOR_PATTERN.test(value) || ENV_INJECTION_PATTERN.test(value)) {
+    throw new Error("Agent terminal executable is invalid.");
+  }
+  if (path.isAbsolute(value) || value.includes("/") || value.includes("\\")) {
+    throw new Error("Agent terminal executable must come from the configured allowlist.");
+  }
+  const normalized = path.basename(value).toLowerCase();
+  if (BLOCKED_TERMINAL_EXECUTABLES.has(normalized) || !SAFE_TERMINAL_EXECUTABLES.has(normalized)) {
+    throw new Error("Agent terminal executable is not allowed.");
+  }
+  return value;
+}
+
+function validateTerminalArgs(values: unknown): string[] {
+  if (!Array.isArray(values) || values.length > MAX_TERMINAL_ARGS) throw new Error("Agent terminal arguments are invalid.");
+  return values.map((value) => {
+    if (typeof value !== "string" || value.length > MAX_TERMINAL_ARG_LENGTH || value.includes("\0")) {
+      throw new Error("Agent terminal argument is invalid.");
+    }
+    assertNoShellSyntax(value);
+    if (/^-c$/i.test(value) || /^\/c$/i.test(value)) throw new Error("Shell command execution flags are not allowed.");
+    return value;
+  });
+}
+
+function validateTerminalCwd(value: unknown): string {
+  if (value === undefined) return ".";
+  if (typeof value !== "string" || value.length > 500 || path.isAbsolute(value) || value.includes("\0")) throw new Error("Agent terminal working directory is invalid.");
+  const normalized = value.trim() ? normalizeSlashes(value).replace(/^\.\//, "") : ".";
+  if (normalized.split("/").includes("..")) throw new Error("Agent terminal working directory is invalid.");
+  return normalized === "" ? "." : normalized;
+}
+
+function assertNoShellSyntax(value: string): void {
+  if (SHELL_OPERATOR_PATTERN.test(value) || ENV_INJECTION_PATTERN.test(value) || POWERSHELL_INVOKE_PATTERN.test(value)) {
+    throw new Error("Agent terminal command contains unsupported shell syntax.");
+  }
+}
+
+function terminalRisk(executable: string, args: string[]): AgentRiskLevel {
+  const command = `${executable} ${args.join(" ")}`.toLowerCase();
+  if (/\b(test|lint|typecheck|--version|-v)\b/.test(command)) return "low";
+  if (/\b(build|install|add|remove|run|start|dev)\b/.test(command)) return "medium";
+  return "medium";
+}
+
+function terminalPreviewFingerprint(preview: AgentTerminalPreview): string {
+  return JSON.stringify({ executable: preview.executable, args: preview.args, cwd: preview.cwd, commandId: preview.commandId });
+}
+
+function boundTerminalOutput(value: string): string {
+  return value.length > MAX_TERMINAL_OUTPUT_CHARS ? value.slice(value.length - MAX_TERMINAL_OUTPUT_CHARS) : value;
+}
+
+function isLikelyStderr(data: string): boolean {
+  return /\b(error|failed|exception|warning)\b/i.test(data);
+}
+
+function linesMatching(value: string, pattern: RegExp): string[] {
+  return value.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && pattern.test(line)).slice(-20);
 }
 
 function normalizeGitOperation(value: unknown): GitOperation {
