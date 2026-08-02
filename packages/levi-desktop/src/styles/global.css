@@ -2752,6 +2752,208 @@ textarea:focus-visible,
   justify-content: space-between;
 }
 
+.levi-agent-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--levi-color-background);
+}
+
+.levi-agent-header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--levi-space-12);
+  align-items: center;
+  border-bottom: 1px solid var(--levi-color-border);
+  padding: var(--levi-space-16);
+}
+
+.levi-agent-header h1 {
+  margin: 0;
+  font-size: var(--levi-font-size-title);
+}
+
+.levi-agent-grid {
+  display: grid;
+  grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
+  gap: var(--levi-space-12);
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--levi-space-12);
+}
+
+.levi-agent-sidebar,
+.levi-agent-main,
+.levi-agent-card {
+  min-width: 0;
+}
+
+.levi-agent-sidebar {
+  display: grid;
+  align-content: start;
+  gap: var(--levi-space-8);
+  overflow: auto;
+}
+
+.levi-agent-session,
+.levi-agent-card {
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-card);
+  background: var(--levi-color-surface);
+}
+
+.levi-agent-session {
+  display: grid;
+  gap: var(--levi-space-4);
+  min-height: 48px;
+  padding: var(--levi-space-8);
+  text-align: left;
+}
+
+.levi-agent-session-active {
+  border-color: var(--levi-color-accent);
+}
+
+.levi-agent-session span,
+.levi-agent-muted,
+.levi-agent-progress,
+.levi-agent-context-actions,
+.levi-agent-context-chips,
+.levi-agent-summary-grid,
+.levi-agent-steps small,
+.levi-agent-approvals small {
+  color: var(--levi-color-secondaryText);
+  font-size: var(--levi-font-size-caption);
+}
+
+.levi-agent-main {
+  display: grid;
+  align-content: start;
+  gap: var(--levi-space-12);
+  overflow: auto;
+}
+
+.levi-agent-card {
+  display: grid;
+  gap: var(--levi-space-10);
+  padding: var(--levi-space-12);
+}
+
+.levi-agent-card h2,
+.levi-agent-card h3,
+.levi-agent-card p {
+  margin: 0;
+}
+
+.levi-agent-controls,
+.levi-agent-context-actions,
+.levi-agent-context-chips,
+.levi-agent-plan-top,
+.levi-agent-progress,
+.levi-agent-session-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--levi-space-8);
+  align-items: center;
+}
+
+.levi-agent-controls select,
+.levi-agent-card textarea,
+.levi-agent-card input,
+.levi-agent-context-picker input {
+  min-height: 32px;
+  min-width: 0;
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-control);
+  background: var(--levi-color-surface);
+  color: var(--levi-color-text);
+  padding: 0 var(--levi-space-8);
+}
+
+.levi-agent-card textarea {
+  min-height: 96px;
+  padding: var(--levi-space-10);
+  resize: vertical;
+}
+
+.levi-agent-context-actions button,
+.levi-agent-context-chips button,
+.levi-agent-context-picker button,
+.levi-agent-session-actions button,
+.levi-agent-approvals button {
+  min-height: 28px;
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-control);
+  background: var(--levi-color-surface);
+  color: var(--levi-color-text);
+  padding: 0 var(--levi-space-8);
+}
+
+.levi-agent-context-picker {
+  display: grid;
+  gap: var(--levi-space-6);
+  max-height: 140px;
+  overflow: auto;
+}
+
+.levi-agent-context-picker button {
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.levi-agent-error {
+  border: 1px solid color-mix(in srgb, var(--levi-color-danger) 40%, var(--levi-color-border));
+  border-radius: var(--levi-radius-control);
+  background: color-mix(in srgb, var(--levi-color-danger) 7%, var(--levi-color-surface));
+  padding: var(--levi-space-8);
+}
+
+.levi-agent-message {
+  display: grid;
+  gap: var(--levi-space-4);
+  border-top: 1px solid var(--levi-color-border);
+  padding-top: var(--levi-space-8);
+}
+
+.levi-agent-summary-grid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--levi-space-6) var(--levi-space-12);
+}
+
+.levi-agent-plan-top {
+  justify-content: space-between;
+}
+
+.levi-agent-steps,
+.levi-agent-approvals {
+  display: grid;
+  gap: var(--levi-space-8);
+}
+
+.levi-agent-steps {
+  margin: 0;
+  padding-left: var(--levi-space-20);
+}
+
+.levi-agent-steps li,
+.levi-agent-approvals article {
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-control);
+  padding: var(--levi-space-10);
+}
+
+.levi-agent-approvals article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--levi-space-8);
+  align-items: center;
+}
+
 @media (max-width: 1280px) {
   .levi-sidebar {
     padding-inline: var(--levi-space-16);
@@ -2788,5 +2990,10 @@ textarea:focus-visible,
   .levi-rules-header,
   .levi-debug-header {
     display: grid;
+  }
+
+  .levi-agent-grid,
+  .levi-agent-approvals article {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

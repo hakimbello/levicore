@@ -101,12 +101,14 @@ import { AdapterManager } from "./adapter-manager";
 import { DesktopRuntimeService } from "./runtime-service";
 import { RuntimeManager } from "./ai-runtime";
 import { ChatService } from "./chat-service";
+import { AgentService } from "./agent-service";
 import { UpdateService } from "./update-service";
 import { TerminalManager } from "./terminal-manager";
 import { TaskService } from "./tasks/task-service";
 import { registerDebugTaskRunner } from "./debug-tasks";
 import type { DebugEvent } from "../../src/features/debugger";
 import type { AIChatEvent } from "../../src/features/ai-chat";
+import type { AgentEvent } from "../../src/features/agent";
 
 const OLLAMA_TAGS_URL = "http://127.0.0.1:11434/api/tags";
 const OLLAMA_CHAT_URL = "http://127.0.0.1:11434/api/chat";
@@ -119,6 +121,11 @@ const EXECUTION_TIMEOUT_MS = 240000;
 const desktopRuntimeService = new DesktopRuntimeService({ repositoryRoot: getRepositoryRoot() });
 const aiRuntimeManager = new RuntimeManager();
 const chatService = new ChatService(aiRuntimeManager, { emit: sendChatEvent });
+const agentService = new AgentService(aiRuntimeManager, {
+  emit: sendAgentEvent,
+  getWorkspaceRoot: () => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null,
+  getWorkspaceStatus: () => workspaceStatus
+});
 const updateService = new UpdateService();
 const terminalManager = new TerminalManager(
   () => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null,
@@ -381,6 +388,14 @@ function sendChatEvent(event: AIChatEvent): void {
       message: event.message,
       recoverable: true
     });
+  }
+}
+
+function sendAgentEvent(event: AgentEvent): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+      window.webContents.send(IPC_CHANNELS.agentEvent, event);
+    }
   }
 }
 
@@ -2287,6 +2302,42 @@ function registerIpc(): void {
     assertNoIpcArgs(args);
     return chatService.pin(request);
   });
+  ipcMain.handle(IPC_CHANNELS.agentNewSession, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.newSession(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentList, (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.list();
+  });
+  ipcMain.handle(IPC_CHANNELS.agentDelete, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.delete(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentRename, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.rename(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentArchive, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.archive(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentPlan, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.plan(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentApprove, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.approve(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentReject, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.reject(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentStatus, (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.status(request);
+  });
   ipcMain.handle(IPC_CHANNELS.conversationStart, async (event, rawRequest) => {
     const eventWindow = BrowserWindow.fromWebContents(event.sender);
     if (!eventWindow) {
@@ -2473,6 +2524,7 @@ app.whenReady().then(async () => {
   await taskService.initialize();
   await aiRuntimeManager.initialize();
   await chatService.initialize();
+  await agentService.initialize();
   registerDebugTaskRunner(async (taskName) => {
     if (!mainWindow) {
       return { success: false, message: "No active window is available to run tasks." };

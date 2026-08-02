@@ -7,6 +7,8 @@ import type {
   AIChatContextSource,
   AIChatEvent,
   AIChatState,
+  AgentEvent,
+  AgentState,
   LeviApi,
   PlanningStreamEvent,
   ProjectRulesStreamEvent,
@@ -50,6 +52,7 @@ declare global {
     __leviUpdateListeners: Array<(event: UpdateStatusEvent) => void>;
     __leviDebugListeners: Array<(event: DebugEvent) => void>;
     __leviChatListeners: Array<(event: AIChatEvent) => void>;
+    __leviAgentListeners: Array<(event: AgentEvent) => void>;
   }
 }
 
@@ -87,6 +90,10 @@ function createDefaultApi(): LeviApi {
   const chatState: AIChatState = {
     conversations: [],
     panel: { dockPosition: "right" },
+    updatedAt: "2026-08-01T00:00:00.000Z"
+  };
+  const agentState: AgentState = {
+    sessions: [],
     updatedAt: "2026-08-01T00:00:00.000Z"
   };
   const summary: WorkspaceScanSummary = {
@@ -1442,6 +1449,119 @@ function createDefaultApi(): LeviApi {
         };
       })
     },
+    agent: {
+      newSession: vi.fn(async (request = {}) => ({
+        sessions: [
+          {
+            id: "agent-1",
+            title: request.title ?? "New Agent Session",
+            status: "Idle" as const,
+            archived: false,
+            runtimeId: request.runtimeId,
+            modelId: request.modelId,
+            messages: [],
+            attachments: [],
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z"
+          }
+        ],
+        activeSessionId: "agent-1",
+        updatedAt: "2026-08-01T00:00:00.000Z"
+      })),
+      list: vi.fn(async () => agentState),
+      delete: vi.fn(async () => agentState),
+      rename: vi.fn(async (request) => ({
+        sessions: [
+          {
+            id: request.sessionId,
+            title: request.title,
+            status: "Idle" as const,
+            archived: false,
+            messages: [],
+            attachments: [],
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z"
+          }
+        ],
+        activeSessionId: request.sessionId,
+        updatedAt: "2026-08-01T00:00:00.000Z"
+      })),
+      archive: vi.fn(async (request) => ({
+        ...agentState,
+        sessions: agentState.sessions.map((session) => session.id === request.sessionId ? { ...session, archived: request.archived } : session),
+        updatedAt: "2026-08-01T00:00:00.000Z"
+      })),
+      plan: vi.fn(async (request) => ({
+        sessionId: request.sessionId ?? "agent-1",
+        state: {
+          sessions: [
+            {
+              id: request.sessionId ?? "agent-1",
+              title: "Build login page",
+              status: "WaitingForApproval" as const,
+              archived: false,
+              runtimeId: request.runtimeId,
+              modelId: request.modelId,
+              attachments: request.attachments ?? [],
+              projectSummary: {
+                projectName: "Project",
+                languages: ["TypeScript"],
+                frameworks: ["React"],
+                buildSystem: ["test"],
+                sourceDirectories: ["src"],
+                entryPoints: ["src/main.tsx"],
+                openFiles: request.openFiles?.map((file: { relativePath: string }) => file.relativePath) ?? [],
+                git: { branch: "main", changedFiles: 1, summary: ["## main"] },
+                context: { attachmentCount: request.attachments?.length ?? 0, tokenEstimate: 0, labels: request.attachments?.map((item: { label: string }) => item.label) ?? [] }
+              },
+              messages: [
+                { id: "agent-message-user-1", role: "user" as const, content: request.prompt, createdAt: "2026-08-01T00:00:00.000Z" },
+                { id: "agent-message-assistant-1", role: "assistant" as const, content: "Plan prepared.", createdAt: "2026-08-01T00:00:00.000Z" }
+              ],
+              plan: {
+                id: "plan-1",
+                objective: request.prompt,
+                summary: "Plan prepared.",
+                estimatedFiles: ["src/Login.tsx"],
+                progress: { totalSteps: 2, pendingActions: 1, approvedActions: 0, rejectedActions: 0, completedActions: 0 },
+                steps: [
+                  { id: "step-1", order: 1, title: "Analyze project", description: "Inspect structure.", status: "Pending" as const, estimatedFiles: ["src/main.tsx"], actionIds: [] },
+                  { id: "step-2", order: 2, title: "Create UI", description: "Prepare a login page proposal.", status: "Pending" as const, estimatedFiles: ["src/Login.tsx"], actionIds: ["action-1"] }
+                ],
+                approvals: [
+                  {
+                    id: "action-1",
+                    type: "modify-file" as const,
+                    title: "Approve file proposal",
+                    description: "Review future file changes.",
+                    status: "Pending" as const,
+                    stepId: "step-2",
+                    relativePath: "src/Login.tsx",
+                    createdAt: "2026-08-01T00:00:00.000Z",
+                    updatedAt: "2026-08-01T00:00:00.000Z"
+                  }
+                ],
+                createdAt: "2026-08-01T00:00:00.000Z",
+                updatedAt: "2026-08-01T00:00:00.000Z"
+              },
+              createdAt: "2026-08-01T00:00:00.000Z",
+              updatedAt: "2026-08-01T00:00:00.000Z"
+            }
+          ],
+          activeSessionId: request.sessionId ?? "agent-1",
+          updatedAt: "2026-08-01T00:00:00.000Z"
+        }
+      })),
+      approve: vi.fn(async () => agentState),
+      reject: vi.fn(async () => agentState),
+      status: vi.fn(async () => agentState),
+      onEvent: vi.fn((listener: (event: AgentEvent) => void) => {
+        window.__leviAgentListeners.push(listener);
+        return () => {
+          window.__leviAgentListeners = window.__leviAgentListeners.filter((current) => current !== listener);
+        };
+      })
+    },
     conversation: {
       start: vi.fn(async () => ({
         requestId: "conversation-1"
@@ -1466,6 +1586,7 @@ beforeEach(() => {
   window.__leviUpdateListeners = [];
   window.__leviDebugListeners = [];
   window.__leviChatListeners = [];
+  window.__leviAgentListeners = [];
   vi.stubGlobal("levi", api);
   Object.defineProperty(window, "levi", {
     value: api,

@@ -12,6 +12,7 @@ import { TasksPanel } from "../features/tasks/TasksPanel";
 import { useTasks } from "../features/tasks/useTasks";
 import { RuntimeManagerPanel } from "../features/ai-runtime/RuntimeManagerPanel";
 import { AIChatPanel } from "../features/ai-chat/AIChatPanel";
+import { AgentPanel } from "../features/agent/AgentPanel";
 import { type EditorTab, useEditorTabs } from "../hooks/use-editor-tabs";
 import type {
   AIRuntimeProviderId,
@@ -529,6 +530,21 @@ export function App() {
             onStopRuntime={stopRuntimeProvider}
             onRestartRuntime={restartRuntimeProvider}
             onCancelRequest={cancelRuntimeRequest}
+          />
+        </LazySurface>
+      );
+    }
+    if (activeView === "agent") {
+      return (
+        <LazySurface label="Coding Agent">
+          <AgentPanel
+            runtimeState={runtimeState}
+            activeTab={activeTab}
+            tabs={tabs}
+            selectedCode={editorSelection}
+            workspaceStatus={workspaceStatus}
+            taskProblems={tasks.problems}
+            taskOutput={tasks.output as TaskOutputEntry[]}
           />
         </LazySurface>
       );

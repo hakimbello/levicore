@@ -37,7 +37,15 @@ import type {
   AIChatRenameRequest,
   AIChatSearchRequest,
   AIChatSendRequest,
-  AIChatSetPanelRequest
+  AIChatSetPanelRequest,
+  AgentApprovalRequest,
+  AgentArchiveRequest,
+  AgentDeleteRequest,
+  AgentEvent,
+  AgentNewSessionRequest,
+  AgentPlanRequest,
+  AgentRenameRequest,
+  AgentStatusRequest
 } from "../../src/types/levi-api";
 import type { TaskEvent } from "../../src/types/task-api";
 import type {
@@ -201,6 +209,16 @@ const IPC_CHANNELS = {
   chatSetPanel: "levi:chat:set-panel",
   chatPin: "levi:chat:pin",
   chatEvent: "levi:chat:event",
+  agentNewSession: "levi:agent:new-session",
+  agentList: "levi:agent:list",
+  agentDelete: "levi:agent:delete",
+  agentRename: "levi:agent:rename",
+  agentArchive: "levi:agent:archive",
+  agentPlan: "levi:agent:plan",
+  agentApprove: "levi:agent:approve",
+  agentReject: "levi:agent:reject",
+  agentStatus: "levi:agent:status",
+  agentEvent: "levi:agent:event",
   conversationStart: "levi:conversation:start",
   conversationCancel: "levi:conversation:cancel",
   conversationEvent: "levi:conversation:event"
@@ -599,6 +617,22 @@ const leviApi: LeviApiWithWorkspaceTree = {
       const handler = (_event: Electron.IpcRendererEvent, payload: AIChatEvent) => listener(payload);
       ipcRenderer.on(IPC_CHANNELS.chatEvent, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.chatEvent, handler);
+    }
+  },
+  agent: {
+    newSession: (request?: AgentNewSessionRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentNewSession, request ?? {}),
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.agentList),
+    delete: (request: AgentDeleteRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentDelete, request),
+    rename: (request: AgentRenameRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentRename, request),
+    archive: (request: AgentArchiveRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentArchive, request),
+    plan: (request: AgentPlanRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentPlan, request),
+    approve: (request: AgentApprovalRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentApprove, request),
+    reject: (request: AgentApprovalRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentReject, request),
+    status: (request?: AgentStatusRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentStatus, request ?? {}),
+    onEvent: (listener: (event: AgentEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: AgentEvent) => listener(payload);
+      ipcRenderer.on(IPC_CHANNELS.agentEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.agentEvent, handler);
     }
   },
   conversation: {

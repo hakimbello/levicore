@@ -1,0 +1,797 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { app } from "electron";
+import type {
+  AgentActionType,
+  AgentApprovalAction,
+  AgentApprovalRequest,
+  AgentArchiveRequest,
+  AgentDeleteRequest,
+  AgentEvent,
+  AgentExecutionPlan,
+  AgentMessage,
+  AgentNewSessionRequest,
+  AgentPlanRequest,
+  AgentPlanResult,
+  AgentPlanStep,
+  AgentProjectSummary,
+  AgentRenameRequest,
+  AgentSession,
+  AgentState,
+  AgentStatusRequest
+} from "../../src/features/agent";
+import type { AIChatAttachment } from "../../src/features/ai-chat";
+import type { AIRuntimeProviderId } from "../../src/features/ai-runtime";
+import type { WorkspaceStatus } from "../../src/types/levi-api";
+import { RuntimeManager, validateModelId, validateRuntimeProviderId } from "./ai-runtime";
+import { listWorkspaceTree } from "./workspace-tree-ipc";
+
+const AGENT_STATE_FILE = "coding-agent-state.json";
+const MAX_SESSIONS = 80;
+const MAX_MESSAGES = 80;
+const MAX_PROMPT_LENGTH = 40_000;
+const MAX_TITLE_LENGTH = 120;
+const MAX_ATTACHMENTS = 12;
+const MAX_OPEN_FILES = 24;
+const MAX_PLAN_STEPS = 12;
+const MAX_ACTIONS = 40;
+const GIT_TIMEOUT_MS = 2_000;
+const ACTION_TYPES: AgentActionType[] = ["create-file", "modify-file", "delete-file", "run-task", "run-terminal-command", "git-operation"];
+
+type AgentServiceOptions = {
+  statePath?: string;
+  emit?: (event: AgentEvent) => void;
+  getWorkspaceRoot?: () => string | null;
+  getWorkspaceStatus?: () => WorkspaceStatus;
+};
+
+type AgentPersistence = {
+  sessions: AgentSession[];
+  activeSessionId?: string;
+};
+
+export class AgentService {
+  private readonly statePath: string;
+  private readonly emit: (event: AgentEvent) => void;
+  private persistence: AgentPersistence = defaultPersistence();
+
+  constructor(
+    private readonly runtimeManager: RuntimeManager,
+    private readonly options: AgentServiceOptions = {}
+  ) {
+    this.statePath =
+      options.statePath ??
+      path.join(typeof app?.getPath === "function" ? app.getPath("userData") : os.tmpdir(), AGENT_STATE_FILE);
+    this.emit = options.emit ?? (() => undefined);
+  }
+
+  async initialize(): Promise<AgentState> {
+    await this.load();
+    return this.snapshot();
+  }
+
+  list(): AgentState {
+    return this.snapshot();
+  }
+
+  status(rawRequest: unknown = {}): AgentState | AgentSession {
+    const request = validateStatusRequest(rawRequest);
+    if (!request.sessionId) return this.snapshot();
+    return this.requireSession(request.sessionId);
+  }
+
+  async newSession(rawRequest: unknown = {}): Promise<AgentState> {
+    const request = validateNewSessionRequest(rawRequest);
+    const now = new Date().toISOString();
+    const session: AgentSession = {
+      id: randomUUID(),
+      title: request.title ?? "New Agent Session",
+      status: "Idle",
+      archived: false,
+      runtimeId: request.runtimeId,
+      modelId: request.modelId,
+      messages: [],
+      attachments: [],
+      createdAt: now,
+      updatedAt: now
+    };
+    this.persistence.sessions = [session, ...this.persistence.sessions].slice(0, MAX_SESSIONS);
+    this.persistence.activeSessionId = session.id;
+    await this.persistAndEmit();
+    return this.snapshot();
+  }
+
+  async rename(rawRequest: unknown): Promise<AgentState> {
+    const request = validateRenameRequest(rawRequest);
+    const session = this.requireSession(request.sessionId);
+    session.title = request.title;
+    session.updatedAt = new Date().toISOString();
+    await this.persistAndEmit();
+    return this.snapshot();
+  }
+
+  async archive(rawRequest: unknown): Promise<AgentState> {
+    const request = validateArchiveRequest(rawRequest);
+    const session = this.requireSession(request.sessionId);
+    session.archived = request.archived;
+    session.status = request.archived ? "Archived" : session.plan ? "WaitingForApproval" : "Idle";
+    session.updatedAt = new Date().toISOString();
+    if (request.archived && this.persistence.activeSessionId === session.id) {
+      this.persistence.activeSessionId = this.persistence.sessions.find((item) => !item.archived && item.id !== session.id)?.id;
+    }
+    await this.persistAndEmit();
+    return this.snapshot();
+  }
+
+  async delete(rawRequest: unknown): Promise<AgentState> {
+    const request = validateDeleteRequest(rawRequest);
+    this.persistence.sessions = this.persistence.sessions.filter((item) => item.id !== request.sessionId);
+    if (this.persistence.activeSessionId === request.sessionId) {
+      this.persistence.activeSessionId = this.persistence.sessions.find((item) => !item.archived)?.id ?? this.persistence.sessions[0]?.id;
+    }
+    await this.persistAndEmit();
+    return this.snapshot();
+  }
+
+  async plan(rawRequest: unknown): Promise<AgentPlanResult> {
+    const request = validatePlanRequest(rawRequest);
+    const session = request.sessionId
+      ? this.requireSession(request.sessionId)
+      : await this.createSessionForPlan(request);
+    const now = new Date().toISOString();
+    session.status = "Planning";
+    session.runtimeId = request.runtimeId ?? session.runtimeId;
+    session.modelId = request.modelId;
+    session.attachments = request.attachments ?? [];
+    session.error = undefined;
+    session.messages = [...session.messages, { id: randomUUID(), role: "user" as const, content: request.prompt, createdAt: now }].slice(-MAX_MESSAGES);
+    this.persistence.activeSessionId = session.id;
+    await this.persistAndEmit();
+
+    const projectSummary = await this.analyzeWorkspace(request);
+    try {
+      const response = await this.runtimeManager.chat({
+        providerId: request.runtimeId ?? session.runtimeId,
+        model: request.modelId,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are Levi's planning-only coding agent. Produce a structured execution plan only. Do not claim to edit files, run commands, use tools, or execute the plan. Return JSON with summary and steps. Every proposed action must wait for user approval."
+          },
+          {
+            role: "user",
+            content: buildPlanningPrompt(request.prompt, projectSummary, request.attachments ?? [])
+          }
+        ],
+        options: { format: "json" }
+      });
+      session.projectSummary = projectSummary;
+      session.plan = createExecutionPlan(request.prompt, response.content, projectSummary);
+      session.status = session.plan.progress.pendingActions > 0 ? "WaitingForApproval" : "Ready";
+      session.messages = [...session.messages, { id: randomUUID(), role: "assistant" as const, content: session.plan.summary, createdAt: new Date().toISOString() }].slice(-MAX_MESSAGES);
+    } catch (error) {
+      session.projectSummary = projectSummary;
+      session.plan = createFallbackPlan(request.prompt, projectSummary);
+      session.status = "WaitingForApproval";
+      session.error = errorMessage(error);
+      session.messages = [
+        ...session.messages,
+        {
+          id: randomUUID(),
+          role: "assistant" as const,
+          content: `${session.plan.summary}\n\nPlanning used the conservative fallback because the model request failed: ${session.error}`,
+          createdAt: new Date().toISOString()
+        }
+      ].slice(-MAX_MESSAGES);
+    }
+    session.title = session.title === "New Agent Session" ? titleFromPrompt(request.prompt) : session.title;
+    session.updatedAt = new Date().toISOString();
+    await this.persistAndEmit();
+    this.emit({ type: "progress", sessionId: session.id, state: this.snapshot() });
+    return { sessionId: session.id, state: this.snapshot() };
+  }
+
+  async approve(rawRequest: unknown): Promise<AgentState> {
+    return this.setApprovalState(validateApprovalRequest(rawRequest), "Approved");
+  }
+
+  async reject(rawRequest: unknown): Promise<AgentState> {
+    return this.setApprovalState(validateApprovalRequest(rawRequest), "Rejected");
+  }
+
+  private async setApprovalState(request: AgentApprovalRequest, status: "Approved" | "Rejected"): Promise<AgentState> {
+    const session = this.requireSession(request.sessionId);
+    if (!session.plan) throw new Error("Agent session has no execution plan.");
+    const action = session.plan.approvals.find((item) => item.id === request.actionId);
+    if (!action) throw new Error("Agent approval action was not found.");
+    if (action.status === "Cancelled") throw new Error("Cancelled agent actions cannot be changed.");
+    action.status = status;
+    action.updatedAt = new Date().toISOString();
+    for (const step of session.plan.steps) {
+      const actions = session.plan.approvals.filter((item) => item.stepId === step.id);
+      if (actions.some((item) => item.status === "Rejected")) step.status = "Rejected";
+      else if (actions.length > 0 && actions.every((item) => item.status === "Approved")) step.status = "Approved";
+      else step.status = "Pending";
+    }
+    session.plan.progress = progressFromApprovals(session.plan);
+    session.plan.updatedAt = new Date().toISOString();
+    session.status = session.plan.progress.pendingActions > 0 ? "WaitingForApproval" : "Ready";
+    session.updatedAt = new Date().toISOString();
+    await this.persistAndEmit();
+    this.emit({ type: "progress", sessionId: session.id, state: this.snapshot() });
+    return this.snapshot();
+  }
+
+  private async createSessionForPlan(request: AgentPlanRequest): Promise<AgentSession> {
+    await this.newSession({ title: titleFromPrompt(request.prompt), runtimeId: request.runtimeId, modelId: request.modelId });
+    return this.requireSession(this.persistence.activeSessionId);
+  }
+
+  private async analyzeWorkspace(request: AgentPlanRequest): Promise<AgentProjectSummary> {
+    const status = this.options.getWorkspaceStatus?.();
+    const summary = status?.summary;
+    const rootPath = this.options.getWorkspaceRoot?.() ?? summary?.rootPath;
+    const treeSummary = await summarizeTree();
+    const git = rootPath ? await readGitStatus(rootPath) : { changedFiles: 0, summary: [] };
+    const attachmentTokens = (request.attachments ?? []).reduce((total, item) => total + (item.tokenEstimate ?? estimateTokens(item.content ?? "")), 0);
+    return {
+      projectName: summary?.projectName,
+      rootPath,
+      languages: summary?.languages ?? [],
+      frameworks: summary?.frameworks ?? [],
+      packageManager: summary?.packageManager,
+      buildSystem: Object.keys(summary?.scripts ?? {}).slice(0, 12),
+      sourceDirectories: summary?.sourceDirectories ?? treeSummary.sourceDirectories,
+      entryPoints: summary?.likelyEntryPoints ?? [],
+      openFiles: (request.openFiles ?? []).map((item) => item.relativePath).slice(0, MAX_OPEN_FILES),
+      git,
+      context: {
+        attachmentCount: request.attachments?.length ?? 0,
+        tokenEstimate: attachmentTokens,
+        labels: (request.attachments ?? []).map((item) => item.label).slice(0, MAX_ATTACHMENTS)
+      }
+    };
+  }
+
+  private requireSession(sessionId: string | undefined): AgentSession {
+    const session = this.persistence.sessions.find((item) => item.id === sessionId);
+    if (!session) throw new Error("Agent session was not found.");
+    return session;
+  }
+
+  private snapshot(): AgentState {
+    return {
+      sessions: [...this.persistence.sessions].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+      activeSessionId: this.persistence.activeSessionId,
+      updatedAt: new Date().toISOString()
+    };
+  }
+
+  private async persistAndEmit(): Promise<void> {
+    await this.persist();
+    this.emit({ type: "state", state: this.snapshot() });
+  }
+
+  private async load(): Promise<void> {
+    try {
+      const raw = await fs.readFile(this.statePath, "utf8");
+      this.persistence = coercePersistence(JSON.parse(raw));
+    } catch {
+      this.persistence = defaultPersistence();
+    }
+  }
+
+  private async persist(): Promise<void> {
+    await fs.mkdir(path.dirname(this.statePath), { recursive: true });
+    await fs.writeFile(this.statePath, JSON.stringify(redactPersistence(this.persistence), null, 2), "utf8");
+  }
+}
+
+function defaultPersistence(): AgentPersistence {
+  return { sessions: [] };
+}
+
+function validateNewSessionRequest(value: unknown): AgentNewSessionRequest {
+  if (!value || typeof value !== "object") return {};
+  const record = value as Record<string, unknown>;
+  return {
+    title: record.title === undefined ? undefined : validateTitle(record.title),
+    runtimeId: record.runtimeId === undefined ? undefined : validateRuntimeProviderId(record.runtimeId),
+    modelId: record.modelId === undefined ? undefined : validateModelId(record.modelId)
+  };
+}
+
+function validateRenameRequest(value: unknown): AgentRenameRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent rename request is invalid.");
+  const record = value as Record<string, unknown>;
+  return { sessionId: validateId(record.sessionId, "sessionId"), title: validateTitle(record.title) };
+}
+
+function validateArchiveRequest(value: unknown): AgentArchiveRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent archive request is invalid.");
+  const record = value as Record<string, unknown>;
+  return { sessionId: validateId(record.sessionId, "sessionId"), archived: record.archived === true };
+}
+
+function validateDeleteRequest(value: unknown): AgentDeleteRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent delete request is invalid.");
+  return { sessionId: validateId((value as Record<string, unknown>).sessionId, "sessionId") };
+}
+
+function validateStatusRequest(value: unknown): AgentStatusRequest {
+  if (!value || typeof value !== "object") return {};
+  const record = value as Record<string, unknown>;
+  return { sessionId: record.sessionId === undefined ? undefined : validateId(record.sessionId, "sessionId") };
+}
+
+function validatePlanRequest(value: unknown): AgentPlanRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent plan request is invalid.");
+  const record = value as Record<string, unknown>;
+  return {
+    sessionId: record.sessionId === undefined ? undefined : validateId(record.sessionId, "sessionId"),
+    prompt: validatePrompt(record.prompt),
+    runtimeId: record.runtimeId === undefined ? undefined : validateRuntimeProviderId(record.runtimeId),
+    modelId: validateModelId(record.modelId),
+    attachments: record.attachments === undefined ? undefined : validateAttachments(record.attachments),
+    openFiles: Array.isArray(record.openFiles) ? record.openFiles.slice(0, MAX_OPEN_FILES).map(validateOpenFile) : undefined
+  };
+}
+
+function validateApprovalRequest(value: unknown): AgentApprovalRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent approval request is invalid.");
+  const record = value as Record<string, unknown>;
+  return { sessionId: validateId(record.sessionId, "sessionId"), actionId: validateId(record.actionId, "actionId") };
+}
+
+function validateAttachments(value: unknown): AIChatAttachment[] {
+  if (!Array.isArray(value) || value.length > MAX_ATTACHMENTS) throw new Error("Agent attachments are invalid.");
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object") throw new Error("Agent attachment is invalid.");
+    const record = item as Record<string, unknown>;
+    return {
+      id: validateId(record.id ?? randomUUID(), "attachmentId"),
+      sourceId: record.sourceId === undefined ? `S${index + 1}` : validateId(record.sourceId, "sourceId"),
+      type: validateAttachmentType(record.type),
+      label: validateTitle(record.label),
+      relativePath: record.relativePath === undefined ? undefined : validateRelativePath(record.relativePath),
+      lineStart: record.lineStart === undefined ? undefined : validateLine(record.lineStart, "lineStart"),
+      lineEnd: record.lineEnd === undefined ? undefined : validateLine(record.lineEnd, "lineEnd"),
+      language: record.language === undefined ? undefined : validateTinyString(record.language, "language"),
+      content: record.content === undefined ? undefined : validateAttachmentContent(record.content),
+      tokenEstimate: record.tokenEstimate === undefined ? undefined : validateNonNegativeInteger(record.tokenEstimate, "tokenEstimate"),
+      charCount: record.charCount === undefined ? undefined : validateNonNegativeInteger(record.charCount, "charCount"),
+      truncated: record.truncated === true,
+      preview: record.preview === undefined ? undefined : validateAttachmentContent(record.preview)
+    };
+  });
+}
+
+function validateAttachmentType(value: unknown): AIChatAttachment["type"] {
+  if (
+    value === "current-file" ||
+    value === "open-tab" ||
+    value === "file" ||
+    value === "workspace-file" ||
+    value === "workspace-folder" ||
+    value === "selected-code" ||
+    value === "selection" ||
+    value === "clipboard" ||
+    value === "project-rules" ||
+    value === "workspace-summary" ||
+    value === "git-diff" ||
+    value === "problems" ||
+    value === "task-output" ||
+    value === "terminal-output" ||
+    value === "image-placeholder"
+  ) return value;
+  throw new Error("Agent attachment type is invalid.");
+}
+
+function validateOpenFile(value: unknown): NonNullable<AgentPlanRequest["openFiles"]>[number] {
+  if (!value || typeof value !== "object") throw new Error("Agent open file entry is invalid.");
+  const record = value as Record<string, unknown>;
+  return {
+    relativePath: validateRelativePath(record.relativePath),
+    language: record.language === undefined ? undefined : validateTinyString(record.language, "language")
+  };
+}
+
+function validateId(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 140 || value.includes("\0")) throw new Error(`${field} is invalid.`);
+  return value;
+}
+
+function validateTitle(value: unknown): string {
+  if (typeof value !== "string" || value.trim().length === 0 || value.length > MAX_TITLE_LENGTH || value.includes("\0")) throw new Error("Agent title is invalid.");
+  return value.trim();
+}
+
+function validatePrompt(value: unknown): string {
+  if (typeof value !== "string" || value.trim().length === 0 || value.length > MAX_PROMPT_LENGTH || value.includes("\0")) throw new Error("Agent prompt is invalid.");
+  return value.trim();
+}
+
+function validateRelativePath(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 500 || path.isAbsolute(value) || value.includes("\0") || value.includes("..")) {
+    throw new Error("Agent workspace path is invalid.");
+  }
+  return value.replace(/\\/g, "/");
+}
+
+function validateLine(value: unknown, field: string): number {
+  if (!Number.isInteger(value) || (value as number) < 1 || (value as number) > 1_000_000) throw new Error(`${field} is invalid.`);
+  return value as number;
+}
+
+function validateNonNegativeInteger(value: unknown, field: string): number {
+  if (!Number.isInteger(value) || (value as number) < 0 || (value as number) > 1_000_000_000) throw new Error(`${field} is invalid.`);
+  return value as number;
+}
+
+function validateTinyString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.length > 80 || value.includes("\0")) throw new Error(`${field} is invalid.`);
+  return value;
+}
+
+function validateAttachmentContent(value: unknown): string {
+  if (typeof value !== "string" || value.length > MAX_PROMPT_LENGTH || value.includes("\0")) throw new Error("Agent attachment content is invalid.");
+  return value;
+}
+
+function buildPlanningPrompt(prompt: string, summary: AgentProjectSummary, attachments: AIChatAttachment[]): string {
+  return JSON.stringify({
+    instruction: "Return JSON only with shape { summary: string, steps: [{ title, description, estimatedFiles, actions }] }. Actions are proposals only and must not be executed.",
+    objective: prompt,
+    project: summary,
+    context: attachments.map((attachment) => ({
+      sourceId: attachment.sourceId,
+      label: attachment.label,
+      type: attachment.type,
+      relativePath: attachment.relativePath,
+      lineStart: attachment.lineStart,
+      lineEnd: attachment.lineEnd,
+      preview: attachment.preview ?? attachment.content?.slice(0, 1_200)
+    }))
+  });
+}
+
+function createExecutionPlan(objective: string, modelContent: string, projectSummary: AgentProjectSummary): AgentExecutionPlan {
+  const parsed = parsePlanContent(modelContent);
+  if (!parsed) return createFallbackPlan(objective, projectSummary);
+  const now = new Date().toISOString();
+  const approvals: AgentApprovalAction[] = [];
+  const steps: AgentPlanStep[] = parsed.steps.slice(0, MAX_PLAN_STEPS).map((step, index) => {
+    const stepId = randomUUID();
+    const actionIds = step.actions.slice(0, MAX_ACTIONS - approvals.length).map((action) => {
+      const item: AgentApprovalAction = {
+        id: randomUUID(),
+        type: action.type,
+        title: action.title,
+        description: action.description,
+        status: "Pending",
+        stepId,
+        relativePath: action.relativePath,
+        taskName: action.taskName,
+        command: action.command,
+        gitOperation: action.gitOperation,
+        createdAt: now,
+        updatedAt: now
+      };
+      approvals.push(item);
+      return item.id;
+    });
+    return {
+      id: stepId,
+      order: index + 1,
+      title: step.title,
+      description: step.description,
+      status: "Pending",
+      estimatedFiles: step.estimatedFiles,
+      actionIds
+    };
+  });
+  if (approvals.length === 0) {
+    const action = createApproval("modify-file", "Review proposed workspace changes", "Review the plan and approve concrete edits in a later milestone.", steps[0]?.id, parsed.estimatedFiles[0]);
+    approvals.push(action);
+    if (steps[0]) steps[0].actionIds.push(action.id);
+  }
+  const plan: AgentExecutionPlan = {
+    id: randomUUID(),
+    objective,
+    summary: parsed.summary,
+    steps,
+    approvals,
+    estimatedFiles: Array.from(new Set(steps.flatMap((step) => step.estimatedFiles))).slice(0, 40),
+    progress: { totalSteps: steps.length, pendingActions: 0, approvedActions: 0, rejectedActions: 0, completedActions: 0 },
+    createdAt: now,
+    updatedAt: now
+  };
+  plan.progress = progressFromApprovals(plan);
+  return plan;
+}
+
+function createFallbackPlan(objective: string, projectSummary: AgentProjectSummary): AgentExecutionPlan {
+  const now = new Date().toISOString();
+  const steps: AgentPlanStep[] = [
+    {
+      id: randomUUID(),
+      order: 1,
+      title: "Analyze project shape",
+      description: `Use the detected ${projectSummary.frameworks.join(", ") || "project"} structure, package metadata, open files, and explicit context before proposing changes.`,
+      status: "Pending",
+      estimatedFiles: projectSummary.openFiles.slice(0, 4),
+      actionIds: []
+    },
+    {
+      id: randomUUID(),
+      order: 2,
+      title: "Identify implementation targets",
+      description: "Locate routing, UI, state, and test files needed for the requested change without reading the full workspace automatically.",
+      status: "Pending",
+      estimatedFiles: projectSummary.entryPoints.slice(0, 6),
+      actionIds: []
+    },
+    {
+      id: randomUUID(),
+      order: 3,
+      title: "Prepare approved changes",
+      description: "Create a user-reviewed list of file edits and validation steps. No edits or commands run in this milestone.",
+      status: "Pending",
+      estimatedFiles: projectSummary.sourceDirectories.slice(0, 4),
+      actionIds: []
+    },
+    {
+      id: randomUUID(),
+      order: 4,
+      title: "Plan validation",
+      description: "Propose tests, tasks, or debug checks that the user may approve later.",
+      status: "Pending",
+      estimatedFiles: [],
+      actionIds: []
+    }
+  ];
+  const approvals = [
+    createApproval("modify-file", "Approve future file modifications", "Allow a later milestone to propose concrete file changes for this plan.", steps[2].id, steps[2].estimatedFiles[0]),
+    createApproval("run-task", "Approve future validation task", "Allow a later milestone to run an explicit validation task after review.", steps[3].id)
+  ];
+  steps[2].actionIds.push(approvals[0].id);
+  steps[3].actionIds.push(approvals[1].id);
+  const plan: AgentExecutionPlan = {
+    id: randomUUID(),
+    objective,
+    summary: `Planning-only execution plan for: ${objective}`,
+    steps,
+    approvals,
+    estimatedFiles: Array.from(new Set(steps.flatMap((step) => step.estimatedFiles))).slice(0, 40),
+    progress: { totalSteps: steps.length, pendingActions: approvals.length, approvedActions: 0, rejectedActions: 0, completedActions: 0 },
+    createdAt: now,
+    updatedAt: now
+  };
+  return plan;
+}
+
+function createApproval(type: AgentActionType, title: string, description: string, stepId?: string, relativePath?: string): AgentApprovalAction {
+  const now = new Date().toISOString();
+  return { id: randomUUID(), type, title, description, status: "Pending", stepId, relativePath, createdAt: now, updatedAt: now };
+}
+
+type ParsedStep = {
+  title: string;
+  description: string;
+  estimatedFiles: string[];
+  actions: Array<{
+    type: AgentActionType;
+    title: string;
+    description: string;
+    relativePath?: string;
+    taskName?: string;
+    command?: string;
+    gitOperation?: string;
+  }>;
+};
+
+function parsePlanContent(content: string): { summary: string; steps: ParsedStep[]; estimatedFiles: string[] } | null {
+  const parsed = parseJsonObject(content);
+  if (!parsed) return null;
+  const summary = typeof parsed.summary === "string" && parsed.summary.trim() ? parsed.summary.trim().slice(0, 1_000) : "Execution plan prepared.";
+  const rawSteps = Array.isArray(parsed.steps) ? parsed.steps : [];
+  const steps = rawSteps.map(parseStep).filter(Boolean).slice(0, MAX_PLAN_STEPS) as ParsedStep[];
+  if (steps.length === 0) return null;
+  return { summary, steps, estimatedFiles: Array.from(new Set(steps.flatMap((step) => step.estimatedFiles))) };
+}
+
+function parseJsonObject(content: string): Record<string, unknown> | null {
+  const trimmed = content.trim();
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim();
+  const candidate = fenced ?? trimmed.slice(trimmed.indexOf("{"), trimmed.lastIndexOf("}") + 1);
+  try {
+    const parsed = JSON.parse(candidate) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseStep(value: unknown): ParsedStep | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const title = typeof record.title === "string" && record.title.trim() ? record.title.trim().slice(0, 120) : "Plan step";
+  const description = typeof record.description === "string" ? record.description.trim().slice(0, 1_000) : "";
+  const estimatedFiles = Array.isArray(record.estimatedFiles) ? record.estimatedFiles.map((item) => typeof item === "string" ? item : "").filter(Boolean).map((item) => item.slice(0, 500)).slice(0, 12) : [];
+  const actions = Array.isArray(record.actions) ? record.actions.map(parseAction).filter(Boolean).slice(0, MAX_ACTIONS) as ParsedStep["actions"] : [];
+  return { title, description, estimatedFiles, actions };
+}
+
+function parseAction(value: unknown): ParsedStep["actions"][number] | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const type = ACTION_TYPES.includes(record.type as AgentActionType) ? record.type as AgentActionType : "modify-file";
+  return {
+    type,
+    title: typeof record.title === "string" && record.title.trim() ? record.title.trim().slice(0, 120) : actionTitle(type),
+    description: typeof record.description === "string" ? record.description.trim().slice(0, 1_000) : "",
+    relativePath: typeof record.relativePath === "string" && !path.isAbsolute(record.relativePath) && !record.relativePath.includes("..") ? record.relativePath.slice(0, 500).replace(/\\/g, "/") : undefined,
+    taskName: typeof record.taskName === "string" ? record.taskName.slice(0, 120) : undefined,
+    command: typeof record.command === "string" ? record.command.slice(0, 500) : undefined,
+    gitOperation: typeof record.gitOperation === "string" ? record.gitOperation.slice(0, 120) : undefined
+  };
+}
+
+function actionTitle(type: AgentActionType): string {
+  if (type === "create-file") return "Create file";
+  if (type === "modify-file") return "Modify file";
+  if (type === "delete-file") return "Delete file";
+  if (type === "run-task") return "Run task";
+  if (type === "run-terminal-command") return "Run terminal command";
+  return "Run Git operation";
+}
+
+function progressFromApprovals(plan: AgentExecutionPlan): AgentExecutionPlan["progress"] {
+  return {
+    totalSteps: plan.steps.length,
+    pendingActions: plan.approvals.filter((item) => item.status === "Pending").length,
+    approvedActions: plan.approvals.filter((item) => item.status === "Approved").length,
+    rejectedActions: plan.approvals.filter((item) => item.status === "Rejected").length,
+    completedActions: 0
+  };
+}
+
+async function summarizeTree(): Promise<{ sourceDirectories: string[] }> {
+  try {
+    const tree = await listWorkspaceTree();
+    return {
+      sourceDirectories: tree.nodes.filter((node) => node.kind === "folder").map((node) => node.relativePath).slice(0, 12)
+    };
+  } catch {
+    return { sourceDirectories: [] };
+  }
+}
+
+async function readGitStatus(rootPath: string): Promise<AgentProjectSummary["git"]> {
+  try {
+    const { stdout } = await execFileText("git", ["status", "--short", "--branch"], rootPath, GIT_TIMEOUT_MS);
+    const lines = stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(0, 40);
+    const branch = lines[0]?.startsWith("## ") ? lines[0].slice(3).split("...")[0] : undefined;
+    return {
+      branch,
+      changedFiles: Math.max(0, lines.filter((line) => !line.startsWith("## ")).length),
+      summary: lines.slice(0, 12)
+    };
+  } catch {
+    return { changedFiles: 0, summary: [] };
+  }
+}
+
+function execFileText(command: string, args: string[], cwd: string, timeoutMs: number): Promise<{ stdout: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { cwd, timeout: timeoutMs, windowsHide: true, maxBuffer: 64 * 1024 }, (error, stdout) => {
+      if (error) reject(error);
+      else resolve({ stdout: stdout.toString() });
+    });
+  });
+}
+
+function coercePersistence(value: unknown): AgentPersistence {
+  if (!value || typeof value !== "object") return defaultPersistence();
+  const record = value as Record<string, unknown>;
+  const sessions = Array.isArray(record.sessions) ? record.sessions.map(coerceSession).filter(Boolean).slice(0, MAX_SESSIONS) as AgentSession[] : [];
+  const activeSessionId = typeof record.activeSessionId === "string" && sessions.some((item) => item.id === record.activeSessionId) ? record.activeSessionId : sessions[0]?.id;
+  return { sessions, activeSessionId };
+}
+
+function coerceSession(value: unknown): AgentSession | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.id !== "string" || typeof record.title !== "string") return null;
+  return {
+    id: record.id,
+    title: record.title.slice(0, MAX_TITLE_LENGTH),
+    status: coerceStatus(record.status, record.archived === true),
+    archived: record.archived === true,
+    runtimeId: optionalProvider(record.runtimeId),
+    modelId: typeof record.modelId === "string" ? record.modelId.slice(0, 300) : undefined,
+    messages: Array.isArray(record.messages) ? record.messages.map(coerceMessage).filter(Boolean).slice(-MAX_MESSAGES) as AgentMessage[] : [],
+    plan: coercePlan(record.plan),
+    projectSummary: coerceProjectSummary(record.projectSummary),
+    attachments: Array.isArray(record.attachments) ? validateAttachments(record.attachments).slice(0, MAX_ATTACHMENTS) : [],
+    createdAt: typeof record.createdAt === "string" ? record.createdAt : new Date().toISOString(),
+    updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : new Date().toISOString(),
+    error: typeof record.error === "string" ? record.error.slice(0, 500) : undefined
+  };
+}
+
+function coerceStatus(value: unknown, archived: boolean): AgentSession["status"] {
+  if (archived) return "Archived";
+  if (value === "Idle" || value === "Planning" || value === "WaitingForApproval" || value === "Ready" || value === "Error") return value;
+  return "Idle";
+}
+
+function coerceMessage(value: unknown): AgentMessage | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.id !== "string" || typeof record.content !== "string") return null;
+  const role = record.role === "user" || record.role === "assistant" || record.role === "system" ? record.role : "assistant";
+  return { id: record.id, role, content: record.content.slice(0, MAX_PROMPT_LENGTH), createdAt: typeof record.createdAt === "string" ? record.createdAt : new Date().toISOString() };
+}
+
+function coercePlan(value: unknown): AgentExecutionPlan | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as AgentExecutionPlan;
+  if (typeof record.id !== "string" || typeof record.objective !== "string" || !Array.isArray(record.steps) || !Array.isArray(record.approvals)) return undefined;
+  return {
+    ...record,
+    steps: record.steps.slice(0, MAX_PLAN_STEPS),
+    approvals: record.approvals.slice(0, MAX_ACTIONS),
+    progress: progressFromApprovals(record),
+    estimatedFiles: Array.isArray(record.estimatedFiles) ? record.estimatedFiles.slice(0, 40) : [],
+    createdAt: typeof record.createdAt === "string" ? record.createdAt : new Date().toISOString(),
+    updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : new Date().toISOString()
+  };
+}
+
+function coerceProjectSummary(value: unknown): AgentProjectSummary | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as AgentProjectSummary;
+  return {
+    projectName: typeof record.projectName === "string" ? record.projectName : undefined,
+    rootPath: typeof record.rootPath === "string" ? record.rootPath : undefined,
+    languages: Array.isArray(record.languages) ? record.languages.filter((item) => typeof item === "string").slice(0, 20) : [],
+    frameworks: Array.isArray(record.frameworks) ? record.frameworks.filter((item) => typeof item === "string").slice(0, 20) : [],
+    packageManager: typeof record.packageManager === "string" ? record.packageManager : undefined,
+    buildSystem: Array.isArray(record.buildSystem) ? record.buildSystem.filter((item) => typeof item === "string").slice(0, 20) : [],
+    sourceDirectories: Array.isArray(record.sourceDirectories) ? record.sourceDirectories.filter((item) => typeof item === "string").slice(0, 20) : [],
+    entryPoints: Array.isArray(record.entryPoints) ? record.entryPoints.filter((item) => typeof item === "string").slice(0, 20) : [],
+    openFiles: Array.isArray(record.openFiles) ? record.openFiles.filter((item) => typeof item === "string").slice(0, MAX_OPEN_FILES) : [],
+    git: record.git && typeof record.git === "object" ? record.git : { changedFiles: 0, summary: [] },
+    context: record.context && typeof record.context === "object" ? record.context : { attachmentCount: 0, tokenEstimate: 0, labels: [] }
+  };
+}
+
+function redactPersistence(persistence: AgentPersistence): AgentPersistence {
+  const raw = JSON.stringify(persistence).replace(/(api[_-]?key|token|secret|password)["']?\s*[:=]\s*["'][^"']+["']/gi, "$1:REDACTED");
+  return JSON.parse(raw) as AgentPersistence;
+}
+
+function optionalProvider(value: unknown): AIRuntimeProviderId | undefined {
+  try {
+    return value === undefined ? undefined : validateRuntimeProviderId(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function estimateTokens(content: string): number {
+  return Math.ceil(content.length / 4);
+}
+
+function titleFromPrompt(content: string): string {
+  return content.replace(/\s+/g, " ").trim().slice(0, 48) || "New Agent Session";
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Agent planning failed.";
+}

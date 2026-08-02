@@ -1,6 +1,6 @@
 import { Icon } from "./Icon";
 
-export type ActivityView = "home" | "explorer" | "search" | "debug" | "source-control" | "terminal" | "tasks" | "runtime" | "history" | "rules" | "settings";
+export type ActivityView = "home" | "explorer" | "search" | "debug" | "source-control" | "terminal" | "tasks" | "agent" | "runtime" | "history" | "rules" | "settings";
 
 type ActivityBarProps = {
   activeView: ActivityView;
@@ -21,6 +21,7 @@ const activityItems: ActivityItem[] = [
   { view: "debug", label: "Run and Debug", icon: "debug" },
   { view: "tasks", label: "Tasks", icon: "tasks" },
   { view: "source-control", label: "Source Control", icon: "source-control" },
+  { view: "agent", label: "Coding Agent", icon: "chat" },
   { view: "runtime", label: "Runtime Manager", icon: "cpu" },
   { view: "terminal", label: "Terminal", icon: "terminal" },
   { view: "rules", label: "Project Rules", icon: "layers" },

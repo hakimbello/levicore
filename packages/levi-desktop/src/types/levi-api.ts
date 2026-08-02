@@ -72,6 +72,43 @@ import type {
   AIChatSetPanelRequest,
   AIChatState
 } from "../features/ai-chat";
+import type {
+  AgentApprovalRequest,
+  AgentArchiveRequest,
+  AgentDeleteRequest,
+  AgentEvent,
+  AgentNewSessionRequest,
+  AgentPlanRequest,
+  AgentPlanResult,
+  AgentRenameRequest,
+  AgentSession,
+  AgentState,
+  AgentStatusRequest
+} from "../features/agent";
+
+export type {
+  AgentActionType,
+  AgentApprovalAction,
+  AgentApprovalRequest,
+  AgentApprovalState,
+  AgentArchiveRequest,
+  AgentDeleteRequest,
+  AgentEvent,
+  AgentExecutionPlan,
+  AgentMessage,
+  AgentMessageRole,
+  AgentNewSessionRequest,
+  AgentPlanRequest,
+  AgentPlanResult,
+  AgentPlanStep,
+  AgentPlanStepStatus,
+  AgentProjectSummary,
+  AgentRenameRequest,
+  AgentSession,
+  AgentSessionStatus,
+  AgentState,
+  AgentStatusRequest
+} from "../features/agent";
 
 export type {
   AIRuntimeDetection,
@@ -1093,6 +1130,18 @@ export type LeviApi = {
     setPanel: (request: AIChatSetPanelRequest) => Promise<AIChatState>;
     pin: (request: AIChatDeleteRequest) => Promise<AIChatState>;
     onEvent: (listener: (event: AIChatEvent) => void) => () => void;
+  };
+  agent: {
+    newSession: (request?: AgentNewSessionRequest) => Promise<AgentState>;
+    list: () => Promise<AgentState>;
+    delete: (request: AgentDeleteRequest) => Promise<AgentState>;
+    rename: (request: AgentRenameRequest) => Promise<AgentState>;
+    archive: (request: AgentArchiveRequest) => Promise<AgentState>;
+    plan: (request: AgentPlanRequest) => Promise<AgentPlanResult>;
+    approve: (request: AgentApprovalRequest) => Promise<AgentState>;
+    reject: (request: AgentApprovalRequest) => Promise<AgentState>;
+    status: (request?: AgentStatusRequest) => Promise<AgentState | AgentSession>;
+    onEvent: (listener: (event: AgentEvent) => void) => () => void;
   };
   conversation: {
     start: (request: ConversationStartRequest) => Promise<ConversationStartResult>;
