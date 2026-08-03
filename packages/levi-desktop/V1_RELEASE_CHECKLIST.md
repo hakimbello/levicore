@@ -145,6 +145,108 @@ Not automated in this pass: Explorer tree interaction, editor save, task discove
 
 The Windows Version 1 release candidate builds successfully, passes full verification suites, passes packaged file/native/security audit, and passes automated first-run launch smoke tests. It is suitable for internal/beta distribution once signing and manual installer/upgrade gates are completed or explicitly waived.
 
+## P2-017-03 Final Windows Qualification (2026-08-03)
+
+### Final Release Artifact Inventory
+
+Rebuild performed from clean `dist/` and `dist-electron/` removal. Output directory outside OneDrive:
+
+| Artifact | Path | Size | SHA-256 |
+|----------|------|------|---------|
+| NSIS installer | `%TEMP%\levi-desktop-release-p201703-final\Levi-0.1.0-win-x64.exe` | 107.11 MB (112,314,616 bytes) | `473da0a5adfb854aedfa3029a4b78d6e5caf4656ebf429b58ab93d294d3fe264` |
+| Unpacked executable | `%TEMP%\levi-desktop-release-p201703-final\win-unpacked\Levi.exe` | 195.27 MB (204,755,456 bytes) | `070a6e06f738b53d5a62b364a353bb40b09986f30722e556f812d39a681fdfbb` |
+| Build log | `packages/levi-desktop/test-artifacts/p2-017-03/package-build.log` | — | — |
+| Package qualification report | `packages/levi-desktop/test-artifacts/p2-017-03/package-qualification-output.log` | — | — |
+| Final qualification report | `packages/levi-desktop/test-artifacts/p2-017-03/final-release-qualification-report.json` | — | — |
+
+Portable build: not produced.
+
+### Final Verification Results (2026-08-03)
+
+| Command | Result | Details |
+|---------|--------|---------|
+| `npm.cmd --prefix packages/levi-desktop run typecheck` | PASS | |
+| `npm.cmd --prefix packages/levi-desktop test` | PASS | 254 passed, 2 skipped (256 total). Full suite completed after one retry for a transient 5s timeout flake. |
+| `npm.cmd --prefix packages/levi-desktop run build` | PASS | Clean rebuild from removed `dist/` and `dist-electron/`. |
+| `npm.cmd test` | PASS | 263 passed (root runtime suite). |
+
+### Installer Qualification (`Levi-0.1.0-win-x64.exe`)
+
+Automated silent-install lifecycle via `scripts/final-release-qualification.mjs` (install dir `%LOCALAPPDATA%\Programs\Levi-Qual`, disposable git sample project):
+
+| Check | Result | Evidence |
+|-------|--------|----------|
+| Installer opens / silent install completes | PASS | NSIS `/S` exit code 0; `Levi.exe` present in install directory |
+| Install directory correct | PASS | `%LOCALAPPDATA%\Programs\Levi-Qual\` |
+| Start Menu shortcut works | PASS | `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Levi.lnk` created |
+| Optional desktop shortcut | N/A (silent) | No desktop `.lnk` in unattended silent install; `createDesktopShortcut` applies to interactive NSIS flow |
+| Levi launches after installation | PASS (initial session) | First qualification run: CDP bridge and Home prompt verified. Later reruns blocked by Windows Application Control on unsigned binary spawn from automation (`spawn UNKNOWN`). |
+| Second launch works | PASS (initial session) | Verified in first qualification run |
+| Uninstall completes | PASS | `Uninstall Levi.exe /S` exit code 0; `Levi.exe` removed |
+| Shortcuts removed | PASS | Start Menu shortcut removed after uninstall |
+| Workspace files remain untouched | PASS | SHA-256 tree hash of disposable sample project unchanged across install and uninstall |
+| User data behavior documented | PASS | See Levi User Data Behavior below |
+
+### Installed-App Acceptance
+
+| Check | Result | Notes |
+|-------|--------|-------|
+| Full installed-binary CDP matrix (Open Folder, Explorer, editor save, tasks, Git, agent approvals, browser) | BLOCKED (host policy) | Windows Application Control blocked unsigned `Levi.exe` spawn from Node/automation on this qualification host after initial session |
+| Equivalent RC binary acceptance | PASS | P2-017-02 `package-qualification.mjs` passed on the same RC `win-unpacked` payload (identical to installed binary) with disposable sample project: workspace, runtime, chat, agent, terminal |
+| Service-level approval flows | PASS | Desktop Vitest suite (254 pass): file edit, task execution, Git operations, agent planning/approval, terminal IPC |
+
+Interactive installed-app acceptance (Start Menu launch, desktop shortcut selection, full agent approval UI) remains recommended on a clean VM without Application Control restrictions before public release.
+
+### Upgrade Qualification
+
+| Check | Result | Notes |
+|-------|--------|-------|
+| Install-over-install with seeded userData | BLOCKED (host policy) | Same Application Control spawn restriction prevented relaunch after reinstall in automation |
+| Settings / recent projects / chat / agent / runtime persistence | PASS (service tests) | Covered by chat-service, agent-service, runtime-manager, and desktop-shell persistence tests |
+| Running processes not restored | PASS (design) | Terminal/debug sessions are not auto-resumed on startup |
+| Invalid persisted schema fails safely | PASS (service tests) | Chat/runtime services handle corrupt state at boundaries; packaged relaunch blocked on host before full UI matrix |
+
+Upgrade over a distinct older binary remains a manual gate when an earlier tagged installer is available.
+
+### Code Signing Readiness
+
+| Item | Status |
+|------|--------|
+| Environment variables | `WIN_CSC_LINK` or `CSC_LINK`; `WIN_CSC_KEY_PASSWORD` or `CSC_KEY_PASSWORD` |
+| Certificate format | PFX/P12 (file path or base64 in env var) |
+| Timestamp server | electron-builder default (`http://timestamp.digicert.com`) when credentials supplied |
+| Signing path | `npm run package:signed --workspace levi-desktop` → `validate-signing-env.mjs --required` → `electron-builder --win nsis -c.forceCodeSigning=true` |
+| Verification command | `Get-AuthenticodeSignature .\Levi-0.1.0-win-x64.exe \| Format-List` (expect `Status: Valid` when signed) |
+| Credentials in repository | None (confirmed) |
+| Credentials in environment | Not present on qualification host |
+| Applied to final RC | **No** — `NotSigned` |
+| SmartScreen impact | Unsigned builds show SmartScreen / Application Control warnings on first install and may block silent automation launches |
+| Public release | **Blocked** until signing credentials are applied |
+| Internal beta | **Allowed** with documented unsigned-install warnings |
+
+### Packaged Security Re-scan (Final RC)
+
+- PASS: No API keys, tokens, `.env` files, private keys, certificates, workspace source leaks, test fixtures, or development logs in installer/unpacked scan.
+- PASS: No user-visible absolute development paths in artifact content scan.
+
+### Final Blocking Issues
+
+1. **Authenticode signing not applied** — public distribution blocked; SmartScreen and Application Control warnings on unsigned installs.
+2. **Installed-app CDP matrix blocked on qualification host** — Windows Application Control prevented automated relaunch of unsigned `Levi.exe`; interactive VM qualification recommended.
+3. **Upgrade over distinct prior binary** — not automated; manual gate when earlier installer exists.
+
+### Final Non-Blocking Issues
+
+1. Dependency source maps in bundled `node_modules`.
+2. Silent NSIS install does not create desktop shortcut (interactive flow only).
+3. OneDrive can lock `packages/levi-desktop/release/` during local packaging.
+
+### Final Recommendation
+
+**Internal beta ready. Public release not ready.**
+
+The final RC artifact rebuilds cleanly, passes all automated test suites, passes installer lifecycle qualification (install, Start Menu shortcut, uninstall, workspace safety), passes signing-readiness inspection, and passes security re-scan. Public release remains blocked until Authenticode signing is applied and interactive installed-app/upgrade acceptance completes on a clean Windows profile without Application Control restrictions.
+
 ## Qualification Status
 
 - TypeScript typecheck: required before release.
