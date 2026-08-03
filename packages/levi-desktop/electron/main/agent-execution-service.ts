@@ -6,6 +6,13 @@ import type { BrowserWindow } from "electron";
 import type {
   AgentActionPreview,
   AgentApprovalAction,
+  AgentBrowserExecuteRequest,
+  AgentBrowserExecutionResult,
+  AgentBrowserPreviewRequest,
+  AgentBrowserPreviewResult,
+  AgentBrowserRunState,
+  AgentBrowserStatusRequest,
+  AgentBrowserStatusResult,
   AgentCancelRequest,
   AgentDiffLine,
   AgentExecuteRequest,
@@ -66,12 +73,14 @@ import type {
   AgentVerifyResult
 } from "../../src/features/agent";
 import type { AIRuntimeInvocationResponse } from "../../src/features/ai-runtime";
+import type { BrowserActionPreview, BrowserActionResult } from "../../src/features/browser";
 import type { TaskDefinition, TaskEvent, TaskOutputEntry, TaskProblem, TaskRun } from "../../src/types/task-api";
 import { generateLocalDiff, hashContent, writeAtomically } from "./edit-context";
 import type { RuntimeManager } from "./ai-runtime";
 import type { TaskService } from "./tasks/task-service";
 import type { GitOperation, GitOperationPreview, GitRepositoryStatus, GitService } from "./git-service";
 import type { TerminalManager } from "./terminal-manager";
+import type { BrowserService } from "./browser-service";
 import { getMonacoLanguage, isInsideRoot, normalizeSlashes } from "./workspace-context";
 
 const MAX_TEXT_BYTES = 5 * 1024 * 1024;
@@ -134,9 +143,12 @@ type AgentExecutionServiceOptions = {
   emitGit?: (sessionId: string, actionId: string, gitRun: AgentGitRunState) => void;
   emitVerification?: (sessionId: string, report: AgentVerificationReport) => void;
   emitRepairPlan?: (sessionId: string, reportId: string, repairs: AgentRepairQueueItem[]) => void;
+  emitBrowserPreview?: (sessionId: string, preview: BrowserActionPreview) => void;
+  emitBrowser?: (sessionId: string, actionId: string, browserRun: AgentBrowserRunState) => void;
   taskService?: TaskService;
   gitService?: GitService;
   terminalManager?: TerminalManager;
+  browserService?: BrowserService;
   runtimeManager?: RuntimeManager;
   getWindow?: () => BrowserWindow | null;
   getChangedFiles?: () => string[];
@@ -591,6 +603,81 @@ export class AgentExecutionService {
     };
   }
 
+  async browserPreview(session: AgentSession, rawRequest: unknown): Promise<AgentBrowserPreviewResult> {
+    const request = validateBrowserPreviewRequest(rawRequest);
+    const action = requireAction(session, request.actionId);
+    requireApprovedBrowserAction(action);
+    if (!this.options.browserService) throw new Error("BrowserService is unavailable.");
+    const preview = this.options.browserService.preview(browserRequestFromAction(action));
+    const run = ensureBrowserRun(session, action, preview);
+    run.status = "Approved";
+    run.preview = preview;
+    run.updatedAt = new Date().toISOString();
+    await this.touch(session);
+    this.options.emitBrowserPreview?.(session.id, preview);
+    return { sessionId: session.id, preview, state: this.options.snapshot() };
+  }
+
+  async browserExecute(session: AgentSession, rawRequest: unknown): Promise<AgentBrowserExecutionResult> {
+    const request = validateBrowserExecuteRequest(rawRequest);
+    const action = requireAction(session, request.actionId);
+    requireApprovedBrowserAction(action);
+    if (!this.options.browserService) throw new Error("BrowserService is unavailable.");
+    if (ensureBrowserRuns(session).some((run) => run.status === "Executing")) {
+      throw new Error("Another agent browser action is already executing.");
+    }
+    const preview = this.options.browserService.preview(browserRequestFromAction(action));
+    const run = ensureBrowserRun(session, action, preview);
+    const startedAt = new Date().toISOString();
+    Object.assign(run, {
+      status: "Executing" as const,
+      preview,
+      failureReason: undefined,
+      result: undefined,
+      screenshotPath: undefined,
+      startedAt,
+      endedAt: undefined,
+      updatedAt: startedAt
+    });
+    session.status = "Executing";
+    await this.touch(session);
+    try {
+      const result = await executeBrowserAction(this.options.browserService, action);
+      run.status = "Succeeded";
+      run.result = "session" in result ? result as BrowserActionResult : undefined;
+      run.session = "session" in result ? result.session : undefined;
+      run.screenshotPath = "screenshotPath" in result ? result.screenshotPath : undefined;
+      run.endedAt = new Date().toISOString();
+      run.updatedAt = run.endedAt;
+      session.status = "Ready";
+      session.plan!.progress = progressFromSession(session);
+      await this.touch(session);
+      this.options.emitBrowser?.(session.id, action.id, run);
+      return { sessionId: session.id, actionId: action.id, browserRun: run, state: this.options.snapshot() };
+    } catch (error) {
+      run.status = "Failed";
+      run.failureReason = errorMessage(error);
+      run.endedAt = new Date().toISOString();
+      run.updatedAt = run.endedAt;
+      session.status = "Error";
+      session.error = run.failureReason;
+      session.plan!.progress = progressFromSession(session);
+      await this.touch(session);
+      this.options.emitBrowser?.(session.id, action.id, run);
+      throw error;
+    }
+  }
+
+  browserStatus(session: AgentSession, rawRequest: unknown): AgentBrowserStatusResult {
+    const request = validateBrowserStatusRequest(rawRequest);
+    const runs = ensureBrowserRuns(session);
+    return {
+      sessionId: session.id,
+      browserRuns: request.actionId ? runs.filter((run) => run.actionId === request.actionId) : runs,
+      state: this.options.snapshot()
+    };
+  }
+
   async verify(session: AgentSession, rawRequest: unknown): Promise<AgentVerifyResult> {
     const request = validateVerifyRequest(rawRequest);
     if (request.sessionId !== session.id) throw new Error("Agent verification request session does not match.");
@@ -703,6 +790,14 @@ export class AgentExecutionService {
         gitRun.endedAt = new Date().toISOString();
         gitRun.failureReason = "Git operation was interrupted before Levi shut down.";
         gitRun.updatedAt = gitRun.endedAt;
+      }
+    }
+    for (const browserRun of session.plan?.browserRuns ?? []) {
+      if (browserRun.status === "Executing") {
+        browserRun.status = "Cancelled";
+        browserRun.endedAt = new Date().toISOString();
+        browserRun.failureReason = "Browser action was interrupted before Levi shut down.";
+        browserRun.updatedAt = browserRun.endedAt;
       }
     }
   }
@@ -1518,6 +1613,27 @@ function validateGitStatusRequest(value: unknown): AgentGitStatusRequest {
   };
 }
 
+function validateBrowserPreviewRequest(value: unknown): AgentBrowserPreviewRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent browser preview request is invalid.");
+  const record = value as Record<string, unknown>;
+  return { sessionId: validateId(record.sessionId, "sessionId"), actionId: validateId(record.actionId, "actionId") };
+}
+
+function validateBrowserExecuteRequest(value: unknown): AgentBrowserExecuteRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent browser execute request is invalid.");
+  const record = value as Record<string, unknown>;
+  return { sessionId: validateId(record.sessionId, "sessionId"), actionId: validateId(record.actionId, "actionId") };
+}
+
+function validateBrowserStatusRequest(value: unknown): AgentBrowserStatusRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent browser status request is invalid.");
+  const record = value as Record<string, unknown>;
+  return {
+    sessionId: validateId(record.sessionId, "sessionId"),
+    actionId: record.actionId === undefined ? undefined : validateId(record.actionId, "actionId")
+  };
+}
+
 function validateVerifyRequest(value: unknown): AgentVerifyRequest {
   if (!value || typeof value !== "object") throw new Error("Agent verify request is invalid.");
   return { sessionId: validateId((value as Record<string, unknown>).sessionId, "sessionId") };
@@ -1604,6 +1720,15 @@ function requireApprovedGitAction(action: AgentApprovalAction): void {
   }
   if (action.type !== "git-operation") {
     throw new Error("Only approved Git actions can use the Git executor.");
+  }
+}
+
+function requireApprovedBrowserAction(action: AgentApprovalAction): void {
+  if (action.status !== "Approved") {
+    throw new Error("Agent browser action must be approved before execution.");
+  }
+  if (!action.type.startsWith("browser-")) {
+    throw new Error("Only approved browser actions can use the browser executor.");
   }
 }
 
@@ -1703,6 +1828,30 @@ function ensureGitRun(session: AgentSession, action: AgentApprovalAction, previe
   return run;
 }
 
+function ensureBrowserRuns(session: AgentSession): AgentBrowserRunState[] {
+  if (!session.plan) throw new Error("Agent session has no execution plan.");
+  session.plan.browserRuns = Array.isArray(session.plan.browserRuns) ? session.plan.browserRuns : [];
+  return session.plan.browserRuns;
+}
+
+function ensureBrowserRun(session: AgentSession, action: AgentApprovalAction, preview: BrowserActionPreview): AgentBrowserRunState {
+  const runs = ensureBrowserRuns(session);
+  let run = runs.find((item) => item.actionId === action.id);
+  if (!run) {
+    run = {
+      actionId: action.id,
+      actionType: action.type,
+      status: "Pending",
+      preview,
+      updatedAt: new Date().toISOString()
+    };
+    runs.push(run);
+  }
+  run.actionType = action.type;
+  run.preview = preview;
+  return run;
+}
+
 function ensureVerificationReports(session: AgentSession): AgentVerificationReport[] {
   if (!session.plan) throw new Error("Agent session has no execution plan.");
   session.plan.verificationReports = Array.isArray(session.plan.verificationReports) ? session.plan.verificationReports : [];
@@ -1779,7 +1928,8 @@ function progressFromSession(session: AgentSession): NonNullable<AgentSession["p
       queue.filter((item) => item.status === "Completed").length +
       (plan.taskRuns ?? []).filter((item) => item.status === "Succeeded").length +
       (plan.terminalRuns ?? []).filter((item) => item.status === "Succeeded").length +
-      (plan.gitRuns ?? []).filter((item) => item.status === "Succeeded").length
+      (plan.gitRuns ?? []).filter((item) => item.status === "Succeeded").length +
+      (plan.browserRuns ?? []).filter((item) => item.status === "Succeeded").length
   };
 }
 
@@ -1973,6 +2123,37 @@ function uniqueStrings(values: string[]): string[] {
 
 function truncateText(value: string, max: number): string {
   return value.length > max ? value.slice(0, max) : value;
+}
+
+function browserRequestFromAction(action: AgentApprovalAction): Record<string, unknown> {
+  const sessionId = action.browserSessionId;
+  switch (action.type) {
+    case "browser-open":
+      return { action: "open", url: action.browserUrl, headless: action.headless ?? true, purpose: action.description };
+    case "browser-navigate":
+      return { action: "navigate", sessionId, url: action.browserUrl, purpose: action.description };
+    case "browser-click":
+      return { action: "click", sessionId, elementRef: action.browserElementRef, purpose: action.description };
+    case "browser-fill":
+      return { action: "fill", sessionId, elementRef: action.browserElementRef, value: action.browserValue ?? "", purpose: action.description };
+    case "browser-screenshot":
+      return { action: "screenshot", sessionId, fullPage: action.browserFullPage, purpose: action.description };
+    case "browser-close":
+      return { action: "close", sessionId, purpose: action.description };
+    default:
+      throw new Error("Unsupported browser action.");
+  }
+}
+
+async function executeBrowserAction(browserService: BrowserService, action: AgentApprovalAction): Promise<BrowserActionResult | { session: BrowserActionResult["session"]; screenshotPath?: string } | { sessionId: string; status: "Closed" }> {
+  const request = browserRequestFromAction(action);
+  if (action.type === "browser-open") return browserService.create(request);
+  if (action.type === "browser-navigate") return browserService.navigate(request);
+  if (action.type === "browser-click") return browserService.click(request);
+  if (action.type === "browser-fill") return browserService.fill(request);
+  if (action.type === "browser-screenshot") return browserService.screenshot(request);
+  if (action.type === "browser-close") return browserService.close(request);
+  throw new Error("Unsupported browser action.");
 }
 
 function validateTerminalCommand(action: AgentApprovalAction): { executable: string; args: string[]; cwd: string; commandId: string } {

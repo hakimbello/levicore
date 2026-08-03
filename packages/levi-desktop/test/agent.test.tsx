@@ -289,7 +289,47 @@ function createFakeTerminalManager() {
   return service;
 }
 
-async function createService(runtimeProvider = provider(), options: { taskService?: ReturnType<typeof createFakeTaskService>; gitService?: ReturnType<typeof createFakeGitService>; terminalManager?: ReturnType<typeof createFakeTerminalManager>; getWindow?: () => ReturnType<typeof fakeWindow>; getChangedFiles?: () => string[] } = {}) {
+function createFakeBrowserService() {
+  const session = {
+    id: "browser-1",
+    status: "Ready" as const,
+    currentUrl: "https://example.com/",
+    title: "Example Domain",
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z",
+    headless: true
+  };
+  return {
+    preview: vi.fn((request: Record<string, unknown>) => ({
+      previewId: "browser-preview-1",
+      sessionId: typeof request.sessionId === "string" ? request.sessionId : undefined,
+      action: request.action as "open",
+      targetUrl: typeof request.url === "string" ? request.url : undefined,
+      sensitive: false,
+      purpose: typeof request.purpose === "string" ? request.purpose : undefined,
+      riskLevel: "medium" as const,
+      createdAt: "2026-08-01T00:00:00.000Z"
+    })),
+    create: vi.fn(async () => ({
+      session,
+      snapshot: {
+        sessionId: session.id,
+        url: session.currentUrl,
+        title: session.title,
+        status: session.status,
+        elements: [{ ref: "E1", role: "button", name: "Continue", elementType: "button", text: "Continue", enabled: true, sensitive: false }],
+        capturedAt: "2026-08-01T00:00:00.000Z"
+      }
+    })),
+    navigate: vi.fn(async () => ({ session })),
+    click: vi.fn(async () => ({ session })),
+    fill: vi.fn(async () => ({ session })),
+    screenshot: vi.fn(async () => ({ session, screenshotPath: "C:\\tmp\\browser.png" })),
+    close: vi.fn(async () => ({ sessionId: session.id, status: "Closed" as const }))
+  };
+}
+
+async function createService(runtimeProvider = provider(), options: { taskService?: ReturnType<typeof createFakeTaskService>; gitService?: ReturnType<typeof createFakeGitService>; terminalManager?: ReturnType<typeof createFakeTerminalManager>; browserService?: ReturnType<typeof createFakeBrowserService>; getWindow?: () => ReturnType<typeof fakeWindow>; getChangedFiles?: () => string[] } = {}) {
   const statePath = path.join(await fsp.mkdtemp(path.join(os.tmpdir(), "levi-agent-")), "agent-state.json");
   const registry = new AIRuntimeProviderRegistry();
   registry.register(runtimeProvider.id, () => runtimeProvider);
@@ -320,6 +360,7 @@ async function createService(runtimeProvider = provider(), options: { taskServic
     taskService: options.taskService as never,
     gitService: options.gitService as never,
     terminalManager: options.terminalManager as never,
+    browserService: options.browserService as never,
     getWindow: options.getWindow as never,
     getChangedFiles: options.getChangedFiles
   });
@@ -346,6 +387,44 @@ describe("Coding Agent foundation", () => {
     expect(session.plan?.approvals).toHaveLength(2);
     expect(session.projectSummary).toMatchObject({ projectName: "Project", openFiles: ["src/main.tsx"], context: { attachmentCount: 1 } });
     expect(session.plan?.progress.completedActions).toBe(0);
+  });
+
+  it("previews and executes approved browser actions through BrowserService only", async () => {
+    const browserService = createFakeBrowserService();
+    const browserProvider = provider(JSON.stringify({
+      summary: "Open the app in a browser after approval.",
+      steps: [
+        {
+          title: "Open browser",
+          description: "Open the local app URL.",
+          estimatedFiles: [],
+          actions: [
+            {
+              type: "browser-open",
+              title: "Open app URL",
+              description: "Open a browser session for the approved URL.",
+              browserUrl: "https://example.com",
+              headless: true
+            }
+          ]
+        }
+      ]
+    }));
+    const { service } = await createService(browserProvider, { browserService });
+    const planned = await service.plan({ prompt: "Open the browser", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const actionId = planned.state.sessions[0].plan!.approvals[0].id;
+
+    await expect(service.browserPreview({ sessionId, actionId })).rejects.toThrow(/approved/i);
+    await service.approve({ sessionId, actionId });
+    const preview = await service.browserPreview({ sessionId, actionId });
+    expect(preview.preview).toMatchObject({ action: "open", targetUrl: "https://example.com" });
+
+    const executed = await service.browserExecute({ sessionId, actionId });
+    expect(browserService.create).toHaveBeenCalledWith(expect.objectContaining({ action: "open", url: "https://example.com" }));
+    expect(executed.browserRun.status).toBe("Succeeded");
+    expect(executed.browserRun.result?.snapshot?.elements[0].ref).toBe("E1");
+    expect(executed.state.sessions[0].plan?.progress.completedActions).toBe(1);
   });
 
   it("tracks approval states, progress, archive, rename, delete, and persistence", async () => {
@@ -890,6 +969,9 @@ describe("Coding Agent foundation", () => {
 
     await user.click(screen.getByRole("button", { name: "Coding Agent" }));
     const panel = await screen.findByRole("region", { name: "Coding Agent" });
+    const browserPanel = await within(panel).findByRole("region", { name: "Browser Automation" });
+    expect(await within(browserPanel).findByText("Example Domain")).toBeInTheDocument();
+    expect(within(browserPanel).getByRole("button", { name: "Reload" })).toBeInTheDocument();
     await user.click(await within(panel).findByRole("button", { name: /File src\/main\.tsx/i }));
     await waitFor(() => expect(window.levi.chat.previewContext).toHaveBeenCalledWith(expect.objectContaining({ source: "workspace-file", relativePath: "src/main.tsx" })));
     await user.type(within(panel).getByRole("textbox", { name: "Agent Request" }), "Build a login page");

@@ -73,8 +73,32 @@ import type {
   AIChatState
 } from "../features/ai-chat";
 import type {
+  BrowserActionResult,
+  BrowserCloseResult,
+  BrowserCreateRequest,
+  BrowserCreateResult,
+  BrowserElementActionRequest,
+  BrowserFillRequest,
+  BrowserNavigateRequest,
+  BrowserPageSnapshot,
+  BrowserPressRequest,
+  BrowserScreenshotRequest,
+  BrowserScreenshotResult,
+  BrowserScrollRequest,
+  BrowserSession,
+  BrowserSnapshotResult,
+  BrowserStatusRequest,
+  BrowserStatusResult
+} from "../features/browser";
+import type {
   AgentApprovalRequest,
   AgentArchiveRequest,
+  AgentBrowserExecuteRequest,
+  AgentBrowserExecutionResult,
+  AgentBrowserPreviewRequest,
+  AgentBrowserPreviewResult,
+  AgentBrowserStatusRequest,
+  AgentBrowserStatusResult,
   AgentCancelRequest,
   AgentDeleteRequest,
   AgentExecuteRequest,
@@ -124,12 +148,44 @@ import type {
 } from "../features/agent";
 
 export type {
+  BrowserActionKind,
+  BrowserActionPreview,
+  BrowserActionResult,
+  BrowserCloseResult,
+  BrowserCreateRequest,
+  BrowserCreateResult,
+  BrowserElementActionRequest,
+  BrowserElementSnapshot,
+  BrowserFillRequest,
+  BrowserNavigateRequest,
+  BrowserPageSnapshot,
+  BrowserPressRequest,
+  BrowserScreenshotRequest,
+  BrowserScreenshotResult,
+  BrowserScrollRequest,
+  BrowserSession,
+  BrowserSessionRequest,
+  BrowserSessionStatus,
+  BrowserSnapshotResult,
+  BrowserStatusRequest,
+  BrowserStatusResult
+} from "../features/browser";
+
+export type {
   AgentActionType,
   AgentActionPreview,
   AgentApprovalAction,
   AgentApprovalRequest,
   AgentApprovalState,
   AgentArchiveRequest,
+  AgentBrowserActionStatus,
+  AgentBrowserExecuteRequest,
+  AgentBrowserExecutionResult,
+  AgentBrowserPreviewRequest,
+  AgentBrowserPreviewResult,
+  AgentBrowserRunState,
+  AgentBrowserStatusRequest,
+  AgentBrowserStatusResult,
   AgentCancelRequest,
   AgentDeleteRequest,
   AgentDiffLine,
@@ -1265,8 +1321,23 @@ export type LeviApi = {
     verify: (request: AgentVerifyRequest) => Promise<AgentVerifyResult>;
     repairPlan: (request: AgentRepairPlanRequest) => Promise<AgentRepairPlanResult>;
     repairStatus: (request: AgentRepairStatusRequest) => Promise<AgentRepairStatusResult>;
+    browserPreview: (request: AgentBrowserPreviewRequest) => Promise<AgentBrowserPreviewResult>;
+    browserExecute: (request: AgentBrowserExecuteRequest) => Promise<AgentBrowserExecutionResult>;
+    browserStatus: (request: AgentBrowserStatusRequest) => Promise<AgentBrowserStatusResult>;
     status: (request?: AgentStatusRequest) => Promise<AgentState | AgentSession>;
     onEvent: (listener: (event: AgentEvent) => void) => () => void;
+  };
+  browser: {
+    create: (request?: BrowserCreateRequest) => Promise<BrowserCreateResult>;
+    status: (request?: BrowserStatusRequest) => Promise<BrowserStatusResult>;
+    snapshot: (request: { sessionId: string }) => Promise<BrowserSnapshotResult>;
+    navigate: (request: BrowserNavigateRequest) => Promise<BrowserActionResult>;
+    click: (request: BrowserElementActionRequest) => Promise<BrowserActionResult>;
+    fill: (request: BrowserFillRequest) => Promise<BrowserActionResult>;
+    press: (request: BrowserPressRequest) => Promise<BrowserActionResult>;
+    scroll: (request: BrowserScrollRequest) => Promise<BrowserActionResult>;
+    screenshot: (request: BrowserScreenshotRequest) => Promise<BrowserScreenshotResult>;
+    close: (request: { sessionId: string }) => Promise<BrowserCloseResult>;
   };
   conversation: {
     start: (request: ConversationStartRequest) => Promise<ConversationStartResult>;

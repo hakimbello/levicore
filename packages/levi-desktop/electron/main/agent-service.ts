@@ -9,6 +9,9 @@ import type {
   AgentApprovalAction,
   AgentApprovalRequest,
   AgentArchiveRequest,
+  AgentBrowserExecuteRequest,
+  AgentBrowserPreviewRequest,
+  AgentBrowserStatusRequest,
   AgentCancelRequest,
   AgentDeleteRequest,
   AgentExecuteRequest,
@@ -46,6 +49,7 @@ import { AgentExecutionService } from "./agent-execution-service";
 import type { TaskService } from "./tasks/task-service";
 import type { GitService } from "./git-service";
 import type { TerminalManager } from "./terminal-manager";
+import type { BrowserService } from "./browser-service";
 import { listWorkspaceTree } from "./workspace-tree-ipc";
 import type { BrowserWindow } from "electron";
 
@@ -68,7 +72,13 @@ const ACTION_TYPES: AgentActionType[] = [
   "rename-folder",
   "run-task",
   "run-terminal-command",
-  "git-operation"
+  "git-operation",
+  "browser-open",
+  "browser-navigate",
+  "browser-click",
+  "browser-fill",
+  "browser-screenshot",
+  "browser-close"
 ];
 
 type AgentServiceOptions = {
@@ -80,6 +90,7 @@ type AgentServiceOptions = {
   taskService?: TaskService;
   gitService?: GitService;
   terminalManager?: TerminalManager;
+  browserService?: BrowserService;
   getChangedFiles?: () => string[];
 };
 
@@ -117,9 +128,12 @@ export class AgentService {
       emitGit: (sessionId, actionId, gitRun) => this.emit({ type: "git", sessionId, actionId, gitRun, state: this.snapshot() }),
       emitVerification: (sessionId, report) => this.emit({ type: "verification", sessionId, report, state: this.snapshot() }),
       emitRepairPlan: (sessionId, reportId, repairs) => this.emit({ type: "repair-plan", sessionId, reportId, repairs, state: this.snapshot() }),
+      emitBrowserPreview: (sessionId, preview) => this.emit({ type: "browser-preview", sessionId, preview, state: this.snapshot() }),
+      emitBrowser: (sessionId, actionId, browserRun) => this.emit({ type: "browser", sessionId, actionId, browserRun, state: this.snapshot() }),
       taskService: this.options.taskService,
       gitService: this.options.gitService,
       terminalManager: this.options.terminalManager,
+      browserService: this.options.browserService,
       runtimeManager: this.runtimeManager,
       getWindow: () => this.options.getWindow?.() ?? null,
       getChangedFiles: () => this.options.getChangedFiles?.() ?? []
@@ -363,6 +377,21 @@ export class AgentService {
   repairStatus(rawRequest: unknown) {
     const session = this.requireSession(sessionIdFromRequest<AgentRepairStatusRequest>(rawRequest, "Agent repair status request is invalid."));
     return this.executionService.repairStatus(session, rawRequest);
+  }
+
+  async browserPreview(rawRequest: unknown) {
+    const session = this.requireSession(sessionIdFromRequest<AgentBrowserPreviewRequest>(rawRequest, "Agent browser preview request is invalid."));
+    return this.executionService.browserPreview(session, rawRequest);
+  }
+
+  async browserExecute(rawRequest: unknown) {
+    const session = this.requireSession(sessionIdFromRequest<AgentBrowserExecuteRequest>(rawRequest, "Agent browser execute request is invalid."));
+    return this.executionService.browserExecute(session, rawRequest);
+  }
+
+  browserStatus(rawRequest: unknown) {
+    const session = this.requireSession(sessionIdFromRequest<AgentBrowserStatusRequest>(rawRequest, "Agent browser status request is invalid."));
+    return this.executionService.browserStatus(session, rawRequest);
   }
 
   private async setApprovalState(request: AgentApprovalRequest, status: "Approved" | "Rejected"): Promise<AgentState> {
@@ -681,6 +710,12 @@ function createExecutionPlan(objective: string, modelContent: string, projectSum
         commitMessage: action.commitMessage,
         branchName: action.branchName,
         affectedFiles: action.affectedFiles,
+        browserSessionId: action.browserSessionId,
+        browserUrl: action.browserUrl,
+        browserElementRef: action.browserElementRef,
+        browserValue: action.browserValue,
+        browserFullPage: action.browserFullPage,
+        headless: action.headless,
         createdAt: now,
         updatedAt: now
       };
@@ -712,6 +747,7 @@ function createExecutionPlan(objective: string, modelContent: string, projectSum
     taskRuns: [],
     terminalRuns: [],
     gitRuns: [],
+    browserRuns: [],
     verificationReports: [],
     repairQueue: [],
     repairProgress: [],
@@ -780,6 +816,7 @@ function createFallbackPlan(objective: string, projectSummary: AgentProjectSumma
     taskRuns: [],
     terminalRuns: [],
     gitRuns: [],
+    browserRuns: [],
     verificationReports: [],
     repairQueue: [],
     repairProgress: [],
@@ -820,6 +857,12 @@ type ParsedStep = {
     commitMessage?: string;
     branchName?: string;
     affectedFiles?: string[];
+    browserSessionId?: string;
+    browserUrl?: string;
+    browserElementRef?: string;
+    browserValue?: string;
+    browserFullPage?: boolean;
+    headless?: boolean;
   }>;
 };
 
@@ -878,7 +921,13 @@ function parseAction(value: unknown): ParsedStep["actions"][number] | null {
     gitOperation: typeof record.gitOperation === "string" ? record.gitOperation.slice(0, 120) : undefined,
     commitMessage: typeof record.commitMessage === "string" ? record.commitMessage.trim().slice(0, 300) : undefined,
     branchName: typeof record.branchName === "string" ? record.branchName.trim().slice(0, 120) : undefined,
-    affectedFiles: Array.isArray(record.affectedFiles) ? record.affectedFiles.filter((item) => typeof item === "string" && !path.isAbsolute(item) && !item.includes("..")).map((item) => item.slice(0, 500).replace(/\\/g, "/")).slice(0, 80) : undefined
+    affectedFiles: Array.isArray(record.affectedFiles) ? record.affectedFiles.filter((item) => typeof item === "string" && !path.isAbsolute(item) && !item.includes("..")).map((item) => item.slice(0, 500).replace(/\\/g, "/")).slice(0, 80) : undefined,
+    browserSessionId: typeof record.browserSessionId === "string" ? record.browserSessionId.slice(0, 140) : undefined,
+    browserUrl: typeof record.browserUrl === "string" ? record.browserUrl.slice(0, 2_000) : typeof record.url === "string" ? record.url.slice(0, 2_000) : undefined,
+    browserElementRef: typeof record.browserElementRef === "string" ? record.browserElementRef.slice(0, 20) : typeof record.elementRef === "string" ? record.elementRef.slice(0, 20) : undefined,
+    browserValue: typeof record.browserValue === "string" ? record.browserValue.slice(0, 4_000) : typeof record.value === "string" ? record.value.slice(0, 4_000) : undefined,
+    browserFullPage: record.browserFullPage === true || record.fullPage === true,
+    headless: record.headless === undefined ? undefined : record.headless !== false
   };
 }
 
@@ -911,6 +960,12 @@ function actionTitle(type: AgentActionType): string {
   if (type === "rename-folder") return "Rename folder";
   if (type === "run-task") return "Run task";
   if (type === "run-terminal-command") return "Run terminal command";
+  if (type === "browser-open") return "Open browser";
+  if (type === "browser-navigate") return "Navigate browser";
+  if (type === "browser-click") return "Click browser element";
+  if (type === "browser-fill") return "Fill browser field";
+  if (type === "browser-screenshot") return "Take browser screenshot";
+  if (type === "browser-close") return "Close browser";
   return "Run Git operation";
 }
 
@@ -919,12 +974,18 @@ function progressFromApprovals(plan: AgentExecutionPlan): AgentExecutionPlan["pr
   const taskRuns = Array.isArray(plan.taskRuns) ? plan.taskRuns : [];
   const terminalRuns = Array.isArray(plan.terminalRuns) ? plan.terminalRuns : [];
   const gitRuns = Array.isArray(plan.gitRuns) ? plan.gitRuns : [];
+  const browserRuns = Array.isArray(plan.browserRuns) ? plan.browserRuns : [];
   return {
     totalSteps: plan.steps.length,
     pendingActions: plan.approvals.filter((item) => item.status === "Pending").length,
     approvedActions: plan.approvals.filter((item) => item.status === "Approved").length,
     rejectedActions: plan.approvals.filter((item) => item.status === "Rejected").length + queue.filter((item) => item.status === "Rejected").length,
-    completedActions: queue.filter((item) => item.status === "Completed").length + taskRuns.filter((item) => item.status === "Succeeded").length + terminalRuns.filter((item) => item.status === "Succeeded").length + gitRuns.filter((item) => item.status === "Succeeded").length
+    completedActions:
+      queue.filter((item) => item.status === "Completed").length +
+      taskRuns.filter((item) => item.status === "Succeeded").length +
+      terminalRuns.filter((item) => item.status === "Succeeded").length +
+      gitRuns.filter((item) => item.status === "Succeeded").length +
+      browserRuns.filter((item) => item.status === "Succeeded").length
   };
 }
 
@@ -1018,6 +1079,7 @@ function coercePlan(value: unknown): AgentExecutionPlan | undefined {
     taskRuns: Array.isArray(record.taskRuns) ? record.taskRuns.slice(0, MAX_ACTIONS) : [],
     terminalRuns: Array.isArray(record.terminalRuns) ? record.terminalRuns.slice(0, MAX_ACTIONS) : [],
     gitRuns: Array.isArray(record.gitRuns) ? record.gitRuns.slice(0, MAX_ACTIONS) : [],
+    browserRuns: Array.isArray(record.browserRuns) ? record.browserRuns.slice(0, MAX_ACTIONS) : [],
     verificationReports: Array.isArray(record.verificationReports) ? record.verificationReports.slice(0, 20) : [],
     repairQueue: Array.isArray(record.repairQueue) ? record.repairQueue.slice(0, MAX_ACTIONS) : [],
     repairProgress: Array.isArray(record.repairProgress) ? record.repairProgress.slice(-80) : [],

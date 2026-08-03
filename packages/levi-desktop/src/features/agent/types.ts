@@ -1,5 +1,6 @@
 import type { AIChatAttachment } from "../ai-chat";
 import type { AIRuntimeProviderId } from "../ai-runtime";
+import type { BrowserActionPreview, BrowserActionResult, BrowserSession } from "../browser";
 import type { TaskDefinition, TaskOutputEntry, TaskProblem, TaskRun } from "../../types/task-api";
 
 export type AgentSessionStatus = "Idle" | "Planning" | "WaitingForApproval" | "Ready" | "Executing" | "Archived" | "Error";
@@ -15,7 +16,13 @@ export type AgentActionType =
   | "rename-folder"
   | "run-task"
   | "run-terminal-command"
-  | "git-operation";
+  | "git-operation"
+  | "browser-open"
+  | "browser-navigate"
+  | "browser-click"
+  | "browser-fill"
+  | "browser-screenshot"
+  | "browser-close";
 
 export type AgentFileEditKind = "insert" | "replace" | "append" | "delete-range" | "whole-file";
 
@@ -73,6 +80,12 @@ export type AgentApprovalAction = {
   commitMessage?: string;
   branchName?: string;
   affectedFiles?: string[];
+  browserSessionId?: string;
+  browserUrl?: string;
+  browserElementRef?: string;
+  browserValue?: string;
+  browserFullPage?: boolean;
+  headless?: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -311,6 +324,56 @@ export type AgentGitVerificationSummary = {
   createdAt: string;
 };
 
+export type AgentBrowserActionStatus = "Pending" | "Approved" | "Executing" | "Succeeded" | "Failed" | "Rejected" | "Cancelled";
+
+export type AgentBrowserRunState = {
+  actionId: string;
+  actionType: AgentActionType;
+  status: AgentBrowserActionStatus;
+  preview?: BrowserActionPreview;
+  session?: BrowserSession;
+  result?: BrowserActionResult;
+  screenshotPath?: string;
+  failureReason?: string;
+  startedAt?: string;
+  endedAt?: string;
+  updatedAt: string;
+};
+
+export type AgentBrowserPreviewRequest = {
+  sessionId: string;
+  actionId: string;
+};
+
+export type AgentBrowserExecuteRequest = {
+  sessionId: string;
+  actionId: string;
+};
+
+export type AgentBrowserStatusRequest = {
+  sessionId: string;
+  actionId?: string;
+};
+
+export type AgentBrowserPreviewResult = {
+  sessionId: string;
+  preview: BrowserActionPreview;
+  state: AgentState;
+};
+
+export type AgentBrowserExecutionResult = {
+  sessionId: string;
+  actionId: string;
+  browserRun: AgentBrowserRunState;
+  state: AgentState;
+};
+
+export type AgentBrowserStatusResult = {
+  sessionId: string;
+  browserRuns: AgentBrowserRunState[];
+  state: AgentState;
+};
+
 export type AgentVerificationStatus = "Succeeded" | "Failed" | "Warnings";
 export type AgentVerificationCheckStatus = "not-run" | "succeeded" | "failed" | "warnings";
 export type AgentFailureClassification =
@@ -395,6 +458,7 @@ export type AgentExecutionPlan = {
   taskRuns: AgentTaskRunState[];
   terminalRuns: AgentTerminalRunState[];
   gitRuns: AgentGitRunState[];
+  browserRuns?: AgentBrowserRunState[];
   verificationReports: AgentVerificationReport[];
   repairQueue: AgentRepairQueueItem[];
   repairProgress: AgentRepairProgressEntry[];
@@ -727,5 +791,7 @@ export type AgentEvent =
   | { type: "terminal"; sessionId: string; actionId: string; terminalRun: AgentTerminalRunState; state: AgentState }
   | { type: "git-preview"; sessionId: string; preview: AgentGitPreview; state: AgentState }
   | { type: "git"; sessionId: string; actionId: string; gitRun: AgentGitRunState; state: AgentState }
+  | { type: "browser-preview"; sessionId: string; preview: BrowserActionPreview; state: AgentState }
+  | { type: "browser"; sessionId: string; actionId: string; browserRun: AgentBrowserRunState; state: AgentState }
   | { type: "verification"; sessionId: string; report: AgentVerificationReport; state: AgentState }
   | { type: "repair-plan"; sessionId: string; reportId: string; repairs: AgentRepairQueueItem[]; state: AgentState };

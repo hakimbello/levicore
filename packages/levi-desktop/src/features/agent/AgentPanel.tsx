@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { AIRuntimeProviderId, AIRuntimeState } from "../ai-runtime";
 import type { AIChatAttachment, AIChatContextDiscoveryResult, AIChatContextPreviewRequest } from "../ai-chat";
+import type { BrowserActionPreview, BrowserPageSnapshot, BrowserSession } from "../browser";
 import type { EditorTab } from "../../hooks/use-editor-tabs";
 import type { TaskOutputEntry, TaskProblem, WorkspaceStatus } from "../../types/levi-api";
 import type { AgentActionPreview, AgentGitPreview, AgentSession, AgentState, AgentTaskPreview, AgentTerminalPreview } from "./types";
@@ -33,6 +34,7 @@ export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, w
   const [taskPreview, setTaskPreview] = useState<AgentTaskPreview | null>(null);
   const [terminalPreview, setTerminalPreview] = useState<AgentTerminalPreview | null>(null);
   const [gitPreview, setGitPreview] = useState<AgentGitPreview | null>(null);
+  const [browserPreview, setBrowserPreview] = useState<BrowserActionPreview | null>(null);
   const [executingActionId, setExecutingActionId] = useState<string | null>(null);
 
   const activeSession = state.sessions.find((session) => session.id === state.activeSessionId);
@@ -71,6 +73,11 @@ export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, w
         setGitPreview(event.preview);
       }
       if (event.type === "git") setState(event.state);
+      if (event.type === "browser-preview") {
+        setState(event.state);
+        setBrowserPreview(event.preview);
+      }
+      if (event.type === "browser") setState(event.state);
       if (event.type === "verification" || event.type === "repair-plan") setState(event.state);
     });
   }, []);
@@ -271,6 +278,7 @@ export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, w
           <Conversation session={activeSession} />
           <ProjectSummary session={activeSession} />
           <VerificationPanel session={activeSession} onState={setState} onError={setError} />
+          <BrowserPanel session={activeSession} onError={setError} />
           <ExecutionReview
             session={activeSession}
             preview={preview}
@@ -282,6 +290,8 @@ export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, w
             onTerminalPreview={setTerminalPreview}
             gitPreview={gitPreview}
             onGitPreview={setGitPreview}
+            browserPreview={browserPreview}
+            onBrowserPreview={setBrowserPreview}
             onExecuting={setExecutingActionId}
             onError={setError}
             onState={setState}
@@ -294,6 +304,7 @@ export function AgentPanel({ runtimeState, activeTab, tabs = [], selectedCode, w
             onTaskPreview={(nextPreview) => setTaskPreview(nextPreview)}
             onTerminalPreview={(nextPreview) => setTerminalPreview(nextPreview)}
             onGitPreview={(nextPreview) => setGitPreview(nextPreview)}
+            onBrowserPreview={(nextPreview) => setBrowserPreview(nextPreview)}
             onError={setError}
           />
         </div>
@@ -462,6 +473,118 @@ function VerificationPanel({ session, onState, onError }: { session?: AgentSessi
   );
 }
 
+function BrowserPanel({ session, onError }: { session?: AgentSession; onError: (error: string | null) => void }) {
+  const latestRun = session?.plan?.browserRuns?.slice(-1)[0];
+  const [sessions, setSessions] = useState<BrowserSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | undefined>(latestRun?.session?.id);
+  const [snapshot, setSnapshot] = useState<BrowserPageSnapshot | undefined>(latestRun?.result?.snapshot);
+
+  useEffect(() => {
+    let disposed = false;
+    window.levi.browser.status({}).then((result) => {
+      if (!disposed) {
+        setSessions(result.sessions);
+        setActiveSessionId(result.activeSessionId ?? result.sessions[0]?.id ?? latestRun?.session?.id);
+      }
+    }).catch(() => undefined);
+    return () => { disposed = true; };
+  }, [latestRun?.session?.id]);
+
+  useEffect(() => {
+    if (latestRun?.session?.id) setActiveSessionId(latestRun.session.id);
+    if (latestRun?.result?.snapshot) setSnapshot(latestRun.result.snapshot);
+  }, [latestRun?.result?.snapshot, latestRun?.session?.id]);
+
+  const activeBrowser = sessions.find((item) => item.id === activeSessionId) ?? latestRun?.session;
+  const elements = snapshot?.elements ?? latestRun?.result?.snapshot?.elements ?? [];
+  const screenshotPath = latestRun?.screenshotPath ?? activeBrowser?.lastScreenshot;
+
+  async function refresh() {
+    onError(null);
+    try {
+      const status = await window.levi.browser.status({});
+      setSessions(status.sessions);
+      const id = status.activeSessionId ?? activeSessionId ?? status.sessions[0]?.id;
+      setActiveSessionId(id);
+      if (id) {
+        const result = await window.levi.browser.snapshot({ sessionId: id });
+        setSnapshot(result.snapshot);
+      }
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Could not refresh browser state.");
+    }
+  }
+
+  async function navigate(history: "back" | "forward" | "reload") {
+    if (!activeSessionId) return;
+    onError(null);
+    try {
+      const result = await window.levi.browser.navigate({ sessionId: activeSessionId, history });
+      setSnapshot(result.snapshot);
+      await refresh();
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Browser navigation failed.");
+    }
+  }
+
+  async function closeBrowser() {
+    if (!activeSessionId) return;
+    onError(null);
+    try {
+      await window.levi.browser.close({ sessionId: activeSessionId });
+      setSnapshot(undefined);
+      await refresh();
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Could not close browser.");
+    }
+  }
+
+  return (
+    <section className="levi-agent-card" aria-label="Browser Automation">
+      <div className="levi-agent-plan-top">
+        <div>
+          <h2>Browser</h2>
+          <p>{activeBrowser?.title ?? "No active browser session."}</p>
+        </div>
+        <div className="levi-edit-actions">
+          <button type="button" className="levi-secondary-button" onClick={() => void refresh()}>Refresh</button>
+          <button type="button" className="levi-secondary-button" onClick={() => void navigate("back")} disabled={!activeSessionId}>Back</button>
+          <button type="button" className="levi-secondary-button" onClick={() => void navigate("forward")} disabled={!activeSessionId}>Forward</button>
+          <button type="button" className="levi-secondary-button" onClick={() => void navigate("reload")} disabled={!activeSessionId}>Reload</button>
+          <button type="button" className="levi-secondary-button" onClick={() => void closeBrowser()} disabled={!activeSessionId}>Close</button>
+        </div>
+      </div>
+      <div className="levi-agent-summary-grid">
+        <span>Status</span><strong>{activeBrowser?.status ?? "Closed"}</strong>
+        <span>URL</span><strong>{activeBrowser?.currentUrl ?? snapshot?.url ?? "None"}</strong>
+        <span>Session</span><strong>{activeSessionId ?? "None"}</strong>
+        <span>Elements</span><strong>{elements.length}</strong>
+      </div>
+      {latestRun?.preview ? (
+        <div className="levi-agent-task-problems" aria-label="Pending browser approval">
+          <p>{latestRun.preview.action} / {latestRun.status} / {latestRun.preview.riskLevel} risk</p>
+        </div>
+      ) : null}
+      {screenshotPath ? (
+        <img className="levi-agent-browser-screenshot" alt="Browser screenshot preview" src={`file://${screenshotPath}`} />
+      ) : null}
+      {elements.length ? (
+        <div className="levi-agent-approvals" aria-label="Interactive Elements">
+          {elements.slice(0, 12).map((element) => (
+            <article key={element.ref}>
+              <div>
+                <strong>{element.ref} {element.name || element.text || element.role}</strong>
+                <span>{element.role} / {element.elementType} / {element.enabled ? "enabled" : "disabled"}</span>
+                {element.inputType ? <small>{element.inputType}</small> : null}
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function PlanView({
   session,
   onState,
@@ -469,6 +592,7 @@ function PlanView({
   onTaskPreview,
   onTerminalPreview,
   onGitPreview,
+  onBrowserPreview,
   onError
 }: {
   session?: AgentSession;
@@ -477,6 +601,7 @@ function PlanView({
   onTaskPreview: (preview: AgentTaskPreview) => void;
   onTerminalPreview: (preview: AgentTerminalPreview) => void;
   onGitPreview: (preview: AgentGitPreview) => void;
+  onBrowserPreview: (preview: BrowserActionPreview) => void;
   onError: (error: string | null) => void;
 }) {
   const plan = session?.plan;
@@ -525,6 +650,12 @@ function PlanView({
         const result = await window.levi.agent.gitPreview({ sessionId: session.id, actionId });
         onState(result.state);
         onGitPreview(result.preview);
+        return;
+      }
+      if (action?.type.startsWith("browser-")) {
+        const result = await window.levi.agent.browserPreview({ sessionId: session.id, actionId });
+        onState(result.state);
+        onBrowserPreview(result.preview);
         return;
       }
       const result = await window.levi.agent.preview({ sessionId: session.id, actionId });
@@ -587,11 +718,13 @@ function ExecutionReview({
   taskPreview,
   terminalPreview,
   gitPreview,
+  browserPreview,
   executingActionId,
   onPreview,
   onTaskPreview,
   onTerminalPreview,
   onGitPreview,
+  onBrowserPreview,
   onExecuting,
   onError,
   onState,
@@ -602,11 +735,13 @@ function ExecutionReview({
   taskPreview: AgentTaskPreview | null;
   terminalPreview: AgentTerminalPreview | null;
   gitPreview: AgentGitPreview | null;
+  browserPreview: BrowserActionPreview | null;
   executingActionId: string | null;
   onPreview: (preview: AgentActionPreview | null) => void;
   onTaskPreview: (preview: AgentTaskPreview | null) => void;
   onTerminalPreview: (preview: AgentTerminalPreview | null) => void;
   onGitPreview: (preview: AgentGitPreview | null) => void;
+  onBrowserPreview: (preview: BrowserActionPreview | null) => void;
   onExecuting: (actionId: string | null) => void;
   onError: (error: string | null) => void;
   onState: (state: AgentState) => void;
@@ -619,9 +754,12 @@ function ExecutionReview({
   const taskRuns = plan.taskRuns ?? [];
   const terminalRuns = plan.terminalRuns ?? [];
   const gitRuns = plan.gitRuns ?? [];
+  const browserRuns = plan.browserRuns ?? [];
   const activeTaskRun = taskPreview ? taskRuns.find((run) => run.actionId === taskPreview.actionId) : undefined;
   const activeTerminalRun = terminalPreview ? terminalRuns.find((run) => run.actionId === terminalPreview.actionId) : undefined;
   const activeGitRun = gitPreview ? gitRuns.find((run) => run.actionId === gitPreview.actionId) : undefined;
+  const activeBrowserRun = browserPreview ? browserRuns.find((run) => run.preview?.previewId === browserPreview.previewId) : undefined;
+  const browserActionId = activeBrowserRun?.actionId;
 
   async function executePreview() {
     if (!preview) return;
@@ -753,6 +891,32 @@ function ExecutionReview({
       onGitPreview(null);
     } catch (error) {
       onError(error instanceof Error ? error.message : "Could not reject Git action.");
+    }
+  }
+
+  async function executeBrowserPreview() {
+    if (!browserPreview || !browserActionId) return;
+    onExecuting(browserActionId);
+    onError(null);
+    try {
+      const result = await window.levi.agent.browserExecute({ sessionId, actionId: browserActionId });
+      onState(result.state);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Agent browser action failed.");
+    } finally {
+      onExecuting(null);
+    }
+  }
+
+  async function rejectBrowserPreview() {
+    if (!browserPreview || !browserActionId) return;
+    onError(null);
+    try {
+      const result = await window.levi.agent.cancel({ sessionId, actionId: browserActionId });
+      onState(result.state);
+      onBrowserPreview(null);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Could not reject browser action.");
     }
   }
 
@@ -922,6 +1086,49 @@ function ExecutionReview({
         </div>
       ) : null}
 
+      {browserPreview ? (
+        <div className="levi-agent-browser-preview" role="group" aria-label="Browser Approval Card">
+          <div className="levi-agent-preview-header">
+            <div>
+              <h3>{browserActionLabel(browserPreview.action)}</h3>
+              <p>{browserPreview.riskLevel} risk / {browserPreview.purpose ?? "No purpose provided"}</p>
+            </div>
+            <span>{activeBrowserRun?.status ?? "Approved"}</span>
+          </div>
+          <div className="levi-agent-summary-grid">
+            <span>Action</span><strong>{browserPreview.action}</strong>
+            <span>Target URL</span><strong>{browserPreview.targetUrl ?? "Current page"}</strong>
+            <span>Element</span><strong>{browserPreview.elementRef ?? "None"}</strong>
+            <span>Element name</span><strong>{browserPreview.elementDescription ?? "Not captured"}</strong>
+            <span>Value</span><strong>{browserPreview.valuePreview ?? "None"}</strong>
+            <span>Session</span><strong>{activeBrowserRun?.session?.id ?? browserPreview.sessionId ?? "New session"}</strong>
+          </div>
+          {activeBrowserRun?.result?.snapshot?.elements.length ? (
+            <div className="levi-agent-approvals" aria-label="Browser page state">
+              {activeBrowserRun.result.snapshot.elements.slice(0, 10).map((element) => (
+                <article key={element.ref}>
+                  <div>
+                    <strong>{element.ref} {element.name || element.text || element.role}</strong>
+                    <span>{element.role} / {element.elementType} / {element.enabled ? "enabled" : "disabled"}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : null}
+          {activeBrowserRun?.screenshotPath ? (
+            <img className="levi-agent-browser-screenshot" alt="Browser screenshot preview" src={`file://${activeBrowserRun.screenshotPath}`} />
+          ) : null}
+          {activeBrowserRun?.failureReason ? <div className="levi-agent-error" role="alert">{activeBrowserRun.failureReason}</div> : null}
+          <div className="levi-edit-actions">
+            <button type="button" className="levi-secondary-button" onClick={() => onBrowserPreview(null)}>Back</button>
+            <button type="button" className="levi-secondary-button" onClick={() => void rejectBrowserPreview()}>Reject</button>
+            <button type="button" className="levi-apply-button" disabled={!browserActionId || executingActionId === browserActionId || activeBrowserRun?.status === "Executing"} onClick={() => void executeBrowserPreview()}>
+              {executingActionId === browserActionId ? "Executing..." : "Approve Browser Action"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {preview ? (
         <div className="levi-agent-preview" role="group" aria-label="Approval Dialog">
           <div className="levi-agent-preview-header">
@@ -979,4 +1186,19 @@ function gitOperationLabel(operation: AgentGitPreview["operation"]): string {
   if (operation === "switch-branch") return "Switch Branch";
   if (operation === "restore-file") return "Restore File";
   return "Show Diff";
+}
+
+function browserActionLabel(action: BrowserActionPreview["action"]): string {
+  if (action === "open") return "Open Browser";
+  if (action === "navigate") return "Navigate Browser";
+  if (action === "back") return "Browser Back";
+  if (action === "forward") return "Browser Forward";
+  if (action === "reload") return "Reload Browser";
+  if (action === "click") return "Click Element";
+  if (action === "fill") return "Fill Field";
+  if (action === "press") return "Press Key";
+  if (action === "scroll") return "Scroll Page";
+  if (action === "screenshot") return "Take Screenshot";
+  if (action === "snapshot") return "Read Page State";
+  return "Close Browser";
 }

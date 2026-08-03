@@ -1896,6 +1896,41 @@ function createDefaultApi(): LeviApi {
       })),
       repairPlan: vi.fn(async (request) => ({ sessionId: request.sessionId, reportId: request.reportId ?? "verification-1", repairs: [], state: agentState })),
       repairStatus: vi.fn(async (request) => ({ sessionId: request.sessionId, repairs: [], reports: [], progress: [], state: agentState })),
+      browserPreview: vi.fn(async (request) => ({
+        sessionId: request.sessionId,
+        preview: {
+          previewId: "browser-preview-1",
+          sessionId: "browser-1",
+          action: "open" as const,
+          targetUrl: "https://example.com/",
+          sensitive: false,
+          purpose: "Open test page",
+          riskLevel: "medium" as const,
+          createdAt: "2026-08-01T00:00:00.000Z"
+        },
+        state: agentState
+      })),
+      browserExecute: vi.fn(async (request) => ({
+        sessionId: request.sessionId,
+        actionId: request.actionId,
+        browserRun: {
+          actionId: request.actionId,
+          actionType: "browser-open" as const,
+          status: "Succeeded" as const,
+          session: {
+            id: "browser-1",
+            status: "Ready" as const,
+            currentUrl: "https://example.com/",
+            title: "Example Domain",
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z",
+            headless: true
+          },
+          updatedAt: "2026-08-01T00:00:00.000Z"
+        },
+        state: agentState
+      })),
+      browserStatus: vi.fn(async (request) => ({ sessionId: request.sessionId, browserRuns: [], state: agentState })),
       status: vi.fn(async () => agentState),
       onEvent: vi.fn((listener: (event: AgentEvent) => void) => {
         window.__leviAgentListeners.push(listener);
@@ -1903,6 +1938,71 @@ function createDefaultApi(): LeviApi {
           window.__leviAgentListeners = window.__leviAgentListeners.filter((current) => current !== listener);
         };
       })
+    },
+    browser: {
+      create: vi.fn(async () => ({
+        session: {
+          id: "browser-1",
+          status: "Ready" as const,
+          currentUrl: "https://example.com/",
+          title: "Example Domain",
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z",
+          headless: true
+        }
+      })),
+      status: vi.fn(async () => ({
+        sessions: [{
+          id: "browser-1",
+          status: "Ready" as const,
+          currentUrl: "https://example.com/",
+          title: "Example Domain",
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z",
+          headless: true
+        }],
+        activeSessionId: "browser-1"
+      })),
+      snapshot: vi.fn(async () => ({
+        snapshot: {
+          sessionId: "browser-1",
+          url: "https://example.com/",
+          title: "Example Domain",
+          status: "Ready" as const,
+          elements: [
+            { ref: "E1", role: "button", name: "Continue", elementType: "button", text: "Continue", enabled: true, sensitive: false }
+          ],
+          capturedAt: "2026-08-01T00:00:00.000Z"
+        }
+      })),
+      navigate: vi.fn(async () => ({
+        session: {
+          id: "browser-1",
+          status: "Ready" as const,
+          currentUrl: "https://example.com/",
+          title: "Example Domain",
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z",
+          headless: true
+        },
+        snapshot: {
+          sessionId: "browser-1",
+          url: "https://example.com/",
+          title: "Example Domain",
+          status: "Ready" as const,
+          elements: [],
+          capturedAt: "2026-08-01T00:00:00.000Z"
+        }
+      })),
+      click: vi.fn(async () => ({ session: { id: "browser-1", status: "Ready" as const, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", headless: true } })),
+      fill: vi.fn(async () => ({ session: { id: "browser-1", status: "Ready" as const, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", headless: true } })),
+      press: vi.fn(async () => ({ session: { id: "browser-1", status: "Ready" as const, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", headless: true } })),
+      scroll: vi.fn(async () => ({ session: { id: "browser-1", status: "Ready" as const, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", headless: true } })),
+      screenshot: vi.fn(async () => ({
+        session: { id: "browser-1", status: "Ready" as const, lastScreenshot: "C:\\tmp\\browser.png", createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", headless: true },
+        screenshotPath: "C:\\tmp\\browser.png"
+      })),
+      close: vi.fn(async () => ({ sessionId: "browser-1", status: "Closed" as const }))
     },
     conversation: {
       start: vi.fn(async () => ({

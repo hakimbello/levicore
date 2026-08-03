@@ -106,6 +106,7 @@ import { UpdateService } from "./update-service";
 import { TerminalManager } from "./terminal-manager";
 import { TaskService } from "./tasks/task-service";
 import { GitService } from "./git-service";
+import { BrowserService } from "./browser-service";
 import { registerDebugTaskRunner } from "./debug-tasks";
 import type { DebugEvent } from "../../src/features/debugger";
 import type { AIChatEvent } from "../../src/features/ai-chat";
@@ -133,6 +134,7 @@ const taskService = new TaskService(
   () => workspaceScan?.summary
 );
 const gitService = new GitService(() => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null);
+const browserService = new BrowserService(() => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null);
 const agentService = new AgentService(aiRuntimeManager, {
   emit: sendAgentEvent,
   getWorkspaceRoot: () => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null,
@@ -141,6 +143,7 @@ const agentService = new AgentService(aiRuntimeManager, {
   taskService,
   gitService,
   terminalManager,
+  browserService,
   getChangedFiles: () => taskService.getOutput({ source: "git" }).map((entry) => entry.text).slice(-40)
 });
 terminalManager.onTerminalData((sessionId, data) => {
@@ -2145,6 +2148,58 @@ function registerIpc(): void {
     assertNoIpcArgs(args);
     return terminalManager.revealCwd(id);
   });
+  ipcMain.handle(IPC_CHANNELS.browserCreate, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return browserService.create(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.browserStatus, (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return browserService.status(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.browserSnapshot, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return browserService.snapshot(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.browserNavigate, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return browserService.navigate(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.browserClick, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return browserService.click(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.browserFill, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return browserService.fill(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.browserPress, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return browserService.press(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.browserScroll, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return browserService.scroll(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.browserScreenshot, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return browserService.screenshot(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.browserClose, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return browserService.close(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentBrowserPreview, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.browserPreview(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentBrowserExecute, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.browserExecute(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentBrowserStatus, (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.browserStatus(request);
+  });
   ipcMain.handle(IPC_CHANNELS.tasksList, (_event, ...args) => {
     assertNoIpcArgs(args);
     return taskService.list();
@@ -2589,6 +2644,7 @@ async function createWindow(): Promise<void> {
     abortActivePlanningGeneration(mainWindowWebContentsId, "window-closed");
     abortActiveExecutionGeneration(mainWindowWebContentsId, "window-closed");
     void debugService.stop();
+    void browserService.closeAll();
     citationSourcesByWindow.delete(mainWindowWebContentsId);
     editProposalsByWindow.delete(mainWindowWebContentsId);
     undoByWindow.delete(mainWindowWebContentsId);
@@ -2641,6 +2697,7 @@ app.on("before-quit", () => {
   void desktopRuntimeService.shutdown();
   aiRuntimeManager.dispose();
   terminalManager.disposeAll();
+  void browserService.closeAll();
 });
 
 app.on("window-all-closed", () => {

@@ -40,6 +40,9 @@ import type {
   AIChatSetPanelRequest,
   AgentApprovalRequest,
   AgentArchiveRequest,
+  AgentBrowserExecuteRequest,
+  AgentBrowserPreviewRequest,
+  AgentBrowserStatusRequest,
   AgentCancelRequest,
   AgentDeleteRequest,
   AgentExecuteRequest,
@@ -65,7 +68,15 @@ import type {
   AgentTerminalPreviewRequest,
   AgentTerminalStatusRequest,
   AgentUndoRequest,
-  AgentVerifyRequest
+  AgentVerifyRequest,
+  BrowserCreateRequest,
+  BrowserElementActionRequest,
+  BrowserFillRequest,
+  BrowserNavigateRequest,
+  BrowserPressRequest,
+  BrowserScreenshotRequest,
+  BrowserScrollRequest,
+  BrowserStatusRequest
 } from "../../src/types/levi-api";
 import type { TaskEvent } from "../../src/types/task-api";
 import type {
@@ -187,6 +198,16 @@ const IPC_CHANNELS = {
   terminalSetLayout: "levi:terminal:set-layout",
   terminalRevealCwd: "levi:terminal:reveal-cwd",
   terminalData: "levi:terminal:data",
+  browserCreate: "levi:browser:create",
+  browserStatus: "levi:browser:status",
+  browserSnapshot: "levi:browser:snapshot",
+  browserNavigate: "levi:browser:navigate",
+  browserClick: "levi:browser:click",
+  browserFill: "levi:browser:fill",
+  browserPress: "levi:browser:press",
+  browserScroll: "levi:browser:scroll",
+  browserScreenshot: "levi:browser:screenshot",
+  browserClose: "levi:browser:close",
   tasksList: "levi:tasks:list",
   tasksRun: "levi:tasks:run",
   tasksCancel: "levi:tasks:cancel",
@@ -257,6 +278,9 @@ const IPC_CHANNELS = {
   agentVerify: "levi:agent:verify",
   agentRepairPlan: "levi:agent:repair-plan",
   agentRepairStatus: "levi:agent:repair-status",
+  agentBrowserPreview: "levi:agent:browser-preview",
+  agentBrowserExecute: "levi:agent:browser-execute",
+  agentBrowserStatus: "levi:agent:browser-status",
   agentStatus: "levi:agent:status",
   agentEvent: "levi:agent:event",
   conversationStart: "levi:conversation:start",
@@ -688,12 +712,27 @@ const leviApi: LeviApiWithWorkspaceTree = {
     verify: (request: AgentVerifyRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentVerify, request),
     repairPlan: (request: AgentRepairPlanRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentRepairPlan, request),
     repairStatus: (request: AgentRepairStatusRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentRepairStatus, request),
+    browserPreview: (request: AgentBrowserPreviewRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentBrowserPreview, request),
+    browserExecute: (request: AgentBrowserExecuteRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentBrowserExecute, request),
+    browserStatus: (request: AgentBrowserStatusRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentBrowserStatus, request),
     status: (request?: AgentStatusRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentStatus, request ?? {}),
     onEvent: (listener: (event: AgentEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: AgentEvent) => listener(payload);
       ipcRenderer.on(IPC_CHANNELS.agentEvent, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.agentEvent, handler);
     }
+  },
+  browser: {
+    create: (request?: BrowserCreateRequest) => ipcRenderer.invoke(IPC_CHANNELS.browserCreate, request ?? {}),
+    status: (request?: BrowserStatusRequest) => ipcRenderer.invoke(IPC_CHANNELS.browserStatus, request ?? {}),
+    snapshot: (request: { sessionId: string }) => ipcRenderer.invoke(IPC_CHANNELS.browserSnapshot, request),
+    navigate: (request: BrowserNavigateRequest) => ipcRenderer.invoke(IPC_CHANNELS.browserNavigate, request),
+    click: (request: BrowserElementActionRequest) => ipcRenderer.invoke(IPC_CHANNELS.browserClick, request),
+    fill: (request: BrowserFillRequest) => ipcRenderer.invoke(IPC_CHANNELS.browserFill, request),
+    press: (request: BrowserPressRequest) => ipcRenderer.invoke(IPC_CHANNELS.browserPress, request),
+    scroll: (request: BrowserScrollRequest) => ipcRenderer.invoke(IPC_CHANNELS.browserScroll, request),
+    screenshot: (request: BrowserScreenshotRequest) => ipcRenderer.invoke(IPC_CHANNELS.browserScreenshot, request),
+    close: (request: { sessionId: string }) => ipcRenderer.invoke(IPC_CHANNELS.browserClose, request)
   },
   conversation: {
     start: (request: ConversationStartRequest) => ipcRenderer.invoke(IPC_CHANNELS.conversationStart, request),
