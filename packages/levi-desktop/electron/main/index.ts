@@ -243,6 +243,14 @@ function liveAcceptanceEnabled(): boolean {
   return process.env.LEVI_LIVE_ACCEPTANCE === "1" && Boolean(process.env.VITE_DEV_SERVER_URL);
 }
 
+function packageQualificationEnabled(): boolean {
+  return process.env.LEVI_PACKAGE_QUALIFICATION === "1";
+}
+
+function qualificationAutomationEnabled(): boolean {
+  return liveAcceptanceEnabled() || packageQualificationEnabled();
+}
+
 const liveTimings: Record<string, number | string> = {};
 
 function recordLiveTiming(key: string, value: number | string): void {
@@ -2535,7 +2543,7 @@ function registerIpc(): void {
     void chatService.cancel({ requestId });
   });
 
-  if (liveAcceptanceEnabled()) {
+  if (qualificationAutomationEnabled()) {
     ipcMain.handle(IPC_CHANNELS.devOpenProjectPath, async (_event, directoryPath) => {
       if (typeof directoryPath !== "string" || !path.isAbsolute(directoryPath)) {
         throw new Error("Invalid project path.");
@@ -2543,8 +2551,8 @@ function registerIpc(): void {
       return openProjectAtPath(directoryPath);
     });
     ipcMain.handle(IPC_CHANNELS.devInjectPlan, (event, plan) => {
-      if (!liveAcceptanceEnabled()) {
-        throw new Error("Live acceptance is not enabled.");
+      if (!qualificationAutomationEnabled()) {
+        throw new Error("Qualification automation is not enabled.");
       }
       const eventWindow = BrowserWindow.fromWebContents(event.sender);
       if (!eventWindow || !plan || typeof plan !== "object") {
@@ -2676,11 +2684,11 @@ app.whenReady().then(async () => {
   });
   await createWindow();
 
-  if (liveAcceptanceEnabled() && process.env.LEVI_OPEN_PROJECT_PATH) {
+  if (qualificationAutomationEnabled() && process.env.LEVI_OPEN_PROJECT_PATH) {
     try {
       await openProjectAtPath(process.env.LEVI_OPEN_PROJECT_PATH);
     } catch (error) {
-      console.error("Failed to open live acceptance project:", error);
+      console.error("Failed to open qualification project:", error);
     }
   }
 

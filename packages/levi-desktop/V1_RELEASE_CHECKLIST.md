@@ -1,6 +1,149 @@
 # Levi Desktop Version 1 Release Checklist
 
-Generated for milestone P2-017-01 on 2026-08-03.
+Generated for milestone P2-017-01 on 2026-08-03. Updated for milestone P2-017-02 on 2026-08-03.
+
+## P2-017-02 Packaging And Qualification (2026-08-03)
+
+### Release Metadata
+
+| Field | Value |
+|-------|-------|
+| Application name | Levi |
+| Executable name | Levi.exe |
+| Version | 0.1.0 |
+| Package identifier | dev.levicore.desktop |
+| Publisher | Hakim Bello (author metadata; Authenticode publisher requires signing certificate) |
+| Description | Standalone Levi desktop shell. |
+| Copyright | Copyright © 2026 Hakim Bello |
+| Repository | https://github.com/hakimbello/levicore.git |
+
+### Packaging Result
+
+- Framework: electron-builder 26.15.3 (existing dependency; no second packaging framework introduced).
+- Targets produced: NSIS x64 installer and unpacked directory build. Portable target not produced (not required without added complexity).
+- Production entry points verified in `app.asar`: `dist/index.html`, `dist-electron/electron/main/index.js`, `dist-electron/electron/preload/index.js`, bundled Monaco chunk, bundled xterm chunk. No dev-server or CDN dependency in packaged runtime.
+- Application icon: `assets/levi.ico` (270,398 bytes) wired for Windows executable, installer, taskbar, and window via electron-builder `win.icon`. Not a placeholder; final branded asset present in repository.
+- Packaging note: OneDrive file locking on `packages/levi-desktop/release/` can cause `EPERM` during local builds. Release qualification used a temp output directory outside OneDrive.
+
+### Packaging Commands
+
+```powershell
+npm.cmd --prefix packages/levi-desktop run typecheck
+npm.cmd --prefix packages/levi-desktop test
+npm.cmd --prefix packages/levi-desktop run build
+cd packages/levi-desktop
+$outDir = "$env:TEMP\levi-desktop-release-p201702"
+npx electron-builder --win nsis --config.directories.output="$outDir"
+$env:LEVI_RELEASE_DIR = $outDir
+npm.cmd run package:qualify
+npm.cmd test
+```
+
+Default `npm.cmd run package --prefix packages/levi-desktop` remains configured to output `packages/levi-desktop/release/` when OneDrive locking is not present.
+
+### Release Artifact Inventory
+
+| Artifact | Path | Size | SHA-256 |
+|----------|------|------|---------|
+| NSIS installer | `%TEMP%\levi-desktop-release-p201702\Levi-0.1.0-win-x64.exe` | 107.11 MB (112,314,141 bytes) | `78718c2f4270d029eb7fae39f4a5e9f1ed7e993686fd4b34dcbd4729b138831b` |
+| Unpacked executable | `%TEMP%\levi-desktop-release-p201702\win-unpacked\Levi.exe` | 195.27 MB (204,755,456 bytes) | `8f5e848b8c8d42d0be5a8a2b36e9e01c9faa48a2d0e26511639726c6db366488` |
+| Build log | `packages/levi-desktop/test-artifacts/p2-017-02/package-build.log` | — | — |
+| Qualification report | `packages/levi-desktop/test-artifacts/p2-017-02/package-qualification-report.json` | — | — |
+
+Portable build: not produced.
+
+### Full Verification Results
+
+| Command | Result | Details |
+|---------|--------|---------|
+| `npm.cmd --prefix packages/levi-desktop run typecheck` | PASS | 2026-08-03 |
+| `npm.cmd --prefix packages/levi-desktop test` | PASS | 254 passed, 2 skipped (256 total). One retry required after transient 5s timeout flakes on git/adapter tests. |
+| `npm.cmd --prefix packages/levi-desktop run build` | PASS | Vite renderer + Electron main/preload compiled successfully. |
+| `npm.cmd test` | PASS | 263 passed (root runtime suite). |
+
+### Packaged File Audit
+
+- PASS: No Levi tests, fixtures, `.env`, credentials, audit drafts, or workspace source leaks detected in distributable output.
+- PASS: Required native module `node-pty` win32-x64 prebuild (`pty.node`) present in `app.asar.unpacked`.
+- NON-BLOCKING: Dependency source maps remain inside bundled `node_modules` within `app.asar`. Levi `dist/` bundles contain no source maps.
+- NON-BLOCKING: Expanded `node-pty` unpack includes dependency build metadata beyond prebuilds alone.
+
+### Native Module Qualification
+
+- node-pty: PASS (win32-x64 `pty.node` present).
+- Electron ABI: PASS (Electron 37.10.3 packaged).
+- xterm renderer: PASS (local bundled chunk in `dist/assets/`).
+- Monaco editor: PASS (local bundled chunk in `dist/assets/`).
+- Local filesystem IPC, BrowserWindow automation, Git process execution, runtime provider HTTP: covered by existing desktop test suite (254 pass) and packaged launch smoke test; real browser/DAP adapter qualification remains environment-dependent per P2-017-01.
+
+### First-Run And Clean-Environment Acceptance
+
+Automated packaged launch smoke test (`LEVI_PACKAGE_QUALIFICATION=1`, clean `--user-data-dir`, disposable temp sample project):
+
+| Check | Result |
+|-------|--------|
+| App launches on clean user-data directory | PASS |
+| Preload bridge available | PASS |
+| Home prompt loads | PASS |
+| Missing Ollama returns recoverable status (no crash) | PASS |
+| Open disposable sample project (not LeviCore repo) | PASS |
+| Runtime Manager loads | PASS |
+| AI Chat loads | PASS |
+| Agent panel loads | PASS |
+| Terminal session request handled | PASS |
+
+Not automated in this pass: Explorer tree interaction, editor save, task discovery, approved agent file edit/task/terminal/Git flows, browser session. These remain covered by Vitest suites against the dev/preload bridge and are manual release gates for packaged installer acceptance.
+
+### Installation Qualification
+
+| Check | Result |
+|-------|--------|
+| Installer artifact exists and is non-zero size | PASS |
+| Installer starts / completes / shortcuts / uninstall / project-file preservation | MANUAL GATE (requires interactive Windows profile qualification) |
+
+### Upgrade Qualification
+
+| Check | Result |
+|-------|--------|
+| Settings, conversations, agent sessions, runtime selections preserved across upgrade | MANUAL GATE (requires prior packaged build install) |
+| Incompatible persisted schema handling | Covered by existing service tests; not re-run on packaged upgrade in this pass |
+
+### Levi User Data Behavior
+
+- Packaged Levi stores application state under Electron `app.getPath("userData")` (Windows: `%APPDATA%\Levi` for per-user NSIS installs).
+- User project files remain in their selected workspace directories; uninstall does not delete workspace projects.
+- Uninstall removes Levi application binaries and Levi-managed userData for the selected install scope; users should back up `%APPDATA%\Levi` before uninstall if they need to preserve conversations, agent sessions, or runtime selections.
+
+### Security Checks
+
+- PASS: No API keys, tokens, `.env` files, private keys, certificates, or test secrets found in installer/unpacked output scan.
+- PASS: No absolute development paths detected in packaged artifact content scan.
+
+### Code Signing Status
+
+- Configured in repository: environment-based signing via `package:signed` and `scripts/validate-signing-env.mjs`.
+- Applied to this build: **No** (`Get-AuthenticodeSignature` → `NotSigned`).
+- Windows SmartScreen will warn on first install of unsigned builds.
+- Signing is a **release blocker for public distribution** but an **accepted beta/RC limitation** while credentials are pending. Infrastructure is ready for `WIN_CSC_LINK` / `CSC_LINK` + password env vars.
+
+### Blocking Issues
+
+1. **Code signing not applied** — SmartScreen warning on first install; required for broad public release.
+2. **Interactive installer lifecycle not automated** — Start Menu shortcut, desktop shortcut selection, silent install, uninstall, and user-project preservation require manual qualification.
+3. **Upgrade path not automated** — Install-over-previous-version acceptance remains manual.
+
+### Non-Blocking Issues
+
+1. Dependency source maps retained in packaged `node_modules`.
+2. Expanded `node-pty` unpack footprint includes non-runtime dependency files.
+3. OneDrive can lock `packages/levi-desktop/release/` during `npm run package` on synced workspaces.
+4. Full clean-environment agent approval flows not exercised against packaged binary (Vitest coverage only).
+
+### Release Recommendation
+
+**Release candidate ready with known limitations.**
+
+The Windows Version 1 release candidate builds successfully, passes full verification suites, passes packaged file/native/security audit, and passes automated first-run launch smoke tests. It is suitable for internal/beta distribution once signing and manual installer/upgrade gates are completed or explicitly waived.
 
 ## Qualification Status
 

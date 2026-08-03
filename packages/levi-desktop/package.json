@@ -25,6 +25,7 @@
     "package:signed": "node scripts/validate-signing-env.mjs --required && npm run build && electron-builder --win nsis -c.forceCodeSigning=true",
     "package:publish": "npm run build && electron-builder --win nsis --publish always",
     "package:dir": "npm run build && electron-builder --win dir",
+    "package:qualify": "node scripts/package-qualification.mjs",
     "dist": "npm run package"
   },
   "dependencies": {
@@ -56,6 +57,7 @@
   "build": {
     "appId": "dev.levicore.desktop",
     "productName": "Levi",
+    "copyright": "Copyright © 2026 Hakim Bello",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "npmRebuild": false,
     "asarUnpack": [

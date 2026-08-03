@@ -21,6 +21,7 @@ function desktopPackageJson(): {
   devDependencies: Record<string, string>;
   build: {
     artifactName?: string;
+    copyright?: string;
     npmRebuild?: boolean;
     asarUnpack?: string[];
     directories?: { output?: string };
@@ -121,6 +122,7 @@ describe("Levi desktop package hygiene", () => {
     expect(packageJson.build.artifactName).toBe("${productName}-${version}-${os}-${arch}.${ext}");
     expect(packageJson.build.win?.icon).toBe("assets/levi.ico");
     expect(fs.statSync(path.join(desktopRoot, "assets/levi.ico")).size).toBeGreaterThan(0);
+    expect(packageJson.build.copyright).toBe("Copyright © 2026 Hakim Bello");
     expect(packageJson.build.win?.target).toEqual([{ target: "nsis", arch: ["x64"] }]);
     expect(packageJson.build.nsis).toMatchObject({
       oneClick: false,
