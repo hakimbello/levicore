@@ -2695,6 +2695,7 @@ app.on("before-quit", () => {
   invalidateProjectRules("idle");
   void debugService.dispose();
   void desktopRuntimeService.shutdown();
+  agentService.dispose();
   aiRuntimeManager.dispose();
   terminalManager.disposeAll();
   void browserService.closeAll();

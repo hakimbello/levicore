@@ -121,7 +121,10 @@ function createFakeTaskService(tasks: TaskDefinition[]) {
   const service = {
     onEvent: vi.fn((listener: (event: TaskEvent) => void) => {
       listeners.push(listener);
-      return () => undefined;
+      return () => {
+        const index = listeners.indexOf(listener);
+        if (index >= 0) listeners.splice(index, 1);
+      };
     }),
     list: vi.fn(async () => ({ detected: tasks, recent: [], running: [], failed: [], pinned: [] })),
     run: vi.fn(async (request: { taskId: string }) => {
@@ -187,6 +190,9 @@ function createFakeTaskService(tasks: TaskDefinition[]) {
     },
     get exitCode() {
       return exitCode;
+    },
+    listenerCount() {
+      return listeners.length;
     }
   };
   return service;
@@ -272,7 +278,10 @@ function createFakeTerminalManager() {
   const service = {
     onTerminalData: vi.fn((listener: (sessionId: string, data: string) => void) => {
       listeners.push(listener);
-      return () => undefined;
+      return () => {
+        const index = listeners.indexOf(listener);
+        if (index >= 0) listeners.splice(index, 1);
+      };
     }),
     createCommand: vi.fn((_window: unknown, _request: unknown, onExit?: (exitCode: number) => void) => {
       onExitHandler = onExit;
@@ -284,6 +293,9 @@ function createFakeTerminalManager() {
     },
     finish(exitCode: number) {
       onExitHandler?.(exitCode);
+    },
+    listenerCount() {
+      return listeners.length;
     }
   };
   return service;
@@ -453,6 +465,18 @@ describe("Coding Agent foundation", () => {
     await expect(service.plan({ prompt: "", runtimeId: "ollama", modelId: "model-a" })).rejects.toThrow(/prompt/i);
     await expect(service.plan({ prompt: "Read outside", runtimeId: "ollama", modelId: "model-a", attachments: [{ id: "a", type: "file", label: "x", relativePath: "../secret.txt" }] })).rejects.toThrow(/workspace path/i);
     await expect(service.approve({ sessionId: "missing", actionId: "a" })).rejects.toThrow(/not found/i);
+  });
+
+  it("unsubscribes task and terminal listeners on dispose", async () => {
+    const taskService = createFakeTaskService([{ id: "npm:test", label: "test", source: "detected", group: "test", command: "npm.cmd", args: ["test"], cwd: "C:/workspace", problemMatchers: [] }]);
+    const terminalManager = createFakeTerminalManager();
+    const { service } = await createService(provider(), { taskService, terminalManager });
+
+    expect(taskService.listenerCount()).toBe(1);
+    expect(terminalManager.listenerCount()).toBe(1);
+    service.dispose();
+    expect(taskService.listenerCount()).toBe(0);
+    expect(terminalManager.listenerCount()).toBe(0);
   });
 
   it("wires secure agent IPC through main and preload without autonomous execution", () => {

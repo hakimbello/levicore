@@ -103,6 +103,7 @@ export class AgentService {
   private readonly statePath: string;
   private readonly emit: (event: AgentEvent) => void;
   private readonly executionService: AgentExecutionService;
+  private readonly disposables: Array<() => void> = [];
   private persistence: AgentPersistence = defaultPersistence();
 
   constructor(
@@ -138,8 +139,10 @@ export class AgentService {
       getWindow: () => this.options.getWindow?.() ?? null,
       getChangedFiles: () => this.options.getChangedFiles?.() ?? []
     });
-    this.options.taskService?.onEvent((event) => this.executionService.handleTaskEvent(event));
-    this.options.terminalManager?.onTerminalData((sessionId, data) => this.executionService.handleTerminalData(sessionId, data));
+    const taskEvents = this.options.taskService?.onEvent((event) => this.executionService.handleTaskEvent(event));
+    if (taskEvents) this.disposables.push(taskEvents);
+    const terminalData = this.options.terminalManager?.onTerminalData((sessionId, data) => this.executionService.handleTerminalData(sessionId, data));
+    if (terminalData) this.disposables.push(terminalData);
   }
 
   async initialize(): Promise<AgentState> {
@@ -147,6 +150,12 @@ export class AgentService {
     for (const session of this.persistence.sessions) this.executionService.markInterrupted(session);
     await this.persist();
     return this.snapshot();
+  }
+
+  dispose(): void {
+    while (this.disposables.length) {
+      this.disposables.pop()?.();
+    }
   }
 
   list(): AgentState {

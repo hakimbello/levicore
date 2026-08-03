@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,19 @@ import { parseEnvFileContent, assertSafeRelativeEnvPath } from "../electron/main
 import { validateCompoundStart, runDebugTaskBoundary } from "../electron/main/debug-tasks";
 
 const fixturesRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "debug");
+const temporaryRoots = new Set<string>();
+
+async function createTemporaryDebugWorkspace(prefix: "missing-entry" | "cleanup"): Promise<string> {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), `levi-debug-${prefix}-`));
+  temporaryRoots.add(root);
+  return root;
+}
+
+afterEach(async () => {
+  const roots = [...temporaryRoots];
+  temporaryRoots.clear();
+  await Promise.allSettled(roots.map((root) => fs.rm(root, { recursive: true, force: true })));
+});
 
 function hasRuntime(command: string, args: string[] = ["--version"]): Promise<boolean> {
   return new Promise((resolve) => {
@@ -150,7 +164,7 @@ describe("real adapter qualification", () => {
       ctx.skip();
       return;
     }
-    const root = await fs.mkdtemp(path.join(fixturesRoot, "missing-entry-"));
+    const root = await createTemporaryDebugWorkspace("missing-entry");
     const manager = new AdapterManager(() => root, { adapterRoot: path.join(root, "adapters") });
     const service = new DesktopDebugService(() => root, manager);
     await manager.initialize();
@@ -164,7 +178,7 @@ describe("real adapter qualification", () => {
 
 describe("debug session cleanup", () => {
   it("disposes adapter processes on stopAll", async () => {
-    const root = await fs.mkdtemp(path.join(fixturesRoot, "cleanup-"));
+    const root = await createTemporaryDebugWorkspace("cleanup");
     const manager = new AdapterManager(() => root, { adapterRoot: path.join(root, "adapters") });
     const service = new DesktopDebugService(() => root, manager);
     await manager.initialize();
