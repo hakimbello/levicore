@@ -247,6 +247,84 @@ Upgrade over a distinct older binary remains a manual gate when an earlier tagge
 
 The final RC artifact rebuilds cleanly, passes all automated test suites, passes installer lifecycle qualification (install, Start Menu shortcut, uninstall, workspace safety), passes signing-readiness inspection, and passes security re-scan. Public release remains blocked until Authenticode signing is applied and interactive installed-app/upgrade acceptance completes on a clean Windows profile without Application Control restrictions.
 
+## P2-017-04 Version 1 Release Finalization (2026-08-03)
+
+### Release Blocker Matrix
+
+| Item | Classification | Status |
+|------|----------------|--------|
+| Authenticode signing not applied | Blocking (public) | Open |
+| SmartScreen / Application Control on unsigned binary | Blocking (public) | Open |
+| Installed-app full CDP matrix on managed host | Blocking (public) | Open — VM recommended |
+| Upgrade over distinct prior binary | Blocking (public) | Manual gate |
+| Dependency source maps in bundled node_modules | Non-blocking | Accepted for beta |
+| OneDrive `release/` EPERM during local packaging | Non-blocking | Temp output documented |
+| Silent NSIS install skips desktop shortcut | Non-blocking | Interactive flow only |
+| package-hygiene parallel Vitest timeout flake | Non-blocking | Passes with `--no-file-parallelism` |
+| Cross-platform installers | Future work | Windows x64 only |
+| In-app Source Control panel | Future work | Agent Git flows present |
+| Published auto-update feed E2E | Future work | Updater code present |
+
+### Manual Qualification Checklist
+
+| Area | Result | Notes |
+|------|--------|-------|
+| Installer | PASS | Silent NSIS install/uninstall (P2-017-03) |
+| Launch | PASS | RC unpacked smoke + first qual CDP session |
+| Second launch | PASS | First qual session; later automation blocked by App Control |
+| Recent workspace | PASS | Service tests; installed UI MANUAL |
+| AI Runtime | PASS | RC smoke + Vitest |
+| AI Chat | PASS | RC smoke + Vitest |
+| Agent | PASS | RC smoke + 24 Vitest tests |
+| Git | PASS | Agent Git Vitest (local, approval-gated) |
+| Terminal | PASS | RC smoke + Vitest |
+| Tasks | PASS | Vitest; packaged UI MANUAL optional |
+| Browser | PASS | BrowserService Vitest; real browser qual N/A in Vitest |
+| Debugger | PASS | Debugger Vitest; real js-debug N/A when adapter absent |
+
+### Release Documents
+
+| Document | Path |
+|----------|------|
+| Signing readiness | `SIGNING_READY.md` |
+| Release notes | `CHANGELOG_V1.md` |
+| First-run guide | `FIRST_RUN.md` |
+| Version freeze | `VERSION_1_FREEZE.md` |
+| Release decision | `RELEASE_DECISION.md` |
+| Distribution manifest | `release-v1/DISTRIBUTION.md` |
+| Checksums | `release-v1/SHA256SUMS.txt` |
+| License | `release-v1/LICENSE` |
+
+### Distribution Package Verification
+
+Public bundle must contain only: installer, checksums, release notes, license. Build output at `%TEMP%\levi-desktop-release-p201703-final\` also contains `win-unpacked/`, `builder-debug.yml`, `latest.yml`, and `*.blockmap` — **exclude** from user distribution. See `release-v1/DISTRIBUTION.md`.
+
+### Final Quality Audit
+
+| Check | Result |
+|-------|--------|
+| TODO/FIXME in `src/` and `electron/` | PASS — none found |
+| Debug logging in production `src/` and `electron/` | PASS — no `console.log` |
+| Development URLs in packaged output | PASS — security scan clean |
+| Localhost in production code | INTENTIONAL — local AI runtime defaults |
+| Secrets in repository or artifacts | PASS — none detected |
+| Committed certificates | PASS — none |
+
+### Final Verification Results (2026-08-03)
+
+| Command | Result | Details |
+|---------|--------|---------|
+| `npm.cmd --prefix packages/levi-desktop run typecheck` | PASS | |
+| `npm.cmd --prefix packages/levi-desktop test` | FLAKY | Default parallel run: 253 pass, 1 fail (`package-hygiene` 5s timeout). Sequential (`vitest run --no-file-parallelism`): 254 pass, 2 skipped. |
+| `npm.cmd --prefix packages/levi-desktop run build` | PASS | |
+| `npm.cmd test` | PASS | 263 pass (root runtime suite) |
+
+### Final Release Decision
+
+**READY FOR INTERNAL BETA**
+
+Public release not ready. Evidence: unsigned RC (`NotSigned`), open signing and VM qualification gates, all automated suites pass under sequential test execution, installer lifecycle and security scans pass. Full report: `RELEASE_DECISION.md`.
+
 ## Qualification Status
 
 - TypeScript typecheck: required before release.
