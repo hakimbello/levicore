@@ -61,7 +61,7 @@ function mockExecutionTransaction(status: ExecutionTransactionStatus, overrides:
     transactionId: "tx-1",
     planId: "plan-1",
     goal: "Update server timeout",
-    workspaceRootPath: "C:\\Users\\developer\\Project",
+    workspaceRootPath: "C:\\Users\\LeviUser\\Project",
     scanTimestamp: new Date().toISOString(),
     status,
     steps: [
@@ -98,7 +98,7 @@ function createDefaultApi(): LeviApi {
   };
   const summary: WorkspaceScanSummary = {
     projectName: "Project",
-    rootPath: "C:\\Users\\developer\\Project",
+    rootPath: "C:\\Users\\LeviUser\\Project",
     languages: ["TypeScript"],
     frameworks: ["React"],
     packageManager: "npm",
@@ -123,7 +123,7 @@ function createDefaultApi(): LeviApi {
     projects: {
       getRecent: vi.fn(async () => null),
       openFolder: vi.fn(async () => ({
-        path: "C:\\Users\\developer\\Project",
+        path: "C:\\Users\\LeviUser\\Project",
         name: "Project"
       }))
     },
@@ -145,7 +145,7 @@ function createDefaultApi(): LeviApi {
       })),
       listTree: vi.fn(async () => ({
         projectName: "Project",
-        rootPath: "C:\\Users\\developer\\Project",
+        rootPath: "C:\\Users\\LeviUser\\Project",
         nodes: [
           {
             name: "src",
@@ -1027,7 +1027,7 @@ function createDefaultApi(): LeviApi {
         adapterRecommendations: []
       })),
       cancelAdapterInstall: vi.fn(async () => undefined),
-      revealAdapterLocation: vi.fn(async () => "C:\\Users\\developer\\Project\\adapters\\node"),
+      revealAdapterLocation: vi.fn(async () => "C:\\Users\\LeviUser\\Project\\adapters\\node"),
       onEvent: vi.fn((listener: (event: DebugEvent) => void) => {
         window.__leviDebugListeners.push(listener);
         return () => {
@@ -1038,7 +1038,7 @@ function createDefaultApi(): LeviApi {
     terminal: {
       create: vi.fn(async () => ({
         id: "terminal-1",
-        cwd: "C:\\Users\\developer\\Project",
+        cwd: "C:\\Users\\LeviUser\\Project",
         name: "Terminal 1",
         shellKind: "powershell"
       })),
@@ -1048,7 +1048,7 @@ function createDefaultApi(): LeviApi {
       kill: vi.fn(async () => ({
         id: "terminal-1",
         name: "Terminal 1",
-        cwd: "C:\\Users\\developer\\Project",
+        cwd: "C:\\Users\\LeviUser\\Project",
         shellKind: "powershell",
         alive: false,
         createdAt: new Date().toISOString()
@@ -1056,7 +1056,7 @@ function createDefaultApi(): LeviApi {
       rename: vi.fn(async () => ({
         id: "terminal-1",
         name: "Terminal 1",
-        cwd: "C:\\Users\\developer\\Project",
+        cwd: "C:\\Users\\LeviUser\\Project",
         shellKind: "powershell",
         alive: true,
         createdAt: new Date().toISOString()
@@ -1064,18 +1064,18 @@ function createDefaultApi(): LeviApi {
       list: vi.fn(async () => []),
       split: vi.fn(async () => ({
         id: "terminal-2",
-        cwd: "C:\\Users\\developer\\Project",
+        cwd: "C:\\Users\\LeviUser\\Project",
         name: "Terminal 2",
         shellKind: "powershell"
       })),
       restart: vi.fn(async () => ({
         id: "terminal-3",
-        cwd: "C:\\Users\\developer\\Project",
+        cwd: "C:\\Users\\LeviUser\\Project",
         name: "Terminal 1",
         shellKind: "powershell"
       })),
       getLayout: vi.fn(async () => ({
-        tabs: [{ id: "tab-1", name: "Terminal 1", cwd: "C:\\Users\\developer\\Project" }],
+        tabs: [{ id: "tab-1", name: "Terminal 1", cwd: "C:\\Users\\LeviUser\\Project" }],
         activeTabId: "tab-1",
         panelTab: "terminal" as const,
         panelVisible: false,
@@ -1084,7 +1084,7 @@ function createDefaultApi(): LeviApi {
         splitLayout: { type: "pane" as const, tabId: "tab-1" }
       })),
       setLayout: vi.fn(async (layout) => layout),
-      revealCwd: vi.fn(async () => "C:\\Users\\developer\\Project"),
+      revealCwd: vi.fn(async () => "C:\\Users\\LeviUser\\Project"),
       onData: vi.fn(() => () => undefined)
     },
     tasks: {

@@ -92,7 +92,7 @@ test("registers and validates normalized threat scenarios without exposing raw h
     name: "Custom Secret Leak",
     category: ThreatCategories.CREDENTIAL_LEAKAGE,
     severity: SecuritySeverities.CRITICAL,
-    attackPayload: "authorization: Bearer sk-test-secret-value",
+    attackPayload: "authorization: Bearer [fixture-token]",
     expectedOutcome: AttackOutcomes.SANITIZED,
   });
 

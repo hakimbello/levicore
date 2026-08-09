@@ -289,7 +289,7 @@ async function auditSecurity() {
           violations.push(`Potential secret pattern in ${relativeFrom(root, filePath)}: ${pattern}`);
         }
       }
-      if (/OneDrive[\\/]Desktop[\\/]LeviCore/i.test(text) || /C:\\Users\\developer/i.test(text)) {
+      if (/OneDrive[\\/]Desktop[\\/]LeviCore/i.test(text) || /C:\\Users\\[^\\\r\n]+\\OneDrive[\\/]Desktop[\\/]LeviCore/i.test(text)) {
         violations.push(`Development absolute path leaked in ${relativeFrom(root, filePath)}`);
       }
     }

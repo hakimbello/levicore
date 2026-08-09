@@ -34,7 +34,7 @@ describe("BottomPanel renderer integration", () => {
     const user = userEvent.setup();
     render(
       <BottomPanel
-        selectedProject={{ path: "C:\\Users\\developer\\Project", name: "Project" }}
+        selectedProject={{ path: "C:\\Users\\LeviUser\\Project", name: "Project" }}
         debugConsole={[]}
         onEvaluateDebug={vi.fn(async () => undefined)}
         onClearDebugConsole={vi.fn(async () => undefined)}
@@ -49,7 +49,7 @@ describe("BottomPanel renderer integration", () => {
 
     await waitFor(() =>
       expect(window.levi.terminal.create).toHaveBeenCalledWith(
-        expect.objectContaining({ cols: 96, rows: 10, cwd: "C:\\Users\\developer\\Project" })
+        expect.objectContaining({ cols: 96, rows: 10, cwd: "C:\\Users\\LeviUser\\Project" })
       )
     );
   });

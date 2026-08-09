@@ -40,7 +40,7 @@ function historyTransaction(): ExecutionPublicTransaction {
     transactionId: "history-tx-1",
     planId: "plan-1",
     goal: "Update server timeout",
-    workspaceRootPath: "C:\\Users\\developer\\Project",
+    workspaceRootPath: "C:\\Users\\LeviUser\\Project",
     scanTimestamp: "2026-07-29T00:00:00.000Z",
     status: "kept",
     steps: [

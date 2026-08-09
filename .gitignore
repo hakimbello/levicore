@@ -18,5 +18,6 @@ packages/levi-desktop/.vite/
 packages/levi-desktop/coverage/
 packages/levi-desktop/.cache/
 packages/levi-desktop/.turbo/
+packages/levi-desktop/test-artifacts/
 packages/levi-desktop/test-results/
 packages/levi-desktop/playwright-report/

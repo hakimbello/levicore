@@ -341,7 +341,7 @@ describe("Run and Debug view", () => {
   it("starts debug sessions, toggles breakpoints, and manages watches through typed IPC", async () => {
     const user = userEvent.setup();
     vi.mocked(window.levi.projects.getRecent).mockResolvedValue({
-      path: "C:\\Users\\developer\\Project",
+      path: "C:\\Users\\LeviUser\\Project",
       name: "Project"
     });
     render(<App />);
