@@ -14,8 +14,11 @@ A public or internal-beta distribution folder must contain **only** these files:
 |------|----------|-------------|
 | `Levi-0.1.0-win-x64.exe` | Yes | NSIS x64 installer |
 | `SHA256SUMS.txt` | Yes | Checksum for installer (this folder) |
+| `BUILD_METADATA.json` | CI builds | Source commit, workflow run, version, artifact, and checksum metadata |
 | `CHANGELOG_V1.md` | Yes | Release notes (copy from package root or rename to `RELEASE_NOTES.md`) |
 | `LICENSE` | Yes | MIT license (this folder) |
+| `PRIVACY.md` | Yes | Desktop privacy policy |
+| `CODE_SIGNING_POLICY.md` | Yes | Current unsigned status and proposed signing policy |
 
 Optional for signed public release after update channel is live:
 
@@ -88,3 +91,5 @@ After signing:
 3. Verify: `Get-AuthenticodeSignature .\Levi-0.1.0-win-x64.exe | Format-List` → `Status: Valid`
 
 See `SIGNING_READY.md`.
+
+Levi is preparing for SignPath Foundation eligibility. If Levi is accepted in the future, signed release artifacts will use code signing provided by SignPath.io, certificate by SignPath Foundation. Levi is not currently signed by SignPath Foundation.

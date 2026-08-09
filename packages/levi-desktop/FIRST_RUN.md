@@ -118,3 +118,5 @@ Approve browser actions individually in the agent approval queue.
 - Silent/unattended NSIS installs do not create a desktop shortcut (Start Menu shortcut is created).
 
 For release engineering details, see `CHANGELOG_V1.md`, `SIGNING_READY.md`, and `V1_RELEASE_CHECKLIST.md`.
+
+For unsigned beta download details, privacy behavior, and the proposed code-signing policy, see `RELEASE_DOWNLOAD.md`, `PRIVACY.md`, and `CODE_SIGNING_POLICY.md`.

@@ -99,6 +99,12 @@ Publishing is configured through Electron Builder for GitHub draft releases in `
 
 Publishing requires a GitHub token supplied by the environment, such as `GH_TOKEN` or `GITHUB_TOKEN`. Tokens must never be committed to this repository or written into package configuration. Live update verification remains blocked until a draft release is published and its generated update feed is available.
 
+## Unsigned Beta Release Documentation
+
+- `RELEASE_DOWNLOAD.md` describes the unsigned Windows beta release bundle, checksum verification, source traceability, license, privacy, and current signing status.
+- `PRIVACY.md` describes Levi Desktop local processing, optional provider transmission, locally persisted data, update checks, and browser automation data.
+- `CODE_SIGNING_POLICY.md` documents the proposed SignPath-ready release-signing model. Levi is not currently signed by SignPath Foundation.
+
 ## Bundle Strategy
 
 The renderer uses React lazy loading and Vite manual chunking to keep the initial Home experience small:

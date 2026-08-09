@@ -1,0 +1,14 @@
+# Release, signing, and build provenance controls.
+/.github/ @hakimbello
+/.github/workflows/ @hakimbello
+/package.json @hakimbello
+/package-lock.json @hakimbello
+/LICENSE @hakimbello
+/packages/levi-desktop/package.json @hakimbello
+/packages/levi-desktop/scripts/ @hakimbello
+/packages/levi-desktop/CODE_SIGNING_POLICY.md @hakimbello
+/packages/levi-desktop/PRIVACY.md @hakimbello
+/packages/levi-desktop/RELEASE_DOWNLOAD.md @hakimbello
+/packages/levi-desktop/SIGNPATH_ELIGIBILITY.md @hakimbello
+/packages/levi-desktop/release-v1/ @hakimbello
+/.signpath/ @hakimbello

@@ -1,0 +1,116 @@
+name: Levi Desktop Release Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: levi-desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-release:
+    name: Build unsigned Windows release
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout source commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck Levi Desktop
+        run: npm.cmd --prefix packages/levi-desktop run typecheck
+
+      - name: Test Levi Desktop
+        run: npm.cmd --prefix packages/levi-desktop test
+
+      - name: Test Levi Core runtime
+        run: npm.cmd test
+
+      - name: Build Levi Desktop
+        run: npm.cmd --prefix packages/levi-desktop run build
+
+      - name: Package unsigned Windows installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $releaseDir = Join-Path $env:RUNNER_TEMP "levi-desktop-release"
+          New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
+          Push-Location packages/levi-desktop
+          npx.cmd electron-builder --win nsis --publish never --config.directories.output="$releaseDir"
+          Pop-Location
+
+      - name: Generate release metadata and checksum
+        id: metadata
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $releaseDir = Join-Path $env:RUNNER_TEMP "levi-desktop-release"
+          $artifactDir = Join-Path $env:RUNNER_TEMP "levi-desktop-release-artifact"
+          New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+
+          $packageJson = Get-Content packages/levi-desktop/package.json -Raw | ConvertFrom-Json
+          $installer = Get-ChildItem -LiteralPath $releaseDir -Filter "Levi-*-win-x64.exe" | Select-Object -First 1
+          if (-not $installer) {
+            throw "Levi Windows installer was not produced."
+          }
+
+          Copy-Item -LiteralPath $installer.FullName -Destination (Join-Path $artifactDir $installer.Name)
+          Copy-Item -LiteralPath packages/levi-desktop/CHANGELOG_V1.md -Destination (Join-Path $artifactDir "RELEASE_NOTES.md")
+          Copy-Item -LiteralPath LICENSE -Destination (Join-Path $artifactDir "LICENSE")
+          Copy-Item -LiteralPath packages/levi-desktop/PRIVACY.md -Destination (Join-Path $artifactDir "PRIVACY.md")
+          Copy-Item -LiteralPath packages/levi-desktop/CODE_SIGNING_POLICY.md -Destination (Join-Path $artifactDir "CODE_SIGNING_POLICY.md")
+
+          $hash = (Get-FileHash -LiteralPath (Join-Path $artifactDir $installer.Name) -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath (Join-Path $artifactDir "SHA256SUMS.txt") -Value "$hash  $($installer.Name)" -Encoding utf8
+
+          $metadata = [ordered]@{
+            productName = $packageJson.build.productName
+            version = $packageJson.version
+            artifactName = $installer.Name
+            sha256 = $hash
+            repository = $env:GITHUB_REPOSITORY
+            sourceCommit = $env:GITHUB_SHA
+            sourceRef = $env:GITHUB_REF
+            sourceRefName = $env:GITHUB_REF_NAME
+            sourceRefType = $env:GITHUB_REF_TYPE
+            sourceTag = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME } else { $null }
+            workflow = $env:GITHUB_WORKFLOW
+            workflowRunId = $env:GITHUB_RUN_ID
+            workflowRunNumber = $env:GITHUB_RUN_NUMBER
+            workflowRunAttempt = $env:GITHUB_RUN_ATTEMPT
+            buildUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            signed = $false
+            signingProvider = $null
+          }
+          $metadata | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $artifactDir "BUILD_METADATA.json") -Encoding utf8
+
+          "artifact_dir=$artifactDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Upload unsigned release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: levi-desktop-${{ github.run_id }}-${{ github.sha }}
+          path: ${{ steps.metadata.outputs.artifact_dir }}
+          if-no-files-found: error
+          retention-days: 30
