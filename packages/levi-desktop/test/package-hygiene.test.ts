@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { execSync, spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 const repoRoot = path.resolve(__dirname, "../../..");
 const desktopRoot = path.join(repoRoot, "packages/levi-desktop");
@@ -42,14 +42,20 @@ function desktopPackageJson(): {
 }
 
 function isIgnored(relativeFromRepoRoot: string): boolean {
+  const normalizedPath = relativeFromRepoRoot.replace(/\\/g, "/");
+
   try {
-    execSync(`git check-ignore -v "${relativeFromRepoRoot.replace(/\\/g, "/")}"`, {
+    execFileSync("git", ["-c", `safe.directory=${repoRoot}`, "check-ignore", "-v", "--", normalizedPath], {
       cwd: repoRoot,
       stdio: ["ignore", "pipe", "ignore"]
     });
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "status" in error && error.status === 1) {
+      return false;
+    }
+
+    throw error;
   }
 }
 

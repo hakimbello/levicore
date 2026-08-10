@@ -11,6 +11,7 @@
   },
   "scripts": {
     "levi": "node bin/levi.js",
+    "postinstall": "node packages/levi-desktop/scripts/ensure-electron-install.mjs",
     "test": "node --test test/*.test.js",
     "extension:check": "npm.cmd --prefix packages/vscode-extension run check",
     "extension:test": "npm.cmd --prefix packages/vscode-extension test",
