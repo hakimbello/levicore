@@ -15,7 +15,9 @@ P2-018-08 chooses branch strategy A: update `main` to the current public-ready `
 
 The intended default branch state must contain the authoritative package lock, MIT license, CODEOWNERS, Levi Desktop release workflow, security policy, privacy policy, code-signing policy, first-run docs, unsigned beta release docs, SignPath eligibility audit, this public-repository audit, and complete Levi Desktop V1 source.
 
-P2-018-08 aligned GitHub `main` to the public-ready `desktop-v1` state by fast-forward push. A brand-new GitHub clone without a branch override checked out `main` at `d8fec2ba0f544bda7387f15b366bc9276925d021` and passed install, desktop typecheck, desktop tests, desktop build, root tests, privacy/history scans, generated artifact scans, and `git fsck --full`.
+P2-018-08 aligned GitHub `main` to the public-ready `desktop-v1` state by fast-forward push. A brand-new GitHub clone without a branch override checked out `main` at `ec3666daf9cd9179d477aed714a0289e46b3433c` and passed install, desktop typecheck, desktop tests, desktop build, root tests, privacy/history scans, generated artifact scans, and `git fsck --full`.
+
+During final default-clone verification, an intermittent desktop-suite failure was reproduced in lazy top-level panel navigation tests: the active activity button changed immediately, but React lazy-loaded panel modules occasionally exceeded Testing Library's default async wait under full-suite load. The fix keeps the same accessibility and content assertions while giving those lazy panel waits a bounded 5-second timeout. No production code, dependency graph, package hygiene rule, application feature, signing configuration, or release behavior was changed.
 
 Public visibility remains blocked only by manual GitHub/account settings that cannot be fully confirmed from this environment, including maintainer MFA, branch protection/rulesets, repository security toggles, and release permissions.
 
@@ -41,14 +43,14 @@ Default branch before:
 Default branch after alignment:
 
 - GitHub `HEAD`: `refs/heads/main`.
-- GitHub `main`: `d8fec2ba0f544bda7387f15b366bc9276925d021`.
-- GitHub `desktop-v1`: `d8fec2ba0f544bda7387f15b366bc9276925d021`.
+- GitHub `main`: `ec3666daf9cd9179d477aed714a0289e46b3433c`.
+- GitHub `desktop-v1`: `ec3666daf9cd9179d477aed714a0289e46b3433c`.
 
 ## Required Default-Branch Content
 
 Status before alignment: FAIL on GitHub default `main`; PASS on `desktop-v1`.
 
-Status after alignment: PASS on GitHub default `main` at `d8fec2ba0f544bda7387f15b366bc9276925d021`.
+Status after alignment: PASS on GitHub default `main` at `ec3666daf9cd9179d477aed714a0289e46b3433c`.
 
 Required files and content on the eventual default branch:
 
@@ -84,7 +86,7 @@ Commands to run on the proposed default-branch state:
 
 - `npm ci`: PASS.
 - `npm.cmd --prefix packages/levi-desktop run typecheck`: PASS.
-- `npm.cmd --prefix packages/levi-desktop test`: PASS on rerun, 27 files passed, 254 tests passed, 2 skipped. The earlier single `test/home.test.tsx` failure did not reproduce; the focused `test/home.test.tsx` rerun passed 13/13 first.
+- `npm.cmd --prefix packages/levi-desktop test`: PASS after the scoped lazy-surface wait fix, 27 files passed, 254 tests passed, 2 skipped.
 - `npm.cmd --prefix packages/levi-desktop run build`: PASS.
 - `npm.cmd test`: PASS, 263 tests passed.
 
@@ -111,6 +113,7 @@ Completed push behavior:
 - Fetched current GitHub refs immediately before pushing.
 - Pushed `desktop-v1` fast-forward: `718db2c388426d60388377eda1aebf082bc38fb7` -> `d8fec2ba0f544bda7387f15b366bc9276925d021`.
 - Pushed `main` fast-forward: `07af8874f6fcb4268ac38ceb986299db2c84d35b` -> `d8fec2ba0f544bda7387f15b366bc9276925d021`.
+- Pushed final audit/test hardening fast-forward: `d8fec2ba0f544bda7387f15b366bc9276925d021` -> `ec3666daf9cd9179d477aed714a0289e46b3433c` on both `desktop-v1` and `main`.
 - No force push was required.
 - Repository visibility was not changed.
 
@@ -121,7 +124,7 @@ Status: PASS.
 After branch alignment:
 
 1. Created a brand-new clone directly from `https://github.com/hakimbello/levicore.git` without specifying a branch.
-2. Verified checkout: `main` at `d8fec2ba0f544bda7387f15b366bc9276925d021`.
+2. Verified checkout: `main` at `ec3666daf9cd9179d477aed714a0289e46b3433c`.
 3. `npm ci`: PASS.
 4. `npm.cmd --prefix packages/levi-desktop run typecheck`: PASS.
 5. `npm.cmd --prefix packages/levi-desktop test`: PASS, 27 files passed, 254 tests passed, 2 skipped.
@@ -130,7 +133,7 @@ After branch alignment:
 8. Privacy, secret, generated screenshot, tracked artifact, and `git fsck --full` checks: PASS.
 9. Required public-facing documentation: PASS.
 
-This audit document was updated after the fresh-clone run to record evidence. The update is documentation-only and does not modify application code, build logic, dependencies, tests, or Version 1 features.
+The final source change before this clone was limited to test robustness for lazy-loaded top-level panels. It did not modify application code, build logic, dependencies, package-lock content, release workflow behavior, signing configuration, or Version 1 features.
 
 ## GitHub Repository Settings Matrix
 
