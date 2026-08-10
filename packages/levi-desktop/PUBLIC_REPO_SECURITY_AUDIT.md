@@ -13,7 +13,7 @@ P2-018-05 resolves the clean-clone package-hygiene failure found in P2-018-04 wi
 
 The fix keeps the existing assertions intact, switches the helper from shell-built `execSync` to argument-safe `execFileSync`, passes a repo-local `safe.directory` override for the inspected repository, and treats only Git's normal status `1` as "not ignored." Any other Git failure now fails loudly.
 
-Local verification passed after the fix: focused hygiene test, full desktop test suite, desktop typecheck, desktop build, and root tests. Clean-clone qualification is required before public visibility and is recorded in this milestone's report.
+Local verification passed after the fix: focused hygiene test, full desktop test suite, desktop typecheck, desktop build, and root tests. A brand-new P2-018-05 clean clone from the rewritten local repository also passed dependency installation, desktop typecheck, full desktop tests, desktop build, root tests, current-tree scans, reachable-history scans, tracked artifact checks, and `git fsck --full`.
 
 The rewritten local repository is privacy-sanitized, but the GitHub repository must not be made public yet. A read-only `git ls-remote --heads --tags origin` on 2026-08-10 confirmed GitHub still points at the pre-rewrite SHAs. Any old remote ref or tag still reachable on GitHub would preserve the exposure.
 
@@ -60,6 +60,7 @@ Fix:
 - Preserve `cwd: repoRoot`.
 - Return `false` only when Git exits with status `1`, the normal `check-ignore` result for an unignored path.
 - Re-throw every other Git failure.
+- Add a narrow root `postinstall` verification script that detects an incomplete Electron dependency install and repairs the Windows Electron ZIP extraction when Electron's own postinstall reports success without installing `electron.exe`.
 
 This keeps the hygiene rules strict and makes infrastructure failures visible.
 
@@ -105,7 +106,7 @@ Status: PASS.
 Integrity:
 
 - Rewritten repository `git fsck --full`: PASS with no output in P2-018-04 final verification.
-- P2-018-05 clean-clone `git fsck --full`: required to be clean.
+- P2-018-05 clean-clone `git fsck --full`: PASS with no output.
 
 Version 1 source structure confirmed present after rewrite:
 
@@ -135,9 +136,9 @@ Version 1 source structure confirmed present after rewrite:
 | Focused package hygiene test | PASS | `npm.cmd --prefix packages/levi-desktop test -- test/package-hygiene.test.ts` passed locally after the fix. |
 | Full desktop tests | PASS | `npm.cmd --prefix packages/levi-desktop test` passed locally after the fix. |
 | Local full software verification | PASS | Typecheck, desktop tests, desktop build, and root tests passed locally after the fix. |
-| Clean clone dependency install | PASS REQUIRED | Brand-new P2-018-05 clean clone must install from lockfile with `npm ci`. |
-| Clean clone full verification | PASS REQUIRED | Brand-new P2-018-05 clean clone must pass typecheck, desktop tests, desktop build, and root tests. |
-| Clean clone source/history scan | PASS REQUIRED | Brand-new P2-018-05 clean clone must have 0 private path hits, 0 generated screenshot history hits, 0 high-confidence secret hits, no tracked generated artifacts, and clean `git fsck`. |
+| Clean clone dependency install | PASS | Brand-new P2-018-05 clean clone installed from lockfile with `npm ci`; committed postinstall verification confirmed `node_modules/electron/dist/electron.exe` exists. |
+| Clean clone full verification | PASS | Brand-new P2-018-05 clean clone passed typecheck, desktop tests, desktop build, and root tests. |
+| Clean clone source/history scan | PASS | Brand-new P2-018-05 clean clone had 0 private path hits, 0 generated screenshot history hits, 0 high-confidence secret hits, no tracked generated artifacts, and clean `git fsck`. |
 | GitHub remote safety | CHANGE REQUIRED | Remote branches and tags still point to pre-rewrite SHAs and have not been force-with-lease synchronized. |
 | GitHub security settings | MANUAL CONFIRMATION | MFA, secret scanning/push protection, Dependabot, private vulnerability reporting, branch protection, tag restrictions, and Actions settings require manual confirmation in GitHub. |
 | Asset provenance | MANUAL CONFIRMATION | Confirm Levi icon assets are original project assets or otherwise redistributable. |
@@ -154,9 +155,21 @@ Rewritten working repository after P2-018-05 fix:
 
 P2-018-05 clean clone:
 
-- A brand-new clean clone from the final rewritten local repository is required before public visibility.
-- Required commands: `npm ci`, desktop typecheck, desktop tests, desktop build, root tests, current-tree scan, reachable-history scan, private username/path scan, generated screenshot history scan, tracked artifact scan, and `git fsck --full`.
-- Any failure keeps the final decision at NOT SAFE.
+- Clean clone location: `C:\Users\<LOCAL_USERNAME>\.codex\visualizations\2026\08\09\019fe849-b9db-72c1-9fc8-efdfde9474a5\levicore-p2-018-05-clean-clone-3ff77a7`.
+- Clean clone commit: `3ff77a7dab23e237b9ad9a9ae28610c35257cd33`.
+- `npm ci`: PASS; npm reported 7 dependency audit findings, 2 moderate and 5 high, for separate dependency-audit follow-up.
+- Electron install verification: PASS; `node_modules/electron/dist/electron.exe` exists after `npm ci`.
+- `npm.cmd --prefix packages/levi-desktop run typecheck`: PASS.
+- `npm.cmd --prefix packages/levi-desktop test`: PASS, 27 files passed, 254 tests passed, 2 skipped. Expected stderr from the lazy-loading error-boundary test was observed.
+- `npm.cmd --prefix packages/levi-desktop run build`: PASS, with the existing Monaco chunk-size warning.
+- `npm.cmd test`: PASS, 263 tests passed.
+- Current-tree high-confidence secret scan: PASS, all checked patterns returned 0.
+- Reachable-history high-confidence secret scan: PASS, all checked patterns returned 0.
+- Current and history private username/path scan: PASS, 0 hits.
+- Generated historical screenshot scan: PASS, 0 hits.
+- Tracked generated artifact scan: PASS, 0 tracked matches for dependency folders, desktop build output, release output, coverage, test artifacts, VSIX files, installers, MSI files, or NuGet packages.
+- `git fsck --full`: PASS with no output.
+- `git status --short`: clean.
 
 ## Remote Safety And Synchronization Plan
 
@@ -240,6 +253,6 @@ Non-blocking follow-ups:
 
 ## Exact Next Action
 
-Keep GitHub private. After final clean-clone verification passes, execute the prepared force-with-lease branch and tag updates while the repository is private, re-clone from GitHub, re-run the full privacy/history scan and clean-clone verification, confirm GitHub security settings, and only then consider changing repository visibility.
+Keep GitHub private. Execute the prepared force-with-lease branch and tag updates while the repository is private, re-clone from GitHub, re-run the full privacy/history scan and clean-clone verification, confirm GitHub security settings, and only then consider changing repository visibility.
 
 NOT SAFE TO MAKE REPOSITORY PUBLIC
