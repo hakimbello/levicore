@@ -9,6 +9,8 @@ import { AdapterManager } from "../electron/main/adapter-manager";
 import { truncateValue, MAX_VARIABLE_CHILDREN } from "../src/features/debugger/variableLimits";
 import { App } from "../src/app/App";
 
+const lazySurfaceWait = { timeout: 5000 };
+
 vi.mock("@xterm/xterm", () => {
   class MockTerminal {
     cols = 96;
@@ -347,7 +349,7 @@ describe("Run and Debug view", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Run and Debug" }));
-    expect(await screen.findByRole("region", { name: "Run and Debug" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Run and Debug" }, lazySurfaceWait)).toBeInTheDocument();
 
     const launch = screen.getByRole("region", { name: "Launch configuration" });
     const programInput = within(launch).getByLabelText("Program");

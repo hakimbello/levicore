@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { App } from "../src/app/App";
 import type { ExecutionPublicTransaction } from "../src/types/levi-api";
 
+const lazySurfaceWait = { timeout: 5000 };
+
 vi.mock("@xterm/xterm", () => {
   class MockTerminal {
     cols = 96;
@@ -130,7 +132,7 @@ describe("Levi desktop Home", () => {
     const nav = screen.getByRole("navigation", { name: "Primary" });
     await user.click(within(nav).getByRole("button", { name: "Settings" }));
 
-    expect(await screen.findByRole("region", { name: "Settings" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Settings" }, lazySurfaceWait)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Provider diagnostics" })).toBeInTheDocument();
     expect(screen.getByText("qwen3.6:latest, qwen2.5-coder:7b")).toBeInTheDocument();
@@ -145,7 +147,7 @@ describe("Levi desktop Home", () => {
     const nav = screen.getByRole("navigation", { name: "Primary" });
     await user.click(within(nav).getByRole("button", { name: "Settings" }));
 
-    expect(await screen.findByRole("region", { name: "Update diagnostics" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Update diagnostics" }, lazySurfaceWait)).toBeInTheDocument();
     expect(screen.getByText("0.1.0")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Check for Updates" }));
 
@@ -160,7 +162,7 @@ describe("Levi desktop Home", () => {
     await waitFor(() => expect(screen.getByText("Local AI Ready")).toBeInTheDocument());
     const nav = screen.getByRole("navigation", { name: "Primary" });
     await user.click(within(nav).getByRole("button", { name: "Settings" }));
-    await screen.findByRole("region", { name: "Update diagnostics" });
+    await screen.findByRole("region", { name: "Update diagnostics" }, lazySurfaceWait);
 
     act(() => {
       for (const listener of window.__leviUpdateListeners) {
@@ -206,7 +208,7 @@ describe("Levi desktop Home", () => {
     await waitFor(() => expect(screen.getByText("Local AI Ready")).toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: "History" }));
 
-    expect(await screen.findByRole("region", { name: "History" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "History" }, lazySurfaceWait)).toBeInTheDocument();
     expect(screen.getByText("No execution history yet. Approved execution transactions will appear here during this session.")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "What do you want to build?" })).not.toBeInTheDocument();
   });
@@ -224,7 +226,7 @@ describe("Levi desktop Home", () => {
     await waitFor(() => expect(screen.getByText("Local AI Ready")).toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: "History" }));
 
-    expect(await screen.findByRole("region", { name: "History" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "History" }, lazySurfaceWait)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Update server timeout" })).toBeInTheDocument();
     expect(screen.getByText("src/main.ts")).toBeInTheDocument();
     expect(screen.getByText("kept")).toBeInTheDocument();

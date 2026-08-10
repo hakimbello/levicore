@@ -21,6 +21,8 @@ import type {
 import type { TaskDefinition, TaskEvent, TaskOutputEntry, TaskProblem, TaskRun } from "../src/types/task-api";
 import { App } from "../src/app/App";
 
+const lazySurfaceWait = { timeout: 5000 };
+
 function detection(providerId: AIRuntimeProviderId): AIRuntimeDetection {
   return {
     providerId,
@@ -992,7 +994,7 @@ describe("Coding Agent foundation", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Coding Agent" }));
-    const panel = await screen.findByRole("region", { name: "Coding Agent" });
+    const panel = await screen.findByRole("region", { name: "Coding Agent" }, lazySurfaceWait);
     const browserPanel = await within(panel).findByRole("region", { name: "Browser Automation" });
     expect(await within(browserPanel).findByText("Example Domain")).toBeInTheDocument();
     expect(within(browserPanel).getByRole("button", { name: "Reload" })).toBeInTheDocument();
@@ -1012,7 +1014,7 @@ describe("Coding Agent foundation", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Coding Agent" }));
-    const panel = await screen.findByRole("region", { name: "Coding Agent" });
+    const panel = await screen.findByRole("region", { name: "Coding Agent" }, lazySurfaceWait);
     await user.type(within(panel).getByRole("textbox", { name: "Agent Request" }), "Build a login page");
     await user.click(within(panel).getByRole("button", { name: "Generate Plan" }));
     await user.click(await within(panel).findByRole("button", { name: "Approve" }));
@@ -1185,7 +1187,7 @@ describe("Coding Agent foundation", () => {
 
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Coding Agent" }));
-    const panel = await screen.findByRole("region", { name: "Coding Agent" });
+    const panel = await screen.findByRole("region", { name: "Coding Agent" }, lazySurfaceWait);
     await user.type(within(panel).getByRole("textbox", { name: "Agent Request" }), "Run tests");
     await user.click(within(panel).getByRole("button", { name: "Generate Plan" }));
     await user.click(await within(panel).findByRole("button", { name: "Approve" }));
@@ -1380,7 +1382,7 @@ describe("Coding Agent foundation", () => {
 
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Coding Agent" }));
-    const panel = await screen.findByRole("region", { name: "Coding Agent" });
+    const panel = await screen.findByRole("region", { name: "Coding Agent" }, lazySurfaceWait);
     await user.type(within(panel).getByRole("textbox", { name: "Agent Request" }), "Commit changes");
     await user.click(within(panel).getByRole("button", { name: "Generate Plan" }));
     await user.click(await within(panel).findByRole("button", { name: "Approve" }));
@@ -1483,7 +1485,7 @@ describe("Coding Agent foundation", () => {
 
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Coding Agent" }));
-    const panel = await screen.findByRole("region", { name: "Coding Agent" });
+    const panel = await screen.findByRole("region", { name: "Coding Agent" }, lazySurfaceWait);
     await user.type(within(panel).getByRole("textbox", { name: "Agent Request" }), "Verify changes");
     await user.click(within(panel).getByRole("button", { name: "Generate Plan" }));
     await user.click(await within(panel).findByRole("button", { name: "Verify" }));

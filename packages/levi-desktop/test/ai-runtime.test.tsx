@@ -11,6 +11,8 @@ import { createDefaultRuntimeProviders, validateRuntimeEndpoint } from "../elect
 import type { AIRuntimeDetection, AIRuntimeInvocationResponse, AIRuntimeProvider, AIRuntimeProviderId, AIRuntimeRequest, AIRuntimeStreamEvent } from "../src/features/ai-runtime";
 import { App } from "../src/app/App";
 
+const lazySurfaceWait = { timeout: 5000 };
+
 function fakeDetection(providerId: AIRuntimeProviderId, overrides: Partial<AIRuntimeDetection> = {}): AIRuntimeDetection {
   return {
     providerId,
@@ -301,7 +303,7 @@ describe("Runtime Manager view", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Runtime Manager" }));
-    const panel = await screen.findByRole("region", { name: "Runtime Manager" });
+    const panel = await screen.findByRole("region", { name: "Runtime Manager" }, lazySurfaceWait);
 
     expect(within(panel).getByRole("heading", { name: "Runtime Manager" })).toBeInTheDocument();
     expect(within(panel).getAllByText("Ollama").length).toBeGreaterThan(1);
