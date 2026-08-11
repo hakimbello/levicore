@@ -141,7 +141,7 @@ export function BottomPanel({
           ))}
         </div>
         <div className="levi-bottom-panel-actions">
-          {layout.panelTab === "terminal" ? (
+          {layout.panelVisible && layout.panelTab === "terminal" ? (
             <>
               <button type="button" className="levi-terminal-toggle" onClick={() => addTab()} aria-label="New terminal">
                 <Icon name="terminal" />
@@ -180,9 +180,11 @@ export function BottomPanel({
               ) : null}
             </>
           ) : null}
-          <button type="button" className="levi-terminal-toggle" onClick={togglePanelMaximized} aria-label="Maximize panel">
-            {layout.panelMaximized ? "Restore" : "Maximize"}
-          </button>
+          {layout.panelVisible ? (
+            <button type="button" className="levi-terminal-toggle" onClick={togglePanelMaximized} aria-label="Maximize panel">
+              {layout.panelMaximized ? "Restore" : "Maximize"}
+            </button>
+          ) : null}
           <button
             type="button"
             className="levi-terminal-toggle"

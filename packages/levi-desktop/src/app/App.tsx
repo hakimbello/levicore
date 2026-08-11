@@ -126,6 +126,7 @@ export function App() {
   const [canUndoEdit, setCanUndoEdit] = useState(false);
   const [newChatSignal, setNewChatSignal] = useState(0);
   const [activeView, setActiveView] = useState<ActivityView>("home");
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [executionHistory, setExecutionHistory] = useState<ExecutionPublicTransaction[]>([]);
   const [searchFocusSignal, setSearchFocusSignal] = useState(0);
   const [savingTabId, setSavingTabId] = useState<string | null>(null);
@@ -439,6 +440,23 @@ export function App() {
 
   async function undoLastEdit() { openUndoneEdit(await window.levi.edits.undoLast()); }
   function startNewChat() { setActiveView("home"); setNewChatSignal((value) => value + 1); }
+
+  const shellProjectLabel = selectedProject?.name ?? "No project";
+  const shellWorkspaceLabel = workspaceStatus.state === "ready"
+    ? "Workspace ready"
+    : workspaceStatus.state === "scanning"
+      ? "Scanning"
+      : workspaceStatus.state === "refresh-required"
+        ? "Refresh required"
+        : workspaceStatus.state === "failed"
+          ? "Scan failed"
+          : "Idle";
+  const selectedRuntime = runtimeState.providers.find((provider) => provider.id === runtimeState.selectedRuntimeId)
+    ?? runtimeState.providers.find((provider) => provider.id === runtimeState.automaticRuntimeId)
+    ?? runtimeState.providers[0];
+  const shellModelId = runtimeState.lastSelectedModelId ?? selectedRuntime?.models[0]?.id ?? "";
+  const showWorkspaceTopBar = activeView !== "home";
+  const showDebugToolbar = activeView === "debug" || debugState.state !== "Idle" || debugState.sessions.length > 0;
 
   function handleTabKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, tabId: string) {
     if (event.key === "ArrowRight") { event.preventDefault(); activateRelativeTab(1); }
@@ -777,50 +795,75 @@ export function App() {
         workspaceStatus={workspaceStatus}
         activeView={activeView}
         onOpenProject={openProjectFolder}
-        onRefreshWorkspace={refreshWorkspace}
         onNewChat={startNewChat}
         onOpenHistory={() => selectActivityView("history")}
-        onOpenRules={() => selectActivityView("rules")}
         onOpenSettings={() => selectActivityView("settings")}
       />
       <main className="levi-main">
-        <div className={activeTab ? "levi-workspace-layout levi-workspace-layout-editor" : "levi-workspace-layout"}>
+        {showWorkspaceTopBar ? (
+          <header className="levi-top-bar" aria-label="Workspace top bar">
+            <div className="levi-top-project">
+              <strong>{shellProjectLabel}</strong>
+              <span>{shellWorkspaceLabel}</span>
+            </div>
+            <div className="levi-top-actions">
+              {shellModelId ? (
+                <label className="levi-top-model">
+                  <span>Model</span>
+                  <select aria-label="Workspace model selector" value={shellModelId} onChange={() => undefined}>
+                    <option value={shellModelId}>{shellModelId}</option>
+                  </select>
+                </label>
+              ) : null}
+              <button
+                type="button"
+                className={aiPanelOpen ? "levi-button levi-button-secondary levi-button-active" : "levi-button levi-button-secondary"}
+                aria-label={aiPanelOpen ? "Close AI panel" : "Open AI panel"}
+                aria-expanded={aiPanelOpen}
+                onClick={() => setAiPanelOpen((open) => !open)}
+              >
+                <Icon name="chat" />
+                <span>Agent</span>
+              </button>
+              <details className="levi-top-menu">
+                <summary aria-label="Workspace menu">Menu</summary>
+                <div className="levi-top-menu-popover">
+                  <button type="button" onClick={refreshWorkspace} disabled={!selectedProject || workspaceStatus.state === "scanning"}>
+                    Refresh Workspace
+                  </button>
+                  <button type="button" onClick={() => selectActivityView("rules")} disabled={!selectedProject}>
+                    Project Rules
+                  </button>
+                  <button type="button" onClick={() => selectActivityView("settings")}>
+                    Settings
+                  </button>
+                </div>
+              </details>
+            </div>
+          </header>
+        ) : null}
+        <div className={[
+          "levi-workspace-layout",
+          activeTab ? "levi-workspace-layout-editor" : "",
+          aiPanelOpen && activeView !== "home" ? "levi-workspace-layout-with-ai" : ""
+        ].filter(Boolean).join(" ")}>
           <section className="levi-primary-workspace" aria-label="Primary workspace">
-            <DebugToolbar
-              state={debugState}
-              onContinue={() => void applyDebugState(window.levi.debug.continue())}
-              onPause={() => void applyDebugState(window.levi.debug.pause())}
-              onRestart={() => void applyDebugState(window.levi.debug.restart())}
-              onStop={() => void applyDebugState(window.levi.debug.stop())}
-              onStepOver={() => void applyDebugState(window.levi.debug.stepOver())}
-              onStepInto={() => void applyDebugState(window.levi.debug.stepInto())}
-              onStepOut={() => void applyDebugState(window.levi.debug.stepOut())}
-            />
+            {showDebugToolbar ? (
+              <DebugToolbar
+                state={debugState}
+                onContinue={() => void applyDebugState(window.levi.debug.continue())}
+                onPause={() => void applyDebugState(window.levi.debug.pause())}
+                onRestart={() => void applyDebugState(window.levi.debug.restart())}
+                onStop={() => void applyDebugState(window.levi.debug.stop())}
+                onStepOver={() => void applyDebugState(window.levi.debug.stepOver())}
+                onStepInto={() => void applyDebugState(window.levi.debug.stepInto())}
+                onStepOut={() => void applyDebugState(window.levi.debug.stepOut())}
+              />
+            ) : null}
             <div className="levi-primary-workspace-body">
               {renderActiveWorkspace()}
             </div>
           </section>
-          <AIChatPanel
-            runtimeState={runtimeState}
-            activeTab={activeTab}
-            tabs={tabs}
-            selectedCode={editorSelection}
-            workspaceStatus={workspaceStatus}
-            taskProblems={tasks.problems}
-            taskOutput={tasks.output as TaskOutputEntry[]}
-            onOpenCitation={async (attachment) => {
-              if (!attachment.relativePath) return;
-              const file = await window.levi.workspace.readPath({ relativePath: attachment.relativePath });
-              openFile({
-                sourceId: attachment.sourceId ?? `WORKSPACE:${file.relativePath}`,
-                relativePath: file.relativePath,
-                content: file.content,
-                language: file.language,
-                lineStart: attachment.lineStart ?? 1,
-                readOnly: false
-              });
-            }}
-          />
           {activeTab ? (
             <aside className="levi-editor-panel" aria-label="Workspace editor">
               <div className="levi-editor-tabs" role="tablist" aria-label="Open files">
@@ -893,6 +936,29 @@ export function App() {
                 </LazySurface>
               </div>
             </aside>
+          ) : null}
+          {aiPanelOpen && activeView !== "home" ? (
+            <AIChatPanel
+              runtimeState={runtimeState}
+              activeTab={activeTab}
+              tabs={tabs}
+              selectedCode={editorSelection}
+              workspaceStatus={workspaceStatus}
+              taskProblems={tasks.problems}
+              taskOutput={tasks.output as TaskOutputEntry[]}
+              onOpenCitation={async (attachment) => {
+                if (!attachment.relativePath) return;
+                const file = await window.levi.workspace.readPath({ relativePath: attachment.relativePath });
+                openFile({
+                  sourceId: attachment.sourceId ?? `WORKSPACE:${file.relativePath}`,
+                  relativePath: file.relativePath,
+                  content: file.content,
+                  language: file.language,
+                  lineStart: attachment.lineStart ?? 1,
+                  readOnly: false
+                });
+              }}
+            />
           ) : null}
         </div>
         <BottomPanel

@@ -99,6 +99,7 @@ export function Home({
   const [executionError, setExecutionError] = useState<string | null>(null);
   const [planNotice, setPlanNotice] = useState<PlanActionNotice | null>(null);
   const [isStarting, setIsStarting] = useState(false);
+  const [contextMenuOpen, setContextMenuOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const activeRequestIdRef = useRef<string | null>(null);
@@ -744,6 +745,35 @@ export function Home({
               </div>
             ) : null}
             <h1>What do you want to build?</h1>
+            <div className="levi-home-tools" aria-label="Home composer controls">
+              <label className="levi-home-model">
+                <span>Model</span>
+                <select aria-label="Home model selector" value={DEFAULT_CONVERSATION_MODEL} onChange={() => undefined}>
+                  <option value={DEFAULT_CONVERSATION_MODEL}>{DEFAULT_CONVERSATION_MODEL}</option>
+                </select>
+              </label>
+              <details className="levi-context-menu" open={contextMenuOpen} onToggle={(event) => setContextMenuOpen(event.currentTarget.open)}>
+                <summary>Add context</summary>
+                {contextMenuOpen ? (
+                  <div className="levi-context-menu-popover">
+                    {[
+                      "Current file",
+                      "Selected code",
+                      "Open tabs",
+                      "Workspace summary",
+                      "Project Rules",
+                      "Problems",
+                      "Task output",
+                      "Git changes",
+                      "Clipboard",
+                      "Image"
+                    ].map((label) => (
+                      <button key={label} type="button">{label}</button>
+                    ))}
+                  </div>
+                ) : null}
+              </details>
+            </div>
           </>
         ) : (
           <div className="levi-messages" aria-label="Conversation">

@@ -279,7 +279,10 @@ describe("AI chat foundation", () => {
     const user = userEvent.setup();
     render(<App />);
 
+    await user.click(screen.getByRole("button", { name: "Explorer" }));
+    await user.click(await screen.findByRole("button", { name: "Open AI panel" }));
     const panel = await screen.findByRole("complementary", { name: "AI Chat" });
+    await user.click(within(panel).getByText("Chat controls"));
     await user.selectOptions(within(panel).getByLabelText("Dock position"), "bottom");
     await waitFor(() => expect(window.levi.chat.setPanel).toHaveBeenCalledWith({ dockPosition: "bottom" }));
     await user.type(within(panel).getByLabelText("AI Chat Prompt"), "Show `code`");
@@ -297,7 +300,11 @@ describe("AI chat foundation", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<App />);
 
+    await user.click(screen.getByRole("button", { name: "Explorer" }));
+    await user.click(await screen.findByRole("button", { name: "Open AI panel" }));
     const panel = await screen.findByRole("complementary", { name: "AI Chat" });
+    expect(within(panel).queryByRole("button", { name: /File src\/main\.tsx/i })).not.toBeInTheDocument();
+    await user.click(within(panel).getByText("Add context"));
     await user.click(await within(panel).findByRole("button", { name: /File src\/main\.tsx/i }));
 
     await waitFor(() => expect(window.levi.chat.previewContext).toHaveBeenCalledWith(expect.objectContaining({ source: "workspace-file", relativePath: "src/main.tsx", confirmSensitive: true })));

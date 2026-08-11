@@ -35,8 +35,12 @@ describe("Levi desktop responsive shell layout", () => {
   it("bounds the main workspace and docked chat to prevent viewport overflow", () => {
     expect(cssRule(globalCss, ".levi-main")).toContain("grid-template-columns: minmax(0, 1fr)");
     expect(cssRule(globalCss, ".levi-main")).toContain("overflow: hidden");
+    expect(cssRule(globalCss, ".levi-main")).toContain("grid-template-rows: auto minmax(0, 1fr) auto");
     expect(cssRule(globalCss, ".levi-workspace-layout")).toContain("overflow: hidden");
     expect(cssRule(globalCss, ".levi-workspace-layout")).toContain("max-width: 100%");
+    expect(cssRule(globalCss, ".levi-workspace-layout")).toContain("grid-template-columns: minmax(0, 1fr)");
+    expect(cssRule(globalCss, ".levi-workspace-layout-with-ai")).toContain("minmax(340px, clamp(340px, 22vw, 420px))");
+    expect(cssRule(globalCss, ".levi-workspace-layout-editor")).toContain("minmax(220px, 260px)");
     expect(cssRule(globalCss, ".levi-primary-workspace")).toContain("grid-template-rows: auto minmax(0, 1fr)");
     expect(cssRule(globalCss, ".levi-primary-workspace-body")).toContain("overflow: hidden");
     expect(cssRule(globalCss, ".levi-bottom-panel")).toContain("max-width: 100%");
