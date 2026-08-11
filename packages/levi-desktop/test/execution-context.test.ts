@@ -993,17 +993,23 @@ describe("IDE-002B execution context", () => {
       const first = await prepareFixture();
       const second = await prepareFixture();
       const registry = new Map<string, InternalExecutionTransaction>();
+      const firstRoot = first.transaction.workspaceRootRealPath;
+      const secondRoot = second.transaction.workspaceRootRealPath;
+
+      expect(firstRoot).toBe(first.scan.rootRealPath);
+      expect(secondRoot).toBe(second.scan.rootRealPath);
+      expect(firstRoot).not.toBe(secondRoot);
 
       registerExecutionTransaction(registry, first.transaction);
-      expect(getActiveTransactionForRoot(registry, first.root)).toBe(first.transaction);
+      expect(getActiveTransactionForRoot(registry, firstRoot)).toBe(first.transaction);
 
       expect(() => registerExecutionTransaction(registry, second.transaction)).toThrow(/already active/i);
 
-      unregisterExecutionTransaction(registry, first.root);
-      expect(getActiveTransactionForRoot(registry, first.root)).toBeUndefined();
+      unregisterExecutionTransaction(registry, firstRoot);
+      expect(getActiveTransactionForRoot(registry, firstRoot)).toBeUndefined();
 
       registerExecutionTransaction(registry, second.transaction);
-      expect(getActiveTransactionForRoot(registry, second.root)).toBe(second.transaction);
+      expect(getActiveTransactionForRoot(registry, secondRoot)).toBe(second.transaction);
     });
   });
 });
