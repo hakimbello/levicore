@@ -8,10 +8,8 @@ type SidebarProps = {
   workspaceStatus: WorkspaceStatus;
   activeView: ActivityView;
   onOpenProject: () => void;
-  onRefreshWorkspace: () => void;
   onNewChat: () => void;
   onOpenHistory: () => void;
-  onOpenRules: () => void;
   onOpenSettings: () => void;
 };
 
@@ -29,10 +27,8 @@ export function Sidebar({
   workspaceStatus,
   activeView,
   onOpenProject,
-  onRefreshWorkspace,
   onNewChat,
   onOpenHistory,
-  onOpenRules,
   onOpenSettings
 }: SidebarProps) {
   return (
@@ -47,15 +43,18 @@ export function Sidebar({
         </div>
       </div>
 
-      <div className="levi-ai-status" aria-live="polite">
-        <span className={status.ready ? "levi-status-dot levi-status-dot-ready" : "levi-status-dot"} />
-        <div>
-          <div className="levi-status-label">{status.ready ? "Local AI Ready" : "Local AI Offline"}</div>
+      <details className="levi-ai-status levi-ai-status-compact" aria-live="polite">
+        <summary>
+          <span className={status.ready ? "levi-status-dot levi-status-dot-ready" : "levi-status-dot"} />
+          <span>{status.ready ? "Local AI" : "Local AI"}</span>
+        </summary>
+        <div className="levi-ai-status-popover">
+          <div className="levi-status-label">{status.ready ? "Ready" : "Offline"}</div>
           <div className="levi-status-count">
             {status.modelCount === 1 ? "1 model available" : `${status.modelCount} models available`}
           </div>
         </div>
-      </div>
+      </details>
 
       <nav className="levi-nav" aria-label="Primary">
         <button type="button" className={activeView === "home" ? "levi-nav-item levi-nav-item-active" : "levi-nav-item"} onClick={onNewChat}>
@@ -85,22 +84,11 @@ export function Sidebar({
       </nav>
 
       {selectedProject ? (
-        <div className="levi-project-chip" title={selectedProject.path}>
-          <span className="levi-project-label">Project</span>
-          <span className="levi-project-name">{selectedProject.name}</span>
-          <span className="levi-workspace-status">{getWorkspaceStatusLabel(workspaceStatus)}</span>
-          <button
-            type="button"
-            className="levi-button levi-button-secondary levi-button-full"
-            onClick={onRefreshWorkspace}
-            disabled={workspaceStatus.state === "scanning"}
-          >
-            <Icon name="refresh" />
-            <span>Refresh Workspace</span>
-          </button>
-          <button type="button" className="levi-button levi-button-secondary levi-button-full" onClick={onOpenRules}>
-            <Icon name="layers" />
-            <span>Project Rules</span>
+        <div className="levi-recent-projects" aria-label="Recent projects">
+          <span>Recent</span>
+          <button type="button" title={selectedProject.path} onClick={onOpenProject}>
+            <strong>{selectedProject.name}</strong>
+            <small>{getWorkspaceStatusLabel(workspaceStatus)}</small>
           </button>
         </div>
       ) : null}

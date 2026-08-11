@@ -90,19 +90,109 @@ describe("Levi desktop Home", () => {
 
     expect(buttons).toHaveLength(4);
     expect(buttons.map((button) => button.textContent)).toEqual(["New Chat", "Projects", "History", "Settings"]);
-    await waitFor(() => expect(screen.getByText("Local AI Ready")).toBeInTheDocument());
-    expect(screen.getByText("2 models available")).toBeInTheDocument();
+    await waitForInitialBridge();
+    expect(screen.getByText("Local AI")).toBeInTheDocument();
   });
 
-  it("renders the main prompt textbox", async () => {
+  it("renders one primary Home composer and hides secondary panels by default", async () => {
     render(<App />);
 
     expect(screen.getByRole("heading", { name: "What do you want to build?" })).toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: "Prompt" })).toHaveAttribute(
+    const prompt = screen.getByRole("textbox", { name: "Prompt" });
+    expect(prompt).toHaveAttribute(
       "placeholder",
       "Ask Levi to explain, inspect, or safely propose a one-file change."
     );
+    expect(screen.getAllByRole("textbox")).toEqual([prompt]);
+    expect(screen.queryByRole("complementary", { name: "AI Chat" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("toolbar", { name: "Debug toolbar" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: "New terminal" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Maximize panel" })).not.toBeInTheDocument();
     await waitForInitialBridge();
+  });
+
+  it("keeps Home context choices behind Add context", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(screen.queryByRole("button", { name: "Current file" })).not.toBeInTheDocument();
+    await user.click(screen.getByText("Add context"));
+
+    expect(screen.getByRole("button", { name: "Current file" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Selected code" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Project Rules" }).length).toBeGreaterThan(1);
+    expect(screen.getByRole("button", { name: "Image" })).toBeInTheDocument();
+    await waitForInitialBridge();
+  });
+
+  it("toggles the right AI panel only from workspace", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(screen.queryByRole("button", { name: "Open AI panel" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Explorer" }));
+    await user.click(await screen.findByRole("button", { name: "Open AI panel" }));
+
+    expect(await screen.findByRole("complementary", { name: "AI Chat" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close AI panel" }));
+    expect(screen.queryByRole("complementary", { name: "AI Chat" })).not.toBeInTheDocument();
+    await waitForInitialBridge();
+  });
+
+  it("keeps a real editor tab mounted while Agent and Terminal panels toggle", async () => {
+    const user = userEvent.setup();
+    vi.mocked(window.levi.projects.getRecent).mockResolvedValue({
+      path: "C:\\Users\\LeviUser\\Project",
+      name: "Project"
+    });
+    vi.mocked(window.levi.workspace.getStatus).mockResolvedValue({
+      state: "ready",
+      summary: {
+        projectName: "Project",
+        rootPath: "C:\\Users\\LeviUser\\Project",
+        languages: ["TypeScript"],
+        frameworks: ["React"],
+        packageManager: "npm",
+        likelyEntryPoints: ["src/main.tsx"],
+        sourceDirectories: ["src"],
+        testDirectories: ["test"],
+        scripts: { test: "vitest run" },
+        documentationFiles: ["README.md"],
+        manifestFiles: ["package.json", "README.md"],
+        includedFileCount: 3,
+        excludedFileCount: 1,
+        scanTimestamp: "2026-07-23T00:00:00.000Z"
+      }
+    });
+    vi.mocked(window.levi.workspace.readPath).mockResolvedValue({
+      relativePath: "src/main.tsx",
+      content: "import ReactDOM from \"react-dom/client\";\nReactDOM.createRoot(document.getElementById(\"root\")!).render(null);\n",
+      language: "typescript",
+      readOnly: false
+    });
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Explorer" }));
+    await user.click(await screen.findByTitle("src"));
+    await user.click(await screen.findByTitle("src/main.tsx"));
+
+    const editor = await screen.findByRole("textbox", { name: "Read-only editor" }, lazySurfaceWait);
+    expect((editor as HTMLTextAreaElement).value).toContain("ReactDOM.createRoot");
+    expect(screen.getByRole("tab", { name: "main.tsx" })).toBeInTheDocument();
+    expect(screen.getByText("src/main.tsx")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Open AI panel" }));
+    expect(await screen.findByRole("complementary", { name: "AI Chat" }, lazySurfaceWait)).toBeInTheDocument();
+    expect((screen.getByRole("textbox", { name: "Read-only editor" }) as HTMLTextAreaElement).value).toContain("ReactDOM.createRoot");
+
+    await user.click(screen.getByRole("button", { name: "Show" }));
+    expect(await screen.findByRole("button", { name: "Hide" })).toHaveAttribute("aria-expanded", "true");
+    expect((screen.getByRole("textbox", { name: "Read-only editor" }) as HTMLTextAreaElement).value).toContain("ReactDOM.createRoot");
+
+    await user.click(screen.getByRole("button", { name: "Close AI panel" }));
+    expect(screen.queryByRole("complementary", { name: "AI Chat" })).not.toBeInTheDocument();
+    expect((screen.getByRole("textbox", { name: "Read-only editor" }) as HTMLTextAreaElement).value).toContain("ReactDOM.createRoot");
   });
 
   it("keeps activity bar and sidebar controls in keyboard order", async () => {
@@ -128,7 +218,7 @@ describe("Levi desktop Home", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await waitFor(() => expect(screen.getByText("Local AI Ready")).toBeInTheDocument());
+    await waitForInitialBridge();
     const nav = screen.getByRole("navigation", { name: "Primary" });
     await user.click(within(nav).getByRole("button", { name: "Settings" }));
 
@@ -143,7 +233,7 @@ describe("Levi desktop Home", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await waitFor(() => expect(screen.getByText("Local AI Ready")).toBeInTheDocument());
+    await waitForInitialBridge();
     const nav = screen.getByRole("navigation", { name: "Primary" });
     await user.click(within(nav).getByRole("button", { name: "Settings" }));
 
@@ -159,7 +249,7 @@ describe("Levi desktop Home", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await waitFor(() => expect(screen.getByText("Local AI Ready")).toBeInTheDocument());
+    await waitForInitialBridge();
     const nav = screen.getByRole("navigation", { name: "Primary" });
     await user.click(within(nav).getByRole("button", { name: "Settings" }));
     await screen.findByRole("region", { name: "Update diagnostics" }, lazySurfaceWait);
@@ -205,7 +295,7 @@ describe("Levi desktop Home", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await waitFor(() => expect(screen.getByText("Local AI Ready")).toBeInTheDocument());
+    await waitForInitialBridge();
     await user.click(screen.getByRole("button", { name: "History" }));
 
     expect(await screen.findByRole("region", { name: "History" }, lazySurfaceWait)).toBeInTheDocument();
@@ -223,7 +313,7 @@ describe("Levi desktop Home", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await waitFor(() => expect(screen.getByText("Local AI Ready")).toBeInTheDocument());
+    await waitForInitialBridge();
     await user.click(screen.getByRole("button", { name: "History" }));
 
     expect(await screen.findByRole("region", { name: "History" }, lazySurfaceWait)).toBeInTheDocument();
