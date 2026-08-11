@@ -1,15 +1,14 @@
 # Levi Desktop SignPath Foundation Eligibility Audit
 
-Milestone: P2-018-12
+Milestone: P2-018-15
 Audit date: 2026-08-11
-Scope: Levi Desktop Windows distribution from `packages/levi-desktop`
+Scope: Levi Desktop Windows distribution from `packages/levi-desktop`, after remote history replacement
 Repository: `https://github.com/hakimbello/levicore`
 Default branch: `main`
-Audited public source commit: `3c931dcefb4a15adcc3a905e45058bcf893fc502`
-Local audit update: this document and the root README received a documentation-only correction that must be pushed before the public repository reflects it.
+Current sanitized remote source commit: `a47cb4d1ad1f1dffc937ed808e3a31ae7c4f51e7`
 Decision: DO NOT APPLY YET
 
-This audit checks Levi Desktop against the current SignPath Foundation open-source code-signing requirements and the current public GitHub repository state. It does not configure SignPath, does not submit an application, does not publish a release, does not change repository visibility, and does not change application behavior.
+This audit checks Levi Desktop against the current SignPath Foundation open-source code-signing requirements and the current GitHub repository state after remote history cleanup. It does not configure SignPath, does not submit an application, does not publish a release, does not change repository visibility, and does not change application behavior.
 
 ## Sources Checked
 
@@ -19,25 +18,28 @@ This audit checks Levi Desktop against the current SignPath Foundation open-sour
   - https://docs.signpath.io/trusted-build-systems/github
   - https://docs.signpath.io/origin-verification/
 - OSI MIT license reference: https://opensource.org/license/mit
-- Public GitHub repository/API state for `hakimbello/levicore`
+- GitHub repository/API state for `hakimbello/levicore`
 - Authenticated read-only GitHub settings views for repository security and account MFA
 
 ## Final Decision
 
 LeviCore is not ready to submit the SignPath Foundation application today.
 
-Most repository, licensing, documentation, GitHub security, and trusted-build prerequisites are now in place. The remaining application-stage blockers are:
+Most repository, licensing, documentation, GitHub security, history hygiene, and trusted-build prerequisites are now in place. The remaining application-stage blockers are:
 
-1. No public GitHub Release or stable public download page has been published for the unsigned Levi Desktop artifact in the form intended to be signed.
-2. The local reachable-history privacy re-audit found one historical private-path/identity hit in a release-candidate audit markdown file. A fresh public GitHub clone recheck must confirm zero such hits, or the reachable history must be sanitized again before applying.
+1. The GitHub repository is temporarily private for the completed remote history replacement. It must be returned to public before applying.
+2. No public GitHub Release or stable public download page has been published for the unsigned Levi Desktop artifact in the form intended to be signed.
+3. The owner must manually confirm `main` branch protection/ruleset settings are restored after history replacement, especially blocked force pushes and blocked branch deletion.
 
-After those two blockers are resolved, Levi should be ready to apply. SignPath project creation, trusted-build configuration, origin verification, signing policy configuration, and SignPath team-role assignment are post-application or post-approval configuration work and should not be completed before applying unless SignPath instructs otherwise.
+The previous reachable-history private-path blocker is resolved: a fresh GitHub clone after the remote rewrite found zero private path hits, zero high-confidence secret hits, zero historical generated screenshot hits, zero tracked generated artifacts, zero refs reaching the old exposed commit, and a clean `git fsck --full`.
+
+After the current repository is public again, branch protection is confirmed, and an unsigned beta/pre-release download page exists, Levi should be ready to apply. SignPath project creation, trusted-build configuration, origin verification, signing policy configuration, and SignPath team-role assignment are post-application or post-approval configuration work and should not be completed before applying unless SignPath instructs otherwise.
 
 ## Eligibility Score
 
-Current public GitHub score: 11 / 17 confirmed PASS.
+Current private GitHub score after history cleanup: 10 / 17 confirmed PASS.
 
-Local post-audit documentation score after pushing this commit: 12 / 17 confirmed PASS.
+Expected score after returning the repository to public and manually confirming branch protection restoration: 12 / 17 confirmed PASS.
 
 Scoring method: each numbered SignPath eligibility requirement counts once. `PASS` counts as 1. `FAIL`, `CHANGE REQUIRED`, `MANUAL CONFIRMATION`, and `POST-APPLICATION CONFIGURATION` count as 0 for current-state completion, even when they are not application-stage blockers.
 
@@ -47,14 +49,14 @@ Application readiness: NOT READY TO APPLY.
 
 | Check | Status | Evidence | Remaining action |
 | --- | --- | --- | --- |
-| Public repository access | PASS | Public GitHub API resolved `hakimbello/levicore` as `public`. | None. |
+| Public repository access | CHANGE REQUIRED | GitHub API resolved `hakimbello/levicore` as `private` during the remote-history cleanup gate. | Return the repository to public only after branch protection restoration is manually confirmed. |
 | Repository URL | PASS | `https://github.com/hakimbello/levicore` resolves. | None. |
 | Default branch | PASS | GitHub reports `main` as the default branch. | None. |
-| Default branch commit | PASS | `main` resolved to `3c931dcefb4a15adcc3a905e45058bcf893fc502` during audit. | Keep public-ready state on `main`. |
+| Default branch commit | PASS | `main` resolved to `a47cb4d1ad1f1dffc937ed808e3a31ae7c4f51e7` during audit. | Keep public-ready state on `main`. |
 | OSI-approved license | PASS | Root `LICENSE` is MIT; GitHub API reports repository license `MIT`. | None. |
 | Security policy | PASS | `SECURITY.md` exists at repository root. | None. |
 | Privacy policy | PASS | `packages/levi-desktop/PRIVACY.md` exists. | None. |
-| Code-signing policy | CHANGE REQUIRED | `packages/levi-desktop/CODE_SIGNING_POLICY.md` exists and contains the required "Code signing policy" wording. This local audit commit adds the missing root README project-home link. | Push this documentation-only commit before applying. |
+| Code-signing policy | PASS | `packages/levi-desktop/CODE_SIGNING_POLICY.md` exists and contains the required "Code signing policy" wording. | None until SignPath acceptance. |
 | First-run and release/download docs | PASS | `FIRST_RUN.md` and `RELEASE_DOWNLOAD.md` exist. | Publish a real release/download URL before applying. |
 | Branding provenance | PASS | `assets/BRANDING.md`, `assets/levi.png`, and `assets/levi.ico` exist; old `levi.svg` is removed. | None. |
 | CODEOWNERS | PASS | `.github/CODEOWNERS` exists. | Optionally require CODEOWNERS review for SignPath policy files once `.signpath/` exists. |
@@ -71,7 +73,7 @@ Application readiness: NOT READY TO APPLY.
 | Tracked generated artifacts | PASS | No generated installer/build-output artifacts are tracked in current source. The tracked `release-v1` files are documentation/checksum manifest files. | None. |
 | Historical generated screenshot artifacts | PASS | Reachable-history scan found zero generated screenshot or generated PNG path hits. | None. |
 | Reachable-history high-confidence secrets | PASS | Reachable-history scan found zero high-confidence non-fixture secret files. | None. |
-| Reachable-history private path/identity exposure | FAIL | Local reachable-history scan found one historical private-path/identity hit in a release-candidate audit markdown file. Secret values were not printed or recorded. | Re-run against a fresh public GitHub clone. If the hit is present there, sanitize history again before applying. |
+| Reachable-history private path/identity exposure | PASS | Fresh GitHub clone after remote history replacement found zero reachable-history private path hits. | None. |
 | Git object integrity | PASS | `git fsck --full` completed cleanly. | None. |
 | Branding provenance | PASS | Current branding documentation states the included Levi branding was created for Levi, replaced the prior assets before public release, and may be redistributed with Levi. | None. |
 
@@ -80,14 +82,14 @@ Application readiness: NOT READY TO APPLY.
 | Requirement | Status | Evidence | Remaining action |
 | --- | --- | --- | --- |
 | Maintainer MFA | PASS | Authenticated GitHub account security view showed two-factor authentication configured with an authenticator app. | None. |
-| `main` branch protection | PASS | GitHub branch protection rule for `main` applies to one branch. | None. |
+| `main` branch protection | MANUAL CONFIRMATION | Branch protection was previously verified, but the post-rewrite gate could not query detailed branch-protection settings because `gh` is not installed and the available GitHub connector does not expose those details. | Owner must manually confirm restoration before returning the repository to public. |
 | Pull requests before merging | PASS | Branch protection requires pull requests. | None. |
 | At least one approval | PASS | Branch protection requires one approving review. | None. |
 | Required status check | PASS | Branch protection requires `Build unsigned Windows release`. | None. |
 | Conversation resolution | PASS | Branch protection requires conversation resolution. | None. |
 | Administrator bypass limited | PASS | Branch protection uses "Do not allow bypassing the above settings." | None. |
-| Force pushes blocked | PASS | Force pushes are not allowed. | None. |
-| Branch deletion blocked | PASS | Branch deletion is not allowed. | None. |
+| Force pushes blocked | MANUAL CONFIRMATION | Must be manually confirmed after remote history replacement. | Confirm before returning the repository to public. |
+| Branch deletion blocked | MANUAL CONFIRMATION | Must be manually confirmed after remote history replacement. | Confirm before returning the repository to public. |
 | Actions enabled | PASS | Repository Actions settings allow repository workflows and selected external actions. | None. |
 | Default `GITHUB_TOKEN` permissions | PASS | Workflow permissions are read-only by default; workflow file also sets `contents: read` and `actions: read`. | None. |
 | Untrusted PR workflow secret exposure | PASS | Workflow does not use `pull_request_target`, does not reference signing secrets, and does not echo secrets. | None. |
@@ -103,7 +105,7 @@ Application readiness: NOT READY TO APPLY.
 
 ## Trusted Build And CI
 
-Latest successful release workflow evidence:
+Latest successful release workflow evidence before the history rewrite:
 
 - Workflow: `Levi Desktop Release Build`
 - Run: Build #3
@@ -139,7 +141,7 @@ The unsigned CI artifact is sufficiently traceable as build evidence for the app
 
 | # | Requirement | Status | Evidence | Remaining action |
 | --- | --- | --- | --- | --- |
-| 1 | Repository visibility and ownership requirements | PASS | Repository is public at `https://github.com/hakimbello/levicore`; default branch is `main`; authenticated maintainer account has MFA enabled. | None. |
+| 1 | Repository visibility and ownership requirements | CHANGE REQUIRED | Repository is temporarily private during remote-history cleanup; default branch is `main`; authenticated maintainer account has MFA enabled. | Return the repository to public after branch protection restoration is confirmed. |
 | 2 | OSI-approved licensing | PASS | Repository license is MIT, an OSI-approved license. Root `LICENSE` exists. | None. |
 | 3 | Every Levi-owned component required for the signed distribution is open source | PASS | Desktop source, Electron main/preload, renderer, tests, scripts, workflow, release docs, and branding provenance are in the public repository. Workflow uses no off-repo proprietary build input. | Maintain this boundary for every release. |
 | 4 | Proprietary components would violate eligibility | PASS | No proprietary Levi-owned component was found in the signed distribution path. Dependencies are third-party packages, not Levi-owned proprietary components. | Maintainer must avoid adding closed Levi-owned release inputs. |
@@ -148,9 +150,9 @@ The unsigned CI artifact is sufficiently traceable as build evidence for the app
 | 7 | Repository/build architecture | PASS | Repository contains a complete desktop package, Electron/Vite build configuration, package scripts, root lockfile, CI workflow, release documentation, and artifact metadata plan. | None. |
 | 8 | Current GitHub Actions or other CI infrastructure | PASS | `Levi Desktop Release Build` successfully completed on `main` at the audited commit. | None. |
 | 9 | Release binaries reproducibly traceable to source | PASS | Successful workflow run produced one unsigned Windows artifact with commit-linked artifact name, checksum file, and build metadata. | Publish the artifact on a stable release/download page before applying. |
-| 10 | MFA or repository security requirements | PASS | MFA was verified in GitHub account settings. Branch protection, required checks, dependency graph, Dependabot alerts/updates, Secret Protection, push protection, private vulnerability reporting, and read-only Actions defaults are enabled. | None. |
+| 10 | MFA or repository security requirements | MANUAL CONFIRMATION | MFA is set. Dependency graph, Dependabot, Secret Protection, push protection, private vulnerability reporting, and read-only Actions defaults were previously verified. Branch protection force-push/deletion settings must be manually reconfirmed after the history rewrite. | Confirm branch protection/ruleset state before returning the repository to public. |
 | 11 | Required SignPath team roles: authors/committers, reviewers, approvers | POST-APPLICATION CONFIGURATION | `CODE_SIGNING_POLICY.md` documents the intended roles and approval model. Actual SignPath users/roles cannot be assigned until a SignPath account/project exists. | Assign SignPath authors/committers, reviewers, and approvers after account/project creation. |
-| 12 | Required code-signing policy | CHANGE REQUIRED | `CODE_SIGNING_POLICY.md` uses the required "Code signing policy" heading, documents prospective SignPath wording, release roles, approvals, privacy policy, trusted build, origin verification, and unsigned current status. Release/download docs link it. This local audit commit adds the missing root README project-home link, but it is not public until pushed. | Push this documentation-only commit before applying; after acceptance, update wording to reflect actual SignPath status. |
+| 12 | Required code-signing policy | PASS | `CODE_SIGNING_POLICY.md` uses the required "Code signing policy" heading, documents prospective SignPath wording, release roles, approvals, privacy policy, trusted build, origin verification, and unsigned current status. Release/download docs link it. | After acceptance, update wording to reflect actual SignPath status. |
 | 13 | Privacy-policy requirement | PASS | `PRIVACY.md` documents local processing, optional provider transmission, local persistence, credentials/secrets handling, telemetry/crash-reporting status, updates, browser automation, and user controls. | None. |
 | 14 | Artifact metadata requirements: product name, version, publisher metadata | PASS | Package metadata and workflow metadata include product name `Levi`, version `0.1.0`, app id, artifact name, author/publisher metadata, source commit, workflow run, checksum, and unsigned status. | Configure SignPath artifact restrictions after project creation. |
 | 15 | Trusted build system requirements | POST-APPLICATION CONFIGURATION | Current GitHub-hosted workflow aligns with SignPath trusted-build expectations, but SignPath's trusted build system and GitHub app/action are not configured. | Configure SignPath trusted build after application/approval. |
@@ -203,10 +205,9 @@ Levi is not ready to apply yet, so these fields are provisional and should not b
 
 Hard blockers before submission:
 
-1. Push this documentation-only audit commit so the public repository home page links the code-signing policy.
+1. Return the repository to public after the owner manually confirms branch protection/rulesets are restored.
 2. Publish a stable public unsigned beta/pre-release download page for the current public-ready artifact.
-3. Re-run the private path/identity and secret scans against a fresh public GitHub clone. The result must be zero private path hits, zero high-confidence secret hits, zero historical generated screenshot hits, zero tracked generated artifact hits, and clean `git fsck --full`.
-4. If the reachable historical private-path/identity hit is present in the public clone, sanitize history again before applying.
+3. Re-run the release workflow on the rewritten `main` and confirm the unsigned build remains green at the sanitized source commit.
 
 Non-blocking post-application configuration:
 
@@ -222,4 +223,4 @@ Non-blocking post-application configuration:
 
 Do not apply yet.
 
-First, push this documentation-only audit commit, then create a fresh public GitHub clone and rerun the privacy/history scans. If the historical private-path/identity hit is absent, publish a clearly marked unsigned GitHub beta/pre-release for the current successful workflow artifact and use that release URL as the SignPath application Download URL. If the hit is present, sanitize reachable public history again before publishing the beta release or applying.
+First, manually confirm branch protection/rulesets are restored for `main`, especially blocked force pushes and blocked branch deletion. Then return the repository to public, rerun the Levi Desktop Release Build workflow on sanitized `main`, and publish a clearly marked unsigned GitHub beta/pre-release before applying to SignPath.
