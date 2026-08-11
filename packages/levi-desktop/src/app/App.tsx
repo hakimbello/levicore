@@ -784,18 +784,22 @@ export function App() {
         onOpenSettings={() => selectActivityView("settings")}
       />
       <main className="levi-main">
-        <DebugToolbar
-          state={debugState}
-          onContinue={() => void applyDebugState(window.levi.debug.continue())}
-          onPause={() => void applyDebugState(window.levi.debug.pause())}
-          onRestart={() => void applyDebugState(window.levi.debug.restart())}
-          onStop={() => void applyDebugState(window.levi.debug.stop())}
-          onStepOver={() => void applyDebugState(window.levi.debug.stepOver())}
-          onStepInto={() => void applyDebugState(window.levi.debug.stepInto())}
-          onStepOut={() => void applyDebugState(window.levi.debug.stepOut())}
-        />
         <div className={activeTab ? "levi-workspace-layout levi-workspace-layout-editor" : "levi-workspace-layout"}>
-          {renderActiveWorkspace()}
+          <section className="levi-primary-workspace" aria-label="Primary workspace">
+            <DebugToolbar
+              state={debugState}
+              onContinue={() => void applyDebugState(window.levi.debug.continue())}
+              onPause={() => void applyDebugState(window.levi.debug.pause())}
+              onRestart={() => void applyDebugState(window.levi.debug.restart())}
+              onStop={() => void applyDebugState(window.levi.debug.stop())}
+              onStepOver={() => void applyDebugState(window.levi.debug.stepOver())}
+              onStepInto={() => void applyDebugState(window.levi.debug.stepInto())}
+              onStepOut={() => void applyDebugState(window.levi.debug.stepOut())}
+            />
+            <div className="levi-primary-workspace-body">
+              {renderActiveWorkspace()}
+            </div>
+          </section>
           <AIChatPanel
             runtimeState={runtimeState}
             activeTab={activeTab}

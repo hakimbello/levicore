@@ -14,11 +14,15 @@ body,
   width: 100%;
   min-width: 0;
   height: 100%;
+  min-height: 0;
 }
 
 body {
   margin: 0;
-  min-height: 640px;
+  overflow: hidden;
+}
+
+#root {
   overflow: hidden;
 }
 
@@ -41,8 +45,12 @@ textarea:focus-visible,
 
 .levi-shell {
   display: grid;
-  grid-template-columns: var(--levi-layout-sidebarWidth) minmax(0, 1fr);
-  min-height: 100vh;
+  grid-template-columns: 52px var(--levi-layout-sidebarWidth) minmax(0, 1fr);
+  width: 100vw;
+  min-width: 0;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
   background: var(--levi-color-background);
 }
 
@@ -50,7 +58,9 @@ textarea:focus-visible,
   display: flex;
   flex-direction: column;
   gap: var(--levi-space-24);
-  width: var(--levi-layout-sidebarWidth);
+  min-width: 0;
+  width: auto;
+  overflow-y: auto;
   padding: var(--levi-layout-windowPadding) var(--levi-space-24);
   background: color-mix(in srgb, var(--levi-color-surface) 92%, var(--levi-color-surfaceElevated));
   border-right: var(--levi-space-4) solid transparent;
@@ -200,24 +210,45 @@ textarea:focus-visible,
 
 .levi-main {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
   min-width: 0;
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .levi-workspace-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+  grid-template-columns: minmax(0, 1fr) minmax(300px, clamp(320px, 20vw, 380px));
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.levi-primary-workspace {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
-  position: relative;
+  overflow: hidden;
+}
+
+.levi-primary-workspace-body {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .levi-workspace-layout-editor {
   grid-template-columns:
-    minmax(var(--levi-layout-editorMinColumn), 1fr)
-    minmax(300px, 380px)
-    minmax(var(--levi-layout-editorPanelMin), 42%);
+    minmax(360px, 1fr)
+    minmax(300px, clamp(320px, 20vw, 380px))
+    minmax(320px, 38%);
 }
 
 .levi-workspace-layout:has(.levi-ai-chat-dock-bottom),
@@ -225,11 +256,19 @@ textarea:focus-visible,
   grid-template-columns: minmax(0, 1fr);
 }
 
+.levi-workspace-layout:has(.levi-ai-chat-dock-bottom) {
+  grid-template-rows: minmax(0, 1fr) minmax(260px, 38%);
+}
+
 .levi-workspace-layout-editor:has(.levi-ai-chat-dock-bottom),
 .levi-workspace-layout-editor:has(.levi-ai-chat-dock-floating) {
   grid-template-columns:
     minmax(var(--levi-layout-editorMinColumn), 1fr)
     minmax(var(--levi-layout-editorPanelMin), 42%);
+}
+
+.levi-workspace-layout-editor:has(.levi-ai-chat-dock-bottom) {
+  grid-template-rows: minmax(0, 1fr) minmax(260px, 38%);
 }
 
 .levi-home {
@@ -1938,9 +1977,13 @@ textarea:focus-visible,
 .levi-bottom-panel {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
   border-top: 1px solid var(--levi-color-divider);
   background: var(--levi-color-surfaceElevated);
   transition: height var(--levi-motion-slow) var(--levi-motion-easing);
+  overflow: hidden;
 }
 
 .levi-bottom-panel-visible {
@@ -2499,10 +2542,11 @@ textarea:focus-visible,
   display: flex;
   flex-direction: column;
   gap: var(--levi-space-12);
-  width: min(380px, 34vw);
-  min-width: 300px;
-  max-width: 440px;
+  min-width: 0;
+  width: 100%;
+  max-width: none;
   height: 100%;
+  min-height: 0;
   border-left: 1px solid var(--levi-color-border);
   background: var(--levi-color-surfaceElevated);
   color: var(--levi-color-text);
@@ -2519,9 +2563,8 @@ textarea:focus-visible,
   grid-column: 1 / -1;
   grid-row: 2;
   width: 100%;
-  max-width: none;
-  min-height: 280px;
-  height: 38%;
+  min-height: 0;
+  height: 100%;
   border-left: 0;
   border-top: 1px solid var(--levi-color-border);
 }
@@ -2530,6 +2573,7 @@ textarea:focus-visible,
   position: absolute;
   right: var(--levi-space-16);
   bottom: var(--levi-space-16);
+  width: min(420px, calc(100% - 32px));
   height: min(680px, calc(100% - 32px));
   border: 1px solid var(--levi-color-border);
   border-radius: var(--levi-radius-card);
