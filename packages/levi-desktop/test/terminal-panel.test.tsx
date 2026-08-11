@@ -45,6 +45,7 @@ describe("BottomPanel renderer integration", () => {
     );
 
     await waitFor(() => expect(window.levi.terminal.getLayout).toHaveBeenCalled());
+    await screen.findByRole("tab", { name: "Terminal" });
     await user.click(screen.getByRole("button", { name: "Show" }));
 
     await waitFor(() =>
