@@ -212,10 +212,10 @@ Before public visibility:
 8. Enable or confirm private vulnerability reporting.
 9. Confirm Issues and Discussions settings.
 10. Confirm release and protected tag creation permissions.
-11. Confirm Levi icon asset provenance.
+11. Levi icon asset provenance is documented in `packages/levi-desktop/assets/BRANDING.md`; confirm no future replacement asset is added without equivalent provenance.
 
 ## Exact Next Action
 
-Keep GitHub private. Manually confirm the remaining GitHub/account security settings in the repository settings UI, especially maintainer MFA, branch protection/rulesets, Actions token/workflow permissions, secret scanning/push protection, Dependabot/dependency graph, private vulnerability reporting, Issues/Discussions status, release/tag permissions, and Levi icon provenance. Do not configure SignPath until after those confirmations and the public visibility change are complete.
+Keep GitHub private. Manually confirm the remaining GitHub/account security settings in the repository settings UI, especially maintainer MFA, branch protection/rulesets, Actions token/workflow permissions, secret scanning/push protection, Dependabot/dependency graph, private vulnerability reporting, Issues/Discussions status, and release/tag permissions. Do not configure SignPath until after those confirmations and the public visibility change are complete.
 
 NOT SAFE TO MAKE REPOSITORY PUBLIC

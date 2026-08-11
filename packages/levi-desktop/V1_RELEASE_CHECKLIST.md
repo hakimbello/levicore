@@ -22,7 +22,7 @@ Generated for milestone P2-017-01 on 2026-08-03. Updated for milestone P2-017-02
 - Framework: electron-builder 26.15.3 (existing dependency; no second packaging framework introduced).
 - Targets produced: NSIS x64 installer and unpacked directory build. Portable target not produced (not required without added complexity).
 - Production entry points verified in `app.asar`: `dist/index.html`, `dist-electron/electron/main/index.js`, `dist-electron/electron/preload/index.js`, bundled Monaco chunk, bundled xterm chunk. No dev-server or CDN dependency in packaged runtime.
-- Application icon: `assets/levi.ico` (270,398 bytes) wired for Windows executable, installer, taskbar, and window via electron-builder `win.icon`. Not a placeholder; final branded asset present in repository.
+- Application icon: `assets/levi.ico` (multi-size Windows icon) wired for Windows executable, installer, taskbar, and window via electron-builder `win.icon`. `assets/levi.png` is the raster master, and `assets/BRANDING.md` records project provenance.
 - Packaging note: OneDrive file locking on `packages/levi-desktop/release/` can cause `EPERM` during local builds. Release qualification used a temp output directory outside OneDrive.
 
 ### Packaging Commands

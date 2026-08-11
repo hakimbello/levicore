@@ -80,7 +80,8 @@ describe("Levi desktop package hygiene", () => {
       "packages/levi-desktop/electron/main/index.ts",
       "packages/levi-desktop/index.html",
       "packages/levi-desktop/assets/levi.ico",
-      "packages/levi-desktop/assets/levi.svg",
+      "packages/levi-desktop/assets/levi.png",
+      "packages/levi-desktop/assets/BRANDING.md",
       "packages/levi-desktop/vite.config.mjs",
       "packages/levi-desktop/README.md"
     ]) {
@@ -128,6 +129,8 @@ describe("Levi desktop package hygiene", () => {
     expect(packageJson.build.artifactName).toBe("${productName}-${version}-${os}-${arch}.${ext}");
     expect(packageJson.build.win?.icon).toBe("assets/levi.ico");
     expect(fs.statSync(path.join(desktopRoot, "assets/levi.ico")).size).toBeGreaterThan(0);
+    expect(fs.statSync(path.join(desktopRoot, "assets/levi.png")).size).toBeGreaterThan(0);
+    expect(readText("assets/BRANDING.md")).toMatch(/created specifically for the Levi project/i);
     expect(packageJson.build.copyright).toBe("Copyright © 2026 Hakim Bello");
     expect(packageJson.build.win?.target).toEqual([{ target: "nsis", arch: ["x64"] }]);
     expect(packageJson.build.nsis).toMatchObject({
