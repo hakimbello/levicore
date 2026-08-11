@@ -165,9 +165,17 @@ export function BottomPanel({
                   >
                     Split V
                   </button>
+                </>
+              ) : null}
+            </>
+          ) : null}
+          {layout.panelVisible ? (
+            <details className="levi-terminal-overflow">
+              <summary aria-label="Terminal more actions" title="Terminal more actions">...</summary>
+              <div className="levi-terminal-overflow-popover">
+                {layout.panelTab === "terminal" && activeTab ? (
                   <button
                     type="button"
-                    className="levi-terminal-toggle"
                     onClick={() => {
                       const sessionId = activeTab.sessionId;
                       if (sessionId) void window.levi.terminal.revealCwd(sessionId);
@@ -176,14 +184,12 @@ export function BottomPanel({
                   >
                     Reveal CWD
                   </button>
-                </>
-              ) : null}
-            </>
-          ) : null}
-          {layout.panelVisible ? (
-            <button type="button" className="levi-terminal-toggle" onClick={togglePanelMaximized} aria-label="Maximize panel">
-              {layout.panelMaximized ? "Restore" : "Maximize"}
-            </button>
+                ) : null}
+                <button type="button" onClick={togglePanelMaximized} aria-label="Maximize panel">
+                  {layout.panelMaximized ? "Restore" : "Maximize"}
+                </button>
+              </div>
+            </details>
           ) : null}
           <button
             type="button"
