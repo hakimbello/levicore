@@ -1,221 +1,143 @@
-# LeviCore Pre-Public Repository Security and Exposure Audit
+# LeviCore Public Repository Security and Exposure Audit
 
-Milestone: P2-018-08
-Audit date: 2026-08-10
-Scope: Default-branch public-ready alignment, GitHub default clone qualification, security scans, public documentation, and final public-visibility readiness
-Decision: Do not make the GitHub repository public yet
+Milestone: P2-018-15
+Audit date: 2026-08-11
+Scope: Remote history replacement, fresh private GitHub clone qualification, reachable-history privacy verification, and return-to-public readiness
+Repository: `https://github.com/hakimbello/levicore`
+Repository visibility during this audit: private
+Default branch: `main`
+Current remote `main`: `a47cb4d1ad1f1dffc937ed808e3a31ae7c4f51e7`
+Decision: safe to return repository visibility to public after owner confirms branch protection is restored
 
-This audit does not make the repository public, does not configure SignPath, does not add product features, and does not weaken tests.
+This audit did not make the repository public, did not configure SignPath, did not publish a release, did not install Levi, did not use plain `--force`, and did not change product features.
 
 ## Executive Summary
 
-P2-018-07 verified that the synchronized GitHub refs no longer exposed the previously identified private local path metadata or generated live-test screenshots. It also found the final public gate blocker: GitHub's default branch was `main`, and a fresh GitHub clone of `main` did not contain the public-ready Levi Desktop V1 state, `package-lock.json`, release workflow, or required public documentation.
+P2-018-15 replaced every affected public GitHub branch and tag that still reached the old exposed history. Each rewritten ref was synchronized with an explicit `--force-with-lease=<remote-ref>:<live-current-remote-sha>` lease value obtained from a fresh `git ls-remote --heads --tags origin` immediately before pushing.
 
-P2-018-08 chooses branch strategy A: update `main` to the current public-ready `desktop-v1` state. This is the safest option because local `main` is an ancestor of `desktop-v1`, so the alignment can be a clean fast-forward rather than a merge of stale code or a force rewrite. It also keeps GitHub's existing default branch name, avoiding a default-branch settings change.
+A fresh clone directly from GitHub, without cloning from the local working repository, now checks out `main` at `a47cb4d1ad1f1dffc937ed808e3a31ae7c4f51e7`. That clone passes install, typecheck, desktop tests, desktop build, root tests, privacy scans, generated-artifact scans, and `git fsck --full`.
 
-The intended default branch state must contain the authoritative package lock, MIT license, CODEOWNERS, Levi Desktop release workflow, security policy, privacy policy, code-signing policy, first-run docs, unsigned beta release docs, SignPath eligibility audit, this public-repository audit, and complete Levi Desktop V1 source.
+The previous reachable-history private path exposure is no longer reachable from any current remote head or tag fetched into the fresh GitHub clone.
 
-P2-018-08 aligned GitHub `main` to the public-ready `desktop-v1` state by fast-forward push. A brand-new GitHub clone without a branch override checked out `main` at `ec3666daf9cd9179d477aed714a0289e46b3433c` and passed install, desktop typecheck, desktop tests, desktop build, root tests, privacy/history scans, generated artifact scans, and `git fsck --full`.
+## Remote History Replacement
 
-During final default-clone verification, an intermittent desktop-suite failure was reproduced in lazy top-level panel navigation tests: the active activity button changed immediately, but React lazy-loaded panel modules occasionally exceeded Testing Library's default async wait under full-suite load. The fix keeps the same accessibility and content assertions while giving those lazy panel waits a bounded 5-second timeout. No production code, dependency graph, package hygiene rule, application feature, signing configuration, or release behavior was changed.
+Status: PASS.
 
-Public visibility remains blocked only by manual GitHub/account settings that cannot be fully confirmed from this environment, including maintainer MFA, branch protection/rulesets, repository security toggles, and release permissions.
+Branches rewritten:
 
-NOT READY FOR PUBLIC GITHUB VISIBILITY
+- `main`: `a47cb4d1ad1f1dffc937ed808e3a31ae7c4f51e7`.
+- `desktop-v1`: `af0ec1f4912510a0370a5ac011b42236afabc937`.
+- `dependabot/npm_and_yarn/packages/levi-desktop/electron-39.8.10`: `90c72a7ab9f7239f31195c568105d60cc3bebf03`.
+- `fix/desktop-search-stabilization`: `0d29cf5afd9234da870e1d60210c24441f1e1721`.
+- `integrate-desktop-v1-clean`: `8e677e3e531380e8cae2ea654fc56bc5b9bf39f3`.
+- `v1-final-backup`: `ef34321ad0789d3d2c7e31b09004d4fe96091053`.
 
-## Branch Strategy
+Tags rewritten:
 
-Chosen strategy: A. Update `main` to the current public-ready `desktop-v1` state.
+- `v0.7.0-ux`: `234badfb127a8b26832c388a051558ad23ea3a60`.
+- `v1.0.0`: tag object `a6ae6d282c23c51243e8dfb1e7cd59df2506d148`, peeled commit `ef34321ad0789d3d2c7e31b09004d4fe96091053`.
+- `v1.0.0-beta.1`: tag object `982c4cdc193475db94f28f2cb09621255046ee58`, peeled commit `ef34321ad0789d3d2c7e31b09004d4fe96091053`.
 
-Reasoning:
+Affected remote refs were identified by cloning the private GitHub repository as a mirror and checking every remote head and tag for reachability to the old exposed commit. Nine affected refs were found and rewritten. The fresh GitHub clone recheck found zero refs still reaching the old exposed commit.
 
-- `git merge-base main desktop-v1` equals current local `main` at `07af8874f6fcb4268ac38ceb986299db2c84d35b`.
-- `desktop-v1` is a descendant of `main`; no unrelated stale `main` content needs to be merged into `desktop-v1`.
-- Updating `main` to the `desktop-v1` tip is a fast-forward branch movement.
-- This preserves clean sanitized history and avoids a separate GitHub default-branch settings change.
-- This avoids reintroducing removed screenshots or private path metadata.
+GitHub reported existing Dependabot vulnerability warnings during push. Those warnings do not indicate exposed private history, but they should remain tracked through the repository security process.
 
-Default branch before:
+## Final Remote Refs
 
-- GitHub `HEAD`: `refs/heads/main`.
-- GitHub `main`: `07af8874f6fcb4268ac38ceb986299db2c84d35b`.
+Status: PASS.
 
-Default branch after alignment:
+Live `git ls-remote --heads --tags origin` after synchronization:
 
-- GitHub `HEAD`: `refs/heads/main`.
-- GitHub `main`: `ec3666daf9cd9179d477aed714a0289e46b3433c`.
-- GitHub `desktop-v1`: `ec3666daf9cd9179d477aed714a0289e46b3433c`.
+| Ref | SHA |
+| --- | --- |
+| `refs/heads/dependabot/npm_and_yarn/packages/levi-desktop/electron-39.8.10` | `90c72a7ab9f7239f31195c568105d60cc3bebf03` |
+| `refs/heads/desktop-v1` | `af0ec1f4912510a0370a5ac011b42236afabc937` |
+| `refs/heads/fix/desktop-search-stabilization` | `0d29cf5afd9234da870e1d60210c24441f1e1721` |
+| `refs/heads/integrate-desktop-v1-clean` | `8e677e3e531380e8cae2ea654fc56bc5b9bf39f3` |
+| `refs/heads/main` | `a47cb4d1ad1f1dffc937ed808e3a31ae7c4f51e7` |
+| `refs/heads/v1-final-backup` | `ef34321ad0789d3d2c7e31b09004d4fe96091053` |
+| `refs/tags/v0.7.0-ux` | `234badfb127a8b26832c388a051558ad23ea3a60` |
+| `refs/tags/v1.0.0` | `a6ae6d282c23c51243e8dfb1e7cd59df2506d148` |
+| `refs/tags/v1.0.0^{}` | `ef34321ad0789d3d2c7e31b09004d4fe96091053` |
+| `refs/tags/v1.0.0-beta.1` | `982c4cdc193475db94f28f2cb09621255046ee58` |
+| `refs/tags/v1.0.0-beta.1^{}` | `ef34321ad0789d3d2c7e31b09004d4fe96091053` |
 
-## Required Default-Branch Content
+## Fresh GitHub Clone Verification
 
-Status before alignment: FAIL on GitHub default `main`; PASS on `desktop-v1`.
+Status: PASS.
 
-Status after alignment: PASS on GitHub default `main` at `ec3666daf9cd9179d477aed714a0289e46b3433c`.
+Fresh clone source: `https://github.com/hakimbello/levicore.git`.
 
-Required files and content on the eventual default branch:
+Fresh clone result:
 
-- `package-lock.json`.
-- Root `LICENSE`.
+- Checked out `main`.
+- `HEAD`: `a47cb4d1ad1f1dffc937ed808e3a31ae7c4f51e7`.
+- `npm ci`: PASS.
+- `npm.cmd --prefix packages/levi-desktop run typecheck`: PASS.
+- `npm.cmd --prefix packages/levi-desktop test`: PASS, 27 test files passed, 254 tests passed, 2 skipped.
+- `npm.cmd --prefix packages/levi-desktop run build`: PASS.
+- `npm.cmd test`: PASS, 263 tests passed.
+
+The first desktop build attempt inside the sandbox failed because Vite/esbuild could not read parent path metadata under the temporary clone directory. The same fresh-clone build passed when rerun with normal filesystem access. This is recorded as an environment limitation, not a repository build failure.
+
+## Privacy And Artifact Verification
+
+Status: PASS.
+
+Fresh GitHub clone scan results:
+
+| Check | Result |
+| --- | --- |
+| Current-tree private path hits | 0 |
+| Reachable-history private path hits | 0 |
+| Current-tree high-confidence secret hits | 0 |
+| Reachable-history high-confidence secret hits | 0 |
+| Historical generated screenshot hits | 0 |
+| Tracked generated artifacts | 0 |
+| Current refs reaching old exposed commit | 0 |
+| `git fsck --full` | clean |
+
+The high-confidence secret scan checked for private key material and common provider token formats without printing candidate secret values. Fixture and policy-document examples were excluded from high-confidence secret counts.
+
+## Branch Protection Restoration
+
+Status: MANUAL CONFIRMATION.
+
+No branch-protection setting was changed by this audit. The `main` history replacement succeeded with `--force-with-lease`; because this environment does not have the GitHub CLI installed and the available GitHub connector does not expose branch-protection details, the owner should manually confirm that branch protection is restored before changing visibility back to public.
+
+Required restored state:
+
+- Pull requests required before merging.
+- At least 1 approval required.
+- Required status check: `Build unsigned Windows release`.
+- Conversation resolution required.
+- Administrator bypass disabled or limited to the smallest practical owner-only exception.
+- Force pushes disabled.
+- Branch deletions disabled.
+
+## Public Documentation
+
+Status: PASS.
+
+The fresh GitHub clone contains the required public-facing documentation and project files on `main`:
+
+- `README.md`.
+- `LICENSE`.
+- `SECURITY.md`.
 - `.github/CODEOWNERS`.
 - `.github/workflows/levi-desktop-release.yml`.
-- `SECURITY.md`.
+- `package-lock.json`.
 - `packages/levi-desktop/PRIVACY.md`.
 - `packages/levi-desktop/CODE_SIGNING_POLICY.md`.
 - `packages/levi-desktop/FIRST_RUN.md`.
 - `packages/levi-desktop/RELEASE_DOWNLOAD.md`.
 - `packages/levi-desktop/SIGNPATH_ELIGIBILITY.md`.
 - `packages/levi-desktop/PUBLIC_REPO_SECURITY_AUDIT.md`.
-- Complete Levi Desktop V1 source.
 
-Fresh GitHub default clone confirmed every required file listed above is present on `main`.
-
-## Package Lock
-
-Status: PASS.
-
-- `package-lock.json` is present on the GitHub default branch.
-- The lockfile is treated as authoritative for the current dependency graph.
-- `npm ci` passed locally and in a fresh GitHub default clone.
-- `package-lock.json` had no diff after `npm ci` and build verification in the fresh clone.
-
-## Local Verification Gate
-
-Status: PASS.
-
-Commands to run on the proposed default-branch state:
-
-- `npm ci`: PASS.
-- `npm.cmd --prefix packages/levi-desktop run typecheck`: PASS.
-- `npm.cmd --prefix packages/levi-desktop test`: PASS after the scoped lazy-surface wait fix, 27 files passed, 254 tests passed, 2 skipped.
-- `npm.cmd --prefix packages/levi-desktop run build`: PASS.
-- `npm.cmd test`: PASS, 263 tests passed.
-
-Build emitted the existing Monaco chunk-size warning only.
-
-## Security Recheck
-
-Status: PASS locally and in fresh GitHub default clone.
-
-Required results:
-
-- Private identity/path hits: 0 current, 0 reachable history.
-- High-confidence secret hits: 0 current, 0 reachable history.
-- Historical generated screenshot hits: 0.
-- Tracked generated artifact hits: 0.
-- `git fsck --full`: clean.
-
-Note: the broad `C:\Users\...` scan still finds synthetic security-fixture paths such as `C:/Users/user/.ssh/id_rsa`; these are test payloads, not private maintainer identity or workstation paths.
-
-## GitHub Alignment Plan
-
-Completed push behavior:
-
-- Fetched current GitHub refs immediately before pushing.
-- Pushed `desktop-v1` fast-forward: `718db2c388426d60388377eda1aebf082bc38fb7` -> `d8fec2ba0f544bda7387f15b366bc9276925d021`.
-- Pushed `main` fast-forward: `07af8874f6fcb4268ac38ceb986299db2c84d35b` -> `d8fec2ba0f544bda7387f15b366bc9276925d021`.
-- Pushed final audit/test hardening fast-forward: `d8fec2ba0f544bda7387f15b366bc9276925d021` -> `ec3666daf9cd9179d477aed714a0289e46b3433c` on both `desktop-v1` and `main`.
-- No force push was required.
-- Repository visibility was not changed.
-
-## GitHub Default-Clone Gate
-
-Status: PASS.
-
-After branch alignment:
-
-1. Created a brand-new clone directly from `https://github.com/hakimbello/levicore.git` without specifying a branch.
-2. Verified checkout: `main` at `ec3666daf9cd9179d477aed714a0289e46b3433c`.
-3. `npm ci`: PASS.
-4. `npm.cmd --prefix packages/levi-desktop run typecheck`: PASS.
-5. `npm.cmd --prefix packages/levi-desktop test`: PASS, 27 files passed, 254 tests passed, 2 skipped.
-6. `npm.cmd --prefix packages/levi-desktop run build`: PASS.
-7. `npm.cmd test`: PASS, 263 tests passed.
-8. Privacy, secret, generated screenshot, tracked artifact, and `git fsck --full` checks: PASS.
-9. Required public-facing documentation: PASS.
-
-The final source change before this clone was limited to test robustness for lazy-loaded top-level panels. It did not modify application code, build logic, dependencies, package-lock content, release workflow behavior, signing configuration, or Version 1 features.
-
-## GitHub Repository Settings Matrix
-
-| Setting | Classification | Evidence |
-|---|---|---|
-| Repository visibility | PASS | Repository remained private throughout this gate. |
-| Default branch | PASS | GitHub `HEAD` resolves to `refs/heads/main`; `main` resolves to the public-ready desktop state. |
-| MFA status for maintainer | MANUAL REQUIRED | Account-level MFA is not queryable through available tools. |
-| Branch protection/rulesets | MANUAL REQUIRED | Must be confirmed in GitHub settings. |
-| CODEOWNERS presence | PASS | `.github/CODEOWNERS` is present on GitHub default `main`. |
-| GitHub Actions permissions | MANUAL REQUIRED | Must confirm Actions default token permissions in GitHub settings; `gh` CLI was not available in this environment. |
-| Workflow write permissions | MANUAL REQUIRED | Must confirm workflow write restrictions in GitHub settings. |
-| Secret scanning availability | MANUAL REQUIRED | Must confirm in GitHub settings. |
-| Dependabot alerts | MANUAL REQUIRED | Must confirm in GitHub settings. |
-| Dependency graph | MANUAL REQUIRED | Must confirm in GitHub settings. |
-| Private vulnerability reporting | MANUAL REQUIRED | Must confirm in GitHub settings. |
-| Issues enabled | MANUAL REQUIRED | Must confirm in GitHub settings. |
-| Discussions status | MANUAL REQUIRED | Must confirm in GitHub settings. |
-| Release permissions | MANUAL REQUIRED | Must confirm release/tag creation permissions in GitHub settings or rulesets. |
-
-## Release Workflow Audit
-
-Status: PASS on GitHub default `main`.
-
-Workflow: `.github/workflows/levi-desktop-release.yml`.
-
-Required properties:
-
-- GitHub-hosted Windows runner: `windows-latest`.
-- Exact source checkout: `actions/checkout@v6` with `ref: ${{ github.sha }}`, `fetch-depth: 0`, and `persist-credentials: false`.
-- Deterministic dependency install: `npm ci`.
-- Desktop typecheck.
-- Desktop tests.
-- Root tests.
-- Production build.
-- Unsigned Windows installer package.
-- SHA-256 generation.
-- `BUILD_METADATA.json` generation.
-- Artifact upload.
-- No signing credentials.
-- No secret echoing path.
-- No `pull_request_target`.
-- Restricted top-level `GITHUB_TOKEN` permissions: `contents: read`, `actions: read`.
-
-## Public Documentation Audit
-
-Status: PASS on GitHub default `main`.
-
-Required public-facing files:
-
-- `README.md`.
-- `LICENSE`.
-- `SECURITY.md`.
-- `packages/levi-desktop/PRIVACY.md`.
-- `packages/levi-desktop/CODE_SIGNING_POLICY.md`.
-- `packages/levi-desktop/FIRST_RUN.md`.
-- `packages/levi-desktop/RELEASE_DOWNLOAD.md`.
-- `packages/levi-desktop/SIGNPATH_ELIGIBILITY.md`.
-
-SignPath wording requirement:
-
-- Documentation must not claim SignPath approval.
-- Documentation must continue to state that Levi has not been accepted by SignPath Foundation and is not currently signed by SignPath Foundation.
-
-## Remaining Manual GitHub Settings
-
-Before public visibility:
-
-1. Confirm maintainer MFA.
-2. Configure or confirm branch protection/rulesets.
-3. Confirm CODEOWNERS review for release-critical files where appropriate.
-4. Confirm GitHub Actions default token permissions are least-privilege.
-5. Restrict workflow write permissions.
-6. Enable or confirm secret scanning and push protection where available.
-7. Enable or confirm Dependabot alerts and dependency graph.
-8. Enable or confirm private vulnerability reporting.
-9. Confirm Issues and Discussions settings.
-10. Confirm release and protected tag creation permissions.
-11. Levi icon asset provenance is documented in `packages/levi-desktop/assets/BRANDING.md`; confirm no future replacement asset is added without equivalent provenance.
+No checked document claims SignPath approval.
 
 ## Exact Next Action
 
-Keep GitHub private. Manually confirm the remaining GitHub/account security settings in the repository settings UI, especially maintainer MFA, branch protection/rulesets, Actions token/workflow permissions, secret scanning/push protection, Dependabot/dependency graph, private vulnerability reporting, Issues/Discussions status, and release/tag permissions. Do not configure SignPath until after those confirmations and the public visibility change are complete.
+Keep the repository private until the owner manually confirms branch protection/ruleset settings for `main` are restored, especially blocked force pushes and blocked branch deletion. After that confirmation, the owner can return the repository visibility to public. Do not configure SignPath or publish a release until the repository is public and the unsigned beta release step is intentionally scheduled.
 
-NOT SAFE TO MAKE REPOSITORY PUBLIC
+SAFE TO RETURN REPOSITORY TO PUBLIC
