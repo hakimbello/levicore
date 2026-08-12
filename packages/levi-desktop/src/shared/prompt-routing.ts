@@ -1,8 +1,15 @@
+export type PromptIntent = "question" | "plan" | "edit" | "build";
+
 const QUESTION_ONLY_PATTERN = /^(what|where|which|who|why|when|does|do|is|are|can you explain|explain|summarize)\b/i;
-const PLANNING_PATTERN =
-  /\b(add|implement|introduce|integrate|convert|migrate|replace|refactor|redesign|support|enable|build|create|plan|design|approach|how would|how should|rename|github oauth|authentication|auth|login|fastify|vue)\b/i;
-const SINGLE_FILE_EDIT_PATTERN = /\b(change|modify|update|fix|rename|replace|remove|delete|make)\b/i;
+const EXPLICIT_PLAN_PATTERN =
+  /^(plan|create a plan|draft a plan|make a plan|design a plan)\b|\b(plan|planning|approach|architecture|implementation plan)\b|\bhow (would|should|do|can) (you|i|we)\b/i;
+const BUILD_VERB_PATTERN = /^(build|create|make|implement|add|set up|setup|fix)\b|\b(build|create|make|implement|add|set up|setup)\b/i;
+const BUILD_TARGET_PATTERN =
+  /\b(app|application|website|site|dashboard|page|auth|authentication|oauth|login|project|feature|component|form|tracker|calculator|todo|weather|fitness)\b/i;
+const SINGLE_FILE_EDIT_PATTERN = /\b(change|modify|update|fix|rename|replace|remove|delete)\b/i;
 const MULTI_FILE_SCOPE_PATTERN = /\b(all affected files|all files|across files|multiple files|every file|each file)\b/i;
+const UNSAFE_DESTRUCTIVE_SCOPE_PATTERN = /\b(everything|entire|whole)\b|\b(c drive|c:\\|root drive|system32)\b/i;
+const SHELL_COMMAND_PATTERN = /\b(powershell|pwsh|cmd|bash|remove-item|rm\s+-|del\s+\/|format\s+|shutdown)\b/i;
 const PATH_PATTERN =
   /(?<![\w.-])([A-Za-z0-9_.-]+(?:[\\/][A-Za-z0-9_.-]+)+|[A-Za-z0-9_-]+\.(?:json|scss|html|java|ya?ml|toml|[cm]?[jt]sx?|css|md|py|go|rs|cs)|\.env)(?![\w.-])/g;
 
@@ -10,50 +17,78 @@ function explicitPaths(prompt: string): string[] {
   return Array.from(prompt.matchAll(PATH_PATTERN), (match) => match[1] ?? "");
 }
 
-export function isPlanningPrompt(prompt: string): boolean {
+function isQuestionPrompt(prompt: string): boolean {
+  return QUESTION_ONLY_PATTERN.test(prompt) && !/^how\b/i.test(prompt);
+}
+
+function isExplicitPlanPrompt(prompt: string): boolean {
+  return EXPLICIT_PLAN_PATTERN.test(prompt);
+}
+
+function isBoundedEditPrompt(prompt: string): boolean {
+  const paths = explicitPaths(prompt);
+  if (!SINGLE_FILE_EDIT_PATTERN.test(prompt)) {
+    return false;
+  }
+  if (MULTI_FILE_SCOPE_PATTERN.test(prompt) || UNSAFE_DESTRUCTIVE_SCOPE_PATTERN.test(prompt) || SHELL_COMMAND_PATTERN.test(prompt)) {
+    return false;
+  }
+  if (paths.length === 1) {
+    return true;
+  }
+  if (paths.length > 1) {
+    return false;
+  }
+  return /\b(change|modify|update|replace|fix)\b/i.test(prompt) && !BUILD_TARGET_PATTERN.test(prompt);
+}
+
+function isBuildPrompt(prompt: string): boolean {
+  if (!BUILD_VERB_PATTERN.test(prompt)) {
+    return false;
+  }
+  if (SHELL_COMMAND_PATTERN.test(prompt) || UNSAFE_DESTRUCTIVE_SCOPE_PATTERN.test(prompt)) {
+    return false;
+  }
+  if (MULTI_FILE_SCOPE_PATTERN.test(prompt)) {
+    return true;
+  }
+  if (/\bfix this project\b/i.test(prompt)) {
+    return true;
+  }
+  return BUILD_TARGET_PATTERN.test(prompt) && !isBoundedEditPrompt(prompt);
+}
+
+export function classifyPromptIntent(prompt: string): PromptIntent {
   const normalized = prompt.trim();
   if (!normalized) {
-    return false;
+    return "question";
   }
-  if (/^(plan|create a plan|draft a plan|design a plan)\b/i.test(normalized)) {
-    return true;
+  if (MULTI_FILE_SCOPE_PATTERN.test(normalized) || /\b(rename|refactor|migrate|convert)\b/i.test(normalized) && explicitPaths(normalized).length === 0) {
+    return "plan";
   }
-  if (MULTI_FILE_SCOPE_PATTERN.test(normalized)) {
-    return true;
+  if (isExplicitPlanPrompt(normalized)) {
+    return "plan";
   }
-  if (/^how (would|should|do|can) (you|i|we)\b/i.test(normalized) && PLANNING_PATTERN.test(normalized)) {
-    return true;
+  if (isQuestionPrompt(normalized)) {
+    return "question";
   }
-  if (QUESTION_ONLY_PATTERN.test(normalized) && !/^how\b/i.test(normalized)) {
-    return false;
+  if (isBoundedEditPrompt(normalized)) {
+    return "edit";
   }
-  if (/\b(rename|refactor|migrate|convert)\b/i.test(normalized) && explicitPaths(normalized).length === 0) {
-    return true;
+  if (isBuildPrompt(normalized)) {
+    return "build";
   }
-  if (
-    SINGLE_FILE_EDIT_PATTERN.test(normalized) &&
-    explicitPaths(normalized).length <= 1 &&
-    !MULTI_FILE_SCOPE_PATTERN.test(normalized) &&
-    !/\b(rename|refactor|migrate|convert)\b/i.test(normalized)
-  ) {
-    return false;
-  }
-  if (SINGLE_FILE_EDIT_PATTERN.test(normalized) && explicitPaths(normalized).length === 1) {
-    return false;
-  }
-  return PLANNING_PATTERN.test(normalized);
+  return "question";
+}
+
+export function isPlanningPrompt(prompt: string): boolean {
+  return classifyPromptIntent(prompt) === "plan";
+}
+
+export function isBuildPromptIntent(prompt: string): boolean {
+  return classifyPromptIntent(prompt) === "build";
 }
 
 export function isSingleFileEditPrompt(prompt: string): boolean {
-  const normalized = prompt.trim();
-  if (isPlanningPrompt(normalized)) {
-    return false;
-  }
-  if (/\b(plan|planning|approach|how would|how should)\b/i.test(normalized)) {
-    return false;
-  }
-  if (explicitPaths(normalized).length === 0 && /\b(auth|authentication|oauth|convert|migrate|framework|vue|fastify|express)\b/i.test(normalized)) {
-    return false;
-  }
-  return SINGLE_FILE_EDIT_PATTERN.test(normalized) && explicitPaths(normalized).length <= 1;
+  return classifyPromptIntent(prompt) === "edit";
 }

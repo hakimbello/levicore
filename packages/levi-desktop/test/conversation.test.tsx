@@ -288,7 +288,7 @@ describe("Levi local conversation", () => {
     expect(window.levi.conversation.start).not.toHaveBeenCalled();
   });
 
-  it("routes broad feature requests through planning without invoking edit IPC", async () => {
+  it("routes broad build requests through the Agent build planner without invoking edit IPC", async () => {
     const user = userEvent.setup();
     render(<App />);
 
@@ -296,12 +296,37 @@ describe("Levi local conversation", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() =>
-      expect(window.levi.planning.create).toHaveBeenCalledWith({
-        prompt: "Add GitHub OAuth."
+      expect(window.levi.agent.plan).toHaveBeenCalledWith({
+        prompt: expect.stringContaining("Add GitHub OAuth."),
+        modelId: "qwen3.6:latest"
       })
     );
     expect(window.levi.edits.propose).not.toHaveBeenCalled();
+    expect(window.levi.planning.create).not.toHaveBeenCalled();
     expect(window.levi.conversation.start).not.toHaveBeenCalled();
+  });
+
+  it("runs approved build actions through the Agent execution and verification APIs", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.type(screen.getByRole("textbox", { name: "Prompt" }), "Build me a simple vanilla HTML calculator.");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Approve and Build" })).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Approve and Build" }));
+
+    await waitFor(() => expect(window.levi.agent.approve).toHaveBeenCalledWith({ sessionId: "agent-1", actionId: "action-1" }));
+    await waitFor(() => expect(window.levi.agent.preview).toHaveBeenCalledWith({ sessionId: "agent-1", actionId: "action-1" }));
+    await waitFor(() =>
+      expect(window.levi.agent.execute).toHaveBeenCalledWith({
+        sessionId: "agent-1",
+        actionId: "action-1",
+        previewId: "preview-1"
+      })
+    );
+    await waitFor(() => expect(window.levi.agent.verify).toHaveBeenCalledWith({ sessionId: "agent-1" }));
+    expect(window.levi.planning.create).not.toHaveBeenCalled();
   });
 
   it("keeps repository questions on normal workspace chat", async () => {
@@ -320,7 +345,7 @@ describe("Levi local conversation", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.type(screen.getByRole("textbox", { name: "Prompt" }), "Add GitHub OAuth.");
+    await user.type(screen.getByRole("textbox", { name: "Prompt" }), "Make me a plan for adding GitHub OAuth.");
     await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(window.levi.planning.create).toHaveBeenCalledTimes(1));
 

@@ -672,10 +672,19 @@ function validateAttachmentContent(value: unknown): string {
 }
 
 function buildPlanningPrompt(prompt: string, summary: AgentProjectSummary, attachments: AIChatAttachment[]): string {
+  const existingProject = Boolean(
+    summary.rootPath &&
+    (summary.entryPoints.length > 0 || summary.buildSystem.length > 0 || summary.sourceDirectories.length > 0)
+  );
   return JSON.stringify({
-    instruction: "Return JSON only with shape { summary: string, steps: [{ title, description, estimatedFiles, actions }] }. Actions are proposals only and must not be executed.",
+    instruction:
+      "Return JSON only with shape { summary: string, steps: [{ title, description, estimatedFiles, actions }] }. Actions are proposals only and must not be executed. For build/create/implement/add requests, provide concrete executable actions using existing action types: create-folder, create-file, modify-file, run-terminal-command, run-task, git-operation, rename-file, rename-folder, delete-file. File actions must include relativePath and complete content for create-file or whole-file edits for modify-file when known. Terminal actions must use structured command, args, cwd, and expectedOutput. Never include shell wrappers, destructive commands, publishing, deployment, secrets, or paths outside the workspace. If the request creates a new application and this workspace already contains an existing project, place all generated files under a sanitized child folder inside the current workspace instead of contaminating the existing project root.",
     objective: prompt,
-    project: summary,
+    project: {
+      ...summary,
+      existingProject,
+      newApplicationSafeDefault: existingProject ? "Use a sanitized child folder for generated app files." : "Use the selected workspace root when it is suitable and empty."
+    },
     context: attachments.map((attachment) => ({
       sourceId: attachment.sourceId,
       label: attachment.label,
