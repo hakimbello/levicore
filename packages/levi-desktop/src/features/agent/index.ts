@@ -52,6 +52,8 @@ export type {
   AgentQueueResult,
   AgentRepairPlanRequest,
   AgentRepairPlanResult,
+  AgentRepairExecuteRequest,
+  AgentRepairExecutionResult,
   AgentRepairProgressEntry,
   AgentRepairQueueItem,
   AgentRepairStatus,

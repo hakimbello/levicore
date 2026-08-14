@@ -505,6 +505,7 @@ describe("Coding Agent foundation", () => {
     expect(channels).toContain('agentTerminalStatus: "levi:agent:terminal-status"');
     expect(channels).toContain('agentVerify: "levi:agent:verify"');
     expect(channels).toContain('agentRepairPlan: "levi:agent:repair-plan"');
+    expect(channels).toContain('agentRepairExecute: "levi:agent:repair-execute"');
     expect(channels).toContain('agentRepairStatus: "levi:agent:repair-status"');
     expect(main).toContain("const agentService = new AgentService(aiRuntimeManager");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentPlan");
@@ -514,6 +515,7 @@ describe("Coding Agent foundation", () => {
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentTerminalExecute");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentVerify");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentRepairPlan");
+    expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentRepairExecute");
     expect(preload).toContain("agent: {");
     expect(preload).toContain("plan: (request: AgentPlanRequest)");
     expect(preload).toContain("execute: (request: AgentExecuteRequest)");
@@ -522,6 +524,7 @@ describe("Coding Agent foundation", () => {
     expect(preload).toContain("terminalExecute: (request: AgentTerminalExecuteRequest)");
     expect(preload).toContain("verify: (request: AgentVerifyRequest)");
     expect(preload).toContain("repairPlan: (request: AgentRepairPlanRequest)");
+    expect(preload).toContain("repairExecute: (request: AgentRepairExecuteRequest)");
     expect(service).toContain("this.runtimeManager.chat");
     expect(service).not.toContain("writeWorkspacePath");
     expect(service).not.toContain("taskService.run");
@@ -671,7 +674,7 @@ describe("Coding Agent foundation", () => {
     expect(verified.state.sessions[0].plan?.verificationReports[0].id).toBe(verified.report.id);
   });
 
-  it("classifies failed verification, plans pending repairs, and requires approval flow", async () => {
+  it("classifies failed verification, generates structured repairs, and executes related file repairs automatically", async () => {
     const planContent = JSON.stringify({
       summary: "Run typecheck.",
       steps: [{
@@ -689,13 +692,23 @@ describe("Coding Agent foundation", () => {
         suggestedFix: "Add or import the LoginProps type in src/Login.tsx.",
         confidence: 0.82,
         estimatedRisk: "low",
-        classification: "Type errors"
+        classification: "Type errors",
+        actions: [{
+          type: "modify-file",
+          title: "Add LoginProps type",
+          description: "Add the missing props type used by the component.",
+          relativePath: "src/Login.tsx",
+          content: "type LoginProps = { title: string };\nexport function Login(_props: LoginProps) {\n  return null;\n}\n"
+        }]
       }]
     });
     const task: TaskDefinition = { id: "npm:typecheck", label: "typecheck", source: "detected", group: "build", command: "npm.cmd", args: ["run", "typecheck"], cwd: ".", problemMatchers: ["$tsc"] };
     const taskService = createFakeTaskService([task]);
     const runtimeProvider = providerWithResponses([planContent, repairContent]);
-    const { service } = await createService(runtimeProvider, { taskService, getWindow: fakeWindow });
+    const { service, statePath } = await createService(runtimeProvider, { taskService, getWindow: fakeWindow });
+    const root = path.dirname(statePath);
+    await fsp.mkdir(path.join(root, "src"), { recursive: true });
+    await fsp.writeFile(path.join(root, "src", "Login.tsx"), "export function Login(_props: LoginProps) {\n  return null;\n}\n", "utf8");
     const planned = await service.plan({ prompt: "Verify failure", runtimeId: "ollama", modelId: "model-a" });
     const sessionId = planned.sessionId;
     const action = planned.state.sessions[0].plan!.approvals[0];
@@ -715,12 +728,14 @@ describe("Coding Agent foundation", () => {
 
     const plannedRepair = await service.repairPlan({ sessionId, reportId: verified.report.id });
     expect(plannedRepair.repairs[0]).toMatchObject({ status: "Pending", classification: "Type errors", affectedFiles: ["src/Login.tsx"] });
-    const repairId = plannedRepair.repairs[0].id;
-    const approved = await service.approve({ sessionId, actionId: repairId });
-    expect(approved.sessions[0].plan?.repairQueue[0]).toMatchObject({ id: repairId, status: "Approved" });
-    expect(approved.sessions[0].plan?.repairProgress.map((entry) => entry.stage)).toContain("Repair Approved");
+    expect(plannedRepair.repairs[0].actions).toHaveLength(1);
+    const executed = await service.repairExecute({ sessionId, reportId: verified.report.id, attempt: 1 });
+    expect(executed.executedActions).toHaveLength(1);
+    expect(await fsp.readFile(path.join(root, "src", "Login.tsx"), "utf8")).toContain("type LoginProps");
+    expect(executed.repairs[0]).toMatchObject({ status: "Completed", requiresFreshApproval: false });
+    expect(executed.state.sessions[0].plan?.repairProgress.map((entry) => entry.stage)).toEqual(expect.arrayContaining(["Repair Executing", "Repair Complete"]));
     const status = service.repairStatus({ sessionId });
-    expect(status.repairs[0]).toMatchObject({ id: repairId, status: "Approved" });
+    expect(status.repairs[0]).toMatchObject({ id: plannedRepair.repairs[0].id, status: "Completed" });
     await expect(service.repairPlan({ sessionId: "missing", reportId: verified.report.id })).rejects.toThrow(/not found/i);
   });
 
@@ -1417,10 +1432,14 @@ describe("Coding Agent foundation", () => {
     const repair = {
       id: "repair-1",
       reportId: report.id,
+      attempt: 1,
       problem: "Cannot find name LoginProps.",
       likelyCause: "The props type is missing.",
       affectedFiles: ["src/Login.tsx"],
       suggestedFix: "Add or import LoginProps.",
+      actions: [],
+      requiresFreshApproval: true,
+      blockers: ["No structured repair action was generated."],
       confidence: 0.82,
       estimatedRisk: "low" as const,
       classification: "Type errors" as const,

@@ -119,6 +119,8 @@ import type {
   AgentQueueResult,
   AgentRepairPlanRequest,
   AgentRepairPlanResult,
+  AgentRepairExecuteRequest,
+  AgentRepairExecutionResult,
   AgentRepairStatusRequest,
   AgentRepairStatusResult,
   AgentRenameRequest,
@@ -224,6 +226,8 @@ export type {
   AgentQueueResult,
   AgentRepairPlanRequest,
   AgentRepairPlanResult,
+  AgentRepairExecuteRequest,
+  AgentRepairExecutionResult,
   AgentRepairProgressEntry,
   AgentRepairQueueItem,
   AgentRepairStatus,
@@ -349,6 +353,107 @@ export type OllamaStatus = {
 export type SelectedProject = {
   path: string;
   name: string;
+};
+
+export type ProjectType =
+  | "vanilla-web"
+  | "react"
+  | "vite"
+  | "nextjs"
+  | "node"
+  | "typescript"
+  | "android-gradle"
+  | "kotlin-android"
+  | "git"
+  | "empty"
+  | "unknown";
+
+export type ProjectDetection = {
+  projectType: ProjectType;
+  framework?: string;
+  packageManager?: string;
+  buildCommand?: string;
+  testCommand?: string;
+  devCommand?: string;
+  entryPoint?: string;
+  confidence: number;
+  evidence: string[];
+};
+
+export type ProjectStarterCategory =
+  | "vanilla-web"
+  | "react-vite"
+  | "nextjs"
+  | "node-api"
+  | "android-kotlin-compose"
+  | "empty"
+  | "clone-github";
+
+export type ProjectStarterInfo = {
+  id: ProjectStarterCategory;
+  label: string;
+  description: string;
+  installCommand?: string;
+  verificationCommand?: string;
+};
+
+export type CloneRepositoryRequest = {
+  repositoryUrl: string;
+  destinationFolder: string;
+};
+
+export type CloneRepositoryResult = {
+  project: SelectedProject;
+  detection: ProjectDetection;
+  summary: string;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+};
+
+export type CreateStarterRequest = {
+  starter: ProjectStarterCategory;
+  destinationFolder: string;
+  projectName?: string;
+};
+
+export type CreateStarterResult = {
+  project: SelectedProject;
+  detection: ProjectDetection;
+  summary: string;
+  commands: string[];
+  needsEnvironmentCheck?: boolean;
+  warnings: string[];
+};
+
+export type RunAppCommand = {
+  id: string;
+  label: string;
+  command: string;
+  args: string[];
+  cwd?: string;
+  confidence: number;
+  longRunning: boolean;
+};
+
+export type RunAppStatus = {
+  running: boolean;
+  terminalSessionId?: string;
+  command?: RunAppCommand;
+  outputPreview: string;
+  startedAt?: string;
+  stoppedAt?: string;
+  exitCode?: number;
+};
+
+export type RunAppResult = {
+  status: RunAppStatus;
+};
+
+export type ViewChangesResult = {
+  createdFiles: string[];
+  modifiedFiles: string[];
+  deletedFiles: string[];
 };
 
 export type TerminalSession = {
@@ -1136,6 +1241,15 @@ export type LeviApi = {
   projects: {
     getRecent: () => Promise<SelectedProject | null>;
     openFolder: () => Promise<SelectedProject | null>;
+    starters: () => Promise<ProjectStarterInfo[]>;
+    createStarter: (request: CreateStarterRequest) => Promise<CreateStarterResult>;
+    cloneRepository: (request: CloneRepositoryRequest) => Promise<CloneRepositoryResult>;
+    detect: () => Promise<ProjectDetection>;
+    runCommands: () => Promise<RunAppCommand[]>;
+    runApp: (request?: { commandId?: string }) => Promise<RunAppResult>;
+    stopApp: () => Promise<RunAppResult>;
+    runStatus: () => Promise<RunAppStatus>;
+    viewChanges: () => Promise<ViewChangesResult>;
   };
   workspace: {
     getStatus: () => Promise<WorkspaceStatus>;
@@ -1320,6 +1434,7 @@ export type LeviApi = {
     gitStatus: (request: AgentGitStatusRequest) => Promise<AgentGitStatusResult>;
     verify: (request: AgentVerifyRequest) => Promise<AgentVerifyResult>;
     repairPlan: (request: AgentRepairPlanRequest) => Promise<AgentRepairPlanResult>;
+    repairExecute: (request: AgentRepairExecuteRequest) => Promise<AgentRepairExecutionResult>;
     repairStatus: (request: AgentRepairStatusRequest) => Promise<AgentRepairStatusResult>;
     browserPreview: (request: AgentBrowserPreviewRequest) => Promise<AgentBrowserPreviewResult>;
     browserExecute: (request: AgentBrowserExecuteRequest) => Promise<AgentBrowserExecutionResult>;

@@ -247,6 +247,8 @@ export type AgentGitOperation =
   | "unstage-file"
   | "stage-all"
   | "commit"
+  | "pull"
+  | "push"
   | "create-branch"
   | "switch-branch"
   | "restore-file"
@@ -385,7 +387,7 @@ export type AgentFailureClassification =
   | "Missing import"
   | "Syntax"
   | "Unknown";
-export type AgentRepairStatus = "Pending" | "Approved" | "Rejected" | "Cancelled" | "Completed";
+export type AgentRepairStatus = "Pending" | "Approved" | "Rejected" | "Cancelled" | "Executing" | "Completed" | "Blocked";
 
 export type AgentVerificationCheck = {
   kind: "build" | "test" | "lint" | "typecheck";
@@ -428,10 +430,14 @@ export type AgentVerificationReport = {
 export type AgentRepairQueueItem = {
   id: string;
   reportId: string;
+  attempt: number;
   problem: string;
   likelyCause: string;
   affectedFiles: string[];
   suggestedFix: string;
+  actions: AgentApprovalAction[];
+  requiresFreshApproval: boolean;
+  blockers: string[];
   confidence: number;
   estimatedRisk: AgentRiskLevel;
   classification: AgentFailureClassification;
@@ -442,9 +448,10 @@ export type AgentRepairQueueItem = {
 
 export type AgentRepairProgressEntry = {
   id: string;
-  stage: "Verification Started" | "Verification Complete" | "Repair Planned" | "Repair Approved" | "Repair Complete";
+  stage: "Verification Started" | "Verification Complete" | "Repair Planned" | "Repair Approved" | "Repair Executing" | "Repair Complete";
   reportId?: string;
   repairId?: string;
+  attempt?: number;
   createdAt: string;
 };
 
@@ -654,6 +661,13 @@ export type AgentRepairStatusRequest = {
   repairId?: string;
 };
 
+export type AgentRepairExecuteRequest = {
+  sessionId: string;
+  reportId?: string;
+  repairId?: string;
+  attempt?: number;
+};
+
 export type AgentStatusRequest = {
   sessionId?: string;
 };
@@ -776,6 +790,16 @@ export type AgentRepairStatusResult = {
   repairs: AgentRepairQueueItem[];
   reports: AgentVerificationReport[];
   progress: AgentRepairProgressEntry[];
+  state: AgentState;
+};
+
+export type AgentRepairExecutionResult = {
+  sessionId: string;
+  reportId: string;
+  attempt: number;
+  executedActions: AgentExecutionQueueItem[];
+  blockedActions: AgentApprovalAction[];
+  repairs: AgentRepairQueueItem[];
   state: AgentState;
 };
 

@@ -35,6 +35,8 @@ import type {
   AgentQueueResult,
   AgentRepairPlanRequest,
   AgentRepairPlanResult,
+  AgentRepairExecuteRequest,
+  AgentRepairExecutionResult,
   AgentRepairQueueItem,
   AgentRepairStatusRequest,
   AgentRepairStatusResult,
@@ -95,9 +97,11 @@ const MAX_TERMINAL_OUTPUT_CHARS = 12_000;
 const MAX_VERIFICATION_REPORTS = 20;
 const MAX_REPAIR_ITEMS = 20;
 const MAX_REPAIR_TEXT = 2_000;
+const MAX_REPAIR_ATTEMPTS = 3;
 const MAX_TERMINAL_ARG_LENGTH = 500;
 const MAX_TERMINAL_ARGS = 80;
 const SUPPORTED_ACTIONS = new Set(["create-file", "modify-file", "delete-file", "rename-file", "create-folder", "rename-folder"]);
+const AUTOMATIC_REPAIR_ACTIONS = new Set(["create-file", "modify-file", "create-folder"]);
 const SAFE_TERMINAL_EXECUTABLES = new Set([
   "node",
   "node.exe",
@@ -718,6 +722,88 @@ export class AgentExecutionService {
     return { sessionId: session.id, reportId: report.id, repairs, state: this.options.snapshot() };
   }
 
+  async repairExecute(session: AgentSession, rawRequest: unknown): Promise<AgentRepairExecutionResult> {
+    const request = validateRepairExecuteRequest(rawRequest);
+    if (request.sessionId !== session.id) throw new Error("Agent repair execute request session does not match.");
+    if (!session.plan) throw new Error("Agent session has no execution plan.");
+    const report = request.reportId
+      ? ensureVerificationReports(session).find((item) => item.id === request.reportId)
+      : ensureVerificationReports(session)[0];
+    if (!report) throw new Error("Agent verification report was not found.");
+    const attempt = clampRepairAttempt(request.attempt);
+    if (attempt > MAX_REPAIR_ATTEMPTS) throw new Error("Agent repair retry limit reached.");
+    const repairs = ensureRepairQueue(session)
+      .filter((repair) => repair.reportId === report.id)
+      .filter((repair) => !request.repairId || repair.id === request.repairId)
+      .filter((repair) => repair.status !== "Rejected" && repair.status !== "Cancelled" && repair.status !== "Completed");
+    if (!repairs.length) throw new Error("No executable repair actions are available.");
+
+    const executedActions: AgentExecutionQueueItem[] = [];
+    const blockedActions: AgentApprovalAction[] = [];
+    addRepairProgress(session, "Repair Executing", { reportId: report.id, attempt });
+    session.status = "Executing";
+    await this.touch(session);
+
+    for (const repair of repairs) {
+      const repairExecutedActions: AgentExecutionQueueItem[] = [];
+      const repairBlockedActions: AgentApprovalAction[] = [];
+      repair.attempt = attempt;
+      repair.status = "Executing";
+      repair.updatedAt = new Date().toISOString();
+      for (const action of repair.actions ?? []) {
+        const blocker = repairApprovalBlocker(action, repair, report, session);
+        if (blocker) {
+          repair.blockers = uniqueStrings([...(repair.blockers ?? []), blocker]);
+          repair.requiresFreshApproval = true;
+          blockedActions.push(action);
+          repairBlockedActions.push(action);
+          continue;
+        }
+        const planAction = attachRepairAction(session, action);
+        const item = ensureQueueItem(session, planAction);
+        try {
+          item.status = "Executing";
+          item.startedAt = new Date().toISOString();
+          const preview = await this.createPreview(session.id, planAction);
+          if (preview.destructive || preview.riskLevel === "high") {
+            item.status = "Pending";
+            const message = "Repair action requires fresh approval because its preview is high risk.";
+            repair.blockers = uniqueStrings([...(repair.blockers ?? []), message]);
+            repair.requiresFreshApproval = true;
+            blockedActions.push(planAction);
+            repairBlockedActions.push(planAction);
+            continue;
+          }
+          const undo = await this.applyAction(planAction, preview);
+          this.undoBySession.set(session.id, undo);
+          session.plan.lastUndo = undoMetadata(undo);
+          item.status = "Completed";
+          item.completedAt = new Date().toISOString();
+          item.error = undefined;
+          executedActions.push(item);
+          repairExecutedActions.push(item);
+          this.options.emitExecution(session.id, planAction.id);
+        } catch (error) {
+          item.status = "Failed";
+          item.error = errorMessage(error);
+          item.completedAt = new Date().toISOString();
+          repair.blockers = uniqueStrings([...(repair.blockers ?? []), item.error]);
+          blockedActions.push(planAction);
+          repairBlockedActions.push(planAction);
+        }
+      }
+      repair.status = repairBlockedActions.length && repairExecutedActions.length === 0 ? "Blocked" : "Completed";
+      repair.updatedAt = new Date().toISOString();
+      addRepairProgress(session, "Repair Complete", { reportId: report.id, repairId: repair.id, attempt });
+    }
+
+    session.status = blockedActions.length && executedActions.length === 0 ? "Error" : "Ready";
+    session.error = blockedActions.length && executedActions.length === 0 ? "Repair actions require fresh approval or failed validation." : undefined;
+    session.plan.progress = progressFromSession(session);
+    await this.touch(session);
+    return { sessionId: session.id, reportId: report.id, attempt, executedActions, blockedActions, repairs, state: this.options.snapshot() };
+  }
+
   repairStatus(session: AgentSession, rawRequest: unknown): AgentRepairStatusResult {
     const request = validateRepairStatusRequest(rawRequest);
     if (request.sessionId !== session.id) throw new Error("Agent repair status request session does not match.");
@@ -921,10 +1007,11 @@ export class AgentExecutionService {
       const response: AIRuntimeInvocationResponse = await this.options.runtimeManager.chat({
         providerId: session.runtimeId,
         model: session.modelId,
+        timeoutMs: 300_000,
         messages: [
           {
             role: "system",
-            content: "Create a read-only repair plan for Levi. Return JSON only: {\"repairs\":[{\"problem\":\"...\",\"likelyCause\":\"...\",\"affectedFiles\":[\"src/file.ts\"],\"suggestedFix\":\"...\",\"confidence\":0.75,\"estimatedRisk\":\"low\",\"classification\":\"Type errors\"}]}. Do not claim to edit files, run commands, retry tasks, or perform Git operations."
+            content: "Create structured repair actions for Levi. Return JSON only: {\"repairs\":[{\"problem\":\"...\",\"likelyCause\":\"...\",\"affectedFiles\":[\"src/file.ts\"],\"suggestedFix\":\"...\",\"confidence\":0.75,\"estimatedRisk\":\"low\",\"classification\":\"Type errors\",\"actions\":[{\"type\":\"modify-file\",\"title\":\"Fix type error\",\"description\":\"...\",\"relativePath\":\"src/file.ts\",\"edits\":[{\"kind\":\"replace\",\"find\":\"old\",\"replace\":\"new\"}]}]}]}. Actions must be concrete and limited to create-file, modify-file, or create-folder unless fresh user approval is needed. Do not use Markdown or shell commands for code repairs."
           },
           {
             role: "user",
@@ -1657,6 +1744,17 @@ function validateRepairStatusRequest(value: unknown): AgentRepairStatusRequest {
   };
 }
 
+function validateRepairExecuteRequest(value: unknown): AgentRepairExecuteRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent repair execute request is invalid.");
+  const record = value as Record<string, unknown>;
+  return {
+    sessionId: validateId(record.sessionId, "sessionId"),
+    reportId: record.reportId === undefined ? undefined : validateId(record.reportId, "reportId"),
+    repairId: record.repairId === undefined ? undefined : validateId(record.repairId, "repairId"),
+    attempt: Number.isInteger(record.attempt) ? record.attempt as number : undefined
+  };
+}
+
 function validateId(value: unknown, field: string): string {
   if (typeof value !== "string" || value.length === 0 || value.length > 140 || value.includes("\0")) throw new Error(`${field} is invalid.`);
   return value;
@@ -1873,16 +1971,88 @@ function ensureRepairProgress(session: AgentSession): NonNullable<AgentSession["
 function addRepairProgress(
   session: AgentSession,
   stage: NonNullable<AgentSession["plan"]>["repairProgress"][number]["stage"],
-  options: { reportId?: string; repairId?: string; createdAt?: string } = {}
+  options: { reportId?: string; repairId?: string; attempt?: number; createdAt?: string } = {}
 ): void {
   ensureRepairProgress(session).push({
     id: randomUUID(),
     stage,
     reportId: options.reportId,
     repairId: options.repairId,
+    attempt: options.attempt,
     createdAt: options.createdAt ?? new Date().toISOString()
   });
   session.plan!.repairProgress = session.plan!.repairProgress.slice(-80);
+}
+
+function clampRepairAttempt(value: unknown): number {
+  if (!Number.isInteger(value)) return 1;
+  return Math.max(1, Math.min(MAX_REPAIR_ATTEMPTS + 1, value as number));
+}
+
+function attachRepairAction(session: AgentSession, action: AgentApprovalAction): AgentApprovalAction {
+  const existing = session.plan!.approvals.find((item) => item.id === action.id);
+  if (existing) {
+    existing.status = "Approved";
+    existing.updatedAt = new Date().toISOString();
+    return existing;
+  }
+  const now = new Date().toISOString();
+  const planAction: AgentApprovalAction = {
+    ...action,
+    id: action.id || randomUUID(),
+    status: "Approved",
+    createdAt: action.createdAt || now,
+    updatedAt: now
+  };
+  session.plan!.approvals.push(planAction);
+  return planAction;
+}
+
+function repairApprovalBlocker(
+  action: AgentApprovalAction,
+  repair: AgentRepairQueueItem,
+  report: AgentVerificationReport,
+  session: AgentSession
+): string | null {
+  if (!AUTOMATIC_REPAIR_ACTIONS.has(action.type)) {
+    return "Repair action requires fresh approval because it is not an automatic file repair.";
+  }
+  const targets = [action.relativePath, action.destinationRelativePath, ...(action.affectedFiles ?? [])].filter((value): value is string => Boolean(value));
+  if (targets.length === 0 && action.type !== "create-folder") {
+    return "Repair action has no concrete workspace target.";
+  }
+  if (targets.some((target) => path.isAbsolute(target) || target.includes("\0") || normalizeSlashes(target).split("/").includes(".."))) {
+    return "Repair action targets an unsafe path.";
+  }
+  if (action.type === "delete-file" || action.type === "git-operation" || action.type.startsWith("browser-")) {
+    return "Repair action requires fresh approval because it is destructive or external.";
+  }
+  if (!isRepairRelatedToBuild(targets, repair, report, session)) {
+    return "Repair action is materially outside the approved build scope.";
+  }
+  return null;
+}
+
+function isRepairRelatedToBuild(
+  targets: string[],
+  repair: AgentRepairQueueItem,
+  report: AgentVerificationReport,
+  session: AgentSession
+): boolean {
+  const evidence = uniqueStrings([
+    ...repair.affectedFiles,
+    ...report.failures.flatMap((failure) => failure.affectedFiles),
+    ...report.problems.map((problem) => problem.relativePath),
+    ...session.plan!.estimatedFiles,
+    ...(session.plan!.approvals
+      .flatMap((action) => [action.relativePath, action.destinationRelativePath, ...(action.affectedFiles ?? [])])
+      .filter((value): value is string => Boolean(value)))
+  ]).map((value) => normalizeSlashes(value));
+  if (evidence.length === 0) return false;
+  return targets.every((target) => {
+    const normalized = normalizeSlashes(target);
+    return evidence.some((item) => normalized === item || normalized.startsWith(`${path.posix.dirname(item)}/`) || item.startsWith(`${path.posix.dirname(normalized)}/`));
+  });
 }
 
 function ensureTaskRun(session: AgentSession, action: AgentApprovalAction, preview: AgentTaskPreview): AgentTaskRunState {
@@ -2003,10 +2173,14 @@ function fallbackRepairs(report: AgentVerificationReport): AgentRepairQueueItem[
   return failures.map((failure) => ({
     id: randomUUID(),
     reportId: report.id,
+    attempt: 1,
     problem: failure.message,
     likelyCause: likelyCauseFor(failure.classification),
     affectedFiles: failure.affectedFiles,
     suggestedFix: suggestedFixFor(failure.classification),
+    actions: [],
+    requiresFreshApproval: true,
+    blockers: ["No structured repair action was generated."],
     confidence: failure.classification === "Unknown" ? 0.35 : 0.6,
     estimatedRisk: failure.affectedFiles.length > 1 ? "medium" : "low",
     classification: failure.classification,
@@ -2028,13 +2202,18 @@ function parseRepairPlan(content: string, report: AgentVerificationReport): Agen
   return values.slice(0, MAX_REPAIR_ITEMS).map((value) => {
     const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
     const classification = parseFailureClassification(record.classification);
+    const actions = parseRepairActions(record.actions, now);
     return {
       id: randomUUID(),
       reportId: report.id,
+      attempt: 1,
       problem: sanitizeRepairText(record.problem, "Verification failure needs repair planning."),
       likelyCause: sanitizeRepairText(record.likelyCause, likelyCauseFor(classification)),
       affectedFiles: parseAffectedFiles(record.affectedFiles),
       suggestedFix: sanitizeRepairText(record.suggestedFix, suggestedFixFor(classification)),
+      actions,
+      requiresFreshApproval: actions.some((action) => !AUTOMATIC_REPAIR_ACTIONS.has(action.type)),
+      blockers: actions.length ? [] : ["No structured repair action was generated."],
       confidence: clampConfidence(record.confidence),
       estimatedRisk: parseRisk(record.estimatedRisk),
       classification,
@@ -2043,6 +2222,69 @@ function parseRepairPlan(content: string, report: AgentVerificationReport): Agen
       updatedAt: now
     };
   }).filter((item) => item.problem && item.suggestedFix);
+}
+
+function parseRepairActions(value: unknown, now: string): AgentApprovalAction[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => parseRepairAction(item, now)).filter(Boolean).slice(0, 8) as AgentApprovalAction[];
+}
+
+function parseRepairAction(value: unknown, now: string): AgentApprovalAction | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const type = typeof record.type === "string" ? record.type : "";
+  if (
+    type !== "create-file" &&
+    type !== "modify-file" &&
+    type !== "create-folder" &&
+    type !== "delete-file" &&
+    type !== "run-terminal-command" &&
+    type !== "run-task" &&
+    type !== "git-operation"
+  ) return null;
+  return {
+    id: randomUUID(),
+    type,
+    title: typeof record.title === "string" && record.title.trim() ? record.title.trim().slice(0, 120) : "Repair action",
+    description: typeof record.description === "string" ? record.description.trim().slice(0, 1_000) : "",
+    status: "Pending",
+    relativePath: parseRepairRelativePath(record.relativePath),
+    destinationRelativePath: parseRepairRelativePath(record.destinationRelativePath),
+    content: typeof record.content === "string" ? record.content.slice(0, MAX_CONTENT_CHARS) : undefined,
+    edits: Array.isArray(record.edits) ? record.edits.map(parseRepairFileEdit).filter(Boolean).slice(0, 40) as AgentFileEdit[] : undefined,
+    taskId: typeof record.taskId === "string" ? record.taskId.slice(0, 120) : undefined,
+    taskName: typeof record.taskName === "string" ? record.taskName.slice(0, 120) : undefined,
+    command: typeof record.command === "string" ? record.command.slice(0, 500) : undefined,
+    args: Array.isArray(record.args) ? record.args.filter((item): item is string => typeof item === "string").map((item) => item.slice(0, 500)).slice(0, 80) : undefined,
+    cwd: parseRepairRelativePath(record.cwd),
+    gitOperation: typeof record.gitOperation === "string" ? record.gitOperation.slice(0, 120) : undefined,
+    affectedFiles: Array.isArray(record.affectedFiles) ? parseAffectedFiles(record.affectedFiles) : undefined,
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+function parseRepairRelativePath(value: unknown): string | undefined {
+  if (typeof value !== "string" || path.isAbsolute(value) || value.includes("\0")) return undefined;
+  const normalized = normalizeSlashes(value).replace(/^\.\//, "");
+  if (!normalized || normalized.split("/").includes("..")) return undefined;
+  return normalized.slice(0, 500);
+}
+
+function parseRepairFileEdit(value: unknown): AgentFileEdit | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const kind = record.kind;
+  if (kind !== "insert" && kind !== "replace" && kind !== "append" && kind !== "delete-range" && kind !== "whole-file") return null;
+  return {
+    kind,
+    content: typeof record.content === "string" ? record.content.slice(0, MAX_CONTENT_CHARS) : undefined,
+    line: Number.isInteger(record.line) ? record.line as number : undefined,
+    startLine: Number.isInteger(record.startLine) ? record.startLine as number : undefined,
+    endLine: Number.isInteger(record.endLine) ? record.endLine as number : undefined,
+    find: typeof record.find === "string" ? record.find.slice(0, MAX_CONTENT_CHARS) : undefined,
+    replace: typeof record.replace === "string" ? record.replace.slice(0, MAX_CONTENT_CHARS) : undefined
+  };
 }
 
 function parseFailureClassification(value: unknown): AgentFailureClassification {
@@ -2248,6 +2490,8 @@ function normalizeGitOperation(value: unknown): GitOperation {
     value === "unstage-file" ||
     value === "stage-all" ||
     value === "commit" ||
+    value === "pull" ||
+    value === "push" ||
     value === "create-branch" ||
     value === "switch-branch" ||
     value === "restore-file" ||

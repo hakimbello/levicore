@@ -27,7 +27,9 @@ body {
 }
 
 button,
-textarea {
+textarea,
+input,
+select {
   font: inherit;
 }
 
@@ -633,6 +635,76 @@ textarea:focus-visible,
   margin: calc(-1 * var(--levi-space-16)) auto var(--levi-space-16);
 }
 
+.levi-project-actions,
+.levi-project-workflow-actions,
+.levi-build-run-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--levi-space-8);
+}
+
+.levi-project-actions {
+  margin: 0 auto var(--levi-space-12);
+}
+
+.levi-project-workflow {
+  display: grid;
+  gap: var(--levi-space-10);
+  width: min(var(--levi-layout-conversationEmptyWidth), 100%);
+  margin: 0 auto var(--levi-space-16);
+  padding: var(--levi-space-12);
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-card);
+  background: var(--levi-color-surfaceElevated);
+}
+
+.levi-project-workflow label {
+  display: grid;
+  gap: var(--levi-space-4);
+  color: var(--levi-color-secondaryText);
+  font-size: var(--levi-font-size-caption);
+}
+
+.levi-project-workflow input,
+.levi-project-workflow select,
+.levi-build-run-row select {
+  min-width: 0;
+  min-height: 34px;
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-control);
+  background: var(--levi-color-surface);
+  color: var(--levi-color-primaryText);
+  padding: 0 var(--levi-space-8);
+}
+
+.levi-project-workflow p {
+  margin: 0;
+  color: var(--levi-color-secondaryText);
+  font-size: var(--levi-font-size-caption);
+}
+
+.levi-build-completion-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--levi-space-8);
+}
+
+.levi-build-completion-grid div {
+  display: grid;
+  gap: 2px;
+  padding: var(--levi-space-8);
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-control);
+  background: var(--levi-color-surface);
+}
+
+.levi-build-completion-grid span {
+  color: var(--levi-color-secondaryText);
+  font-size: var(--levi-font-size-caption);
+}
+
 .levi-composer {
   display: grid;
   grid-template-columns: var(--levi-layout-clickTarget) minmax(0, 1fr) var(--levi-layout-clickTarget);
@@ -694,7 +766,8 @@ textarea:focus-visible,
 .levi-apply-button,
 .levi-retry-button,
 .levi-copy-button,
-.levi-terminal-toggle {
+.levi-terminal-toggle,
+.levi-link-button {
   display: inline-flex;
   min-height: var(--levi-layout-clickTarget);
   align-items: center;
@@ -714,6 +787,13 @@ textarea:focus-visible,
     border-color var(--levi-motion-fast) var(--levi-motion-easing),
     color var(--levi-motion-fast) var(--levi-motion-easing),
     transform var(--levi-motion-fast) var(--levi-motion-easing);
+}
+
+.levi-link-button {
+  min-height: 28px;
+  justify-content: flex-start;
+  padding: 0 var(--levi-space-8);
+  text-align: left;
 }
 
 .levi-button:hover,

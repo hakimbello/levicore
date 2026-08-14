@@ -29,6 +29,7 @@ import type {
   AgentProjectSummary,
   AgentQueueRequest,
   AgentRepairPlanRequest,
+  AgentRepairExecuteRequest,
   AgentRepairStatusRequest,
   AgentRenameRequest,
   AgentSession,
@@ -241,6 +242,7 @@ export class AgentService {
       const response = await this.runtimeManager.chat({
         providerId: request.runtimeId ?? session.runtimeId,
         model: request.modelId,
+        timeoutMs: 300_000,
         messages: [
           {
             role: "system",
@@ -381,6 +383,11 @@ export class AgentService {
   async repairPlan(rawRequest: unknown) {
     const session = this.requireSession(sessionIdFromRequest<AgentRepairPlanRequest>(rawRequest, "Agent repair plan request is invalid."));
     return this.executionService.repairPlan(session, rawRequest);
+  }
+
+  async repairExecute(rawRequest: unknown) {
+    const session = this.requireSession(sessionIdFromRequest<AgentRepairExecuteRequest>(rawRequest, "Agent repair execute request is invalid."));
+    return this.executionService.repairExecute(session, rawRequest);
   }
 
   repairStatus(rawRequest: unknown) {

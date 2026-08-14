@@ -55,6 +55,7 @@ import type {
   AgentPreviewRequest,
   AgentQueueRequest,
   AgentRepairPlanRequest,
+  AgentRepairExecuteRequest,
   AgentRepairStatusRequest,
   AgentRenameRequest,
   AgentStatusRequest,
@@ -76,7 +77,9 @@ import type {
   BrowserPressRequest,
   BrowserScreenshotRequest,
   BrowserScrollRequest,
-  BrowserStatusRequest
+  BrowserStatusRequest,
+  CloneRepositoryRequest,
+  CreateStarterRequest
 } from "../../src/types/levi-api";
 import type { TaskEvent } from "../../src/types/task-api";
 import type {
@@ -104,6 +107,15 @@ const IPC_CHANNELS = {
   ollamaGetStatus: "levi:ollama:get-status",
   projectsGetRecent: "levi:projects:get-recent",
   projectsOpenFolder: "levi:projects:open-folder",
+  projectsStarters: "levi:projects:starters",
+  projectsCreateStarter: "levi:projects:create-starter",
+  projectsCloneRepository: "levi:projects:clone-repository",
+  projectsDetect: "levi:projects:detect",
+  projectsRunCommands: "levi:projects:run-commands",
+  projectsRunApp: "levi:projects:run-app",
+  projectsStopApp: "levi:projects:stop-app",
+  projectsRunStatus: "levi:projects:run-status",
+  projectsViewChanges: "levi:projects:view-changes",
   workspaceGetStatus: "levi:workspace:get-status",
   workspaceRefresh: "levi:workspace:refresh",
   workspaceOpenFile: "levi:workspace:open-file",
@@ -277,6 +289,7 @@ const IPC_CHANNELS = {
   agentGitStatus: "levi:agent:git-status",
   agentVerify: "levi:agent:verify",
   agentRepairPlan: "levi:agent:repair-plan",
+  agentRepairExecute: "levi:agent:repair-execute",
   agentRepairStatus: "levi:agent:repair-status",
   agentBrowserPreview: "levi:agent:browser-preview",
   agentBrowserExecute: "levi:agent:browser-execute",
@@ -470,7 +483,16 @@ const leviApi: LeviApiWithWorkspaceTree = {
   },
   projects: {
     getRecent: () => ipcRenderer.invoke(IPC_CHANNELS.projectsGetRecent),
-    openFolder: () => ipcRenderer.invoke(IPC_CHANNELS.projectsOpenFolder)
+    openFolder: () => ipcRenderer.invoke(IPC_CHANNELS.projectsOpenFolder),
+    starters: () => ipcRenderer.invoke(IPC_CHANNELS.projectsStarters),
+    createStarter: (request: CreateStarterRequest) => ipcRenderer.invoke(IPC_CHANNELS.projectsCreateStarter, request),
+    cloneRepository: (request: CloneRepositoryRequest) => ipcRenderer.invoke(IPC_CHANNELS.projectsCloneRepository, request),
+    detect: () => ipcRenderer.invoke(IPC_CHANNELS.projectsDetect),
+    runCommands: () => ipcRenderer.invoke(IPC_CHANNELS.projectsRunCommands),
+    runApp: (request?: { commandId?: string }) => ipcRenderer.invoke(IPC_CHANNELS.projectsRunApp, request ?? {}),
+    stopApp: () => ipcRenderer.invoke(IPC_CHANNELS.projectsStopApp),
+    runStatus: () => ipcRenderer.invoke(IPC_CHANNELS.projectsRunStatus),
+    viewChanges: () => ipcRenderer.invoke(IPC_CHANNELS.projectsViewChanges)
   },
   workspace: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.workspaceGetStatus),
@@ -711,6 +733,7 @@ const leviApi: LeviApiWithWorkspaceTree = {
     gitStatus: (request: AgentGitStatusRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentGitStatus, request),
     verify: (request: AgentVerifyRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentVerify, request),
     repairPlan: (request: AgentRepairPlanRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentRepairPlan, request),
+    repairExecute: (request: AgentRepairExecuteRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentRepairExecute, request),
     repairStatus: (request: AgentRepairStatusRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentRepairStatus, request),
     browserPreview: (request: AgentBrowserPreviewRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentBrowserPreview, request),
     browserExecute: (request: AgentBrowserExecuteRequest) => ipcRenderer.invoke(IPC_CHANNELS.agentBrowserExecute, request),

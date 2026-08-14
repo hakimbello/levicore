@@ -125,7 +125,29 @@ function createDefaultApi(): LeviApi {
       openFolder: vi.fn(async () => ({
         path: "C:\\Users\\LeviUser\\Project",
         name: "Project"
-      }))
+      })),
+      starters: vi.fn(async () => []),
+      createStarter: vi.fn(async () => ({
+        project: { path: "C:\\Users\\LeviUser\\Project", name: "Project" },
+        detection: { projectType: "vanilla-web" as const, confidence: 0.8, evidence: [] },
+        summary: "Project | vanilla-web",
+        commands: [],
+        warnings: []
+      })),
+      cloneRepository: vi.fn(async () => ({
+        project: { path: "C:\\Users\\LeviUser\\Project", name: "Project" },
+        detection: { projectType: "git" as const, confidence: 0.8, evidence: ["Git repository"] },
+        summary: "Project | git",
+        stdout: "",
+        stderr: "",
+        durationMs: 1
+      })),
+      detect: vi.fn(async () => ({ projectType: "vanilla-web" as const, confidence: 0.8, evidence: [] })),
+      runCommands: vi.fn(async () => []),
+      runApp: vi.fn(async () => ({ status: { running: false, outputPreview: "" } })),
+      stopApp: vi.fn(async () => ({ status: { running: false, outputPreview: "" } })),
+      runStatus: vi.fn(async () => ({ running: false, outputPreview: "" })),
+      viewChanges: vi.fn(async () => ({ createdFiles: [], modifiedFiles: [], deletedFiles: [] }))
     },
     workspace: {
       getStatus: vi.fn(async () => ({
@@ -1895,6 +1917,15 @@ function createDefaultApi(): LeviApi {
         state: agentState
       })),
       repairPlan: vi.fn(async (request) => ({ sessionId: request.sessionId, reportId: request.reportId ?? "verification-1", repairs: [], state: agentState })),
+      repairExecute: vi.fn(async (request) => ({
+        sessionId: request.sessionId,
+        reportId: request.reportId ?? "verification-1",
+        attempt: request.attempt ?? 1,
+        executedActions: [],
+        blockedActions: [],
+        repairs: [],
+        state: agentState
+      })),
       repairStatus: vi.fn(async (request) => ({ sessionId: request.sessionId, repairs: [], reports: [], progress: [], state: agentState })),
       browserPreview: vi.fn(async (request) => ({
         sessionId: request.sessionId,

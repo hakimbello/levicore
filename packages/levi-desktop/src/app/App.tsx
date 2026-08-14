@@ -391,6 +391,13 @@ export function App() {
     setWorkspaceStatus(await window.levi.workspace.refresh());
   }
 
+  async function acceptOpenedProject(project: SelectedProject) {
+    setSelectedProject(project);
+    setWorkspaceStatus(await window.levi.workspace.getStatus());
+    setCanUndoEdit(false);
+    clearRecovery();
+  }
+
   async function openWorkspaceCitation(sourceId: string, lineStart?: number) {
     openFile(await window.levi.workspace.openFile({ sourceId, lineStart }));
     setActiveView("explorer");
@@ -587,7 +594,24 @@ export function App() {
         </LazySurface>
       );
     }
-    if (activeView === "home") return <Home selectedProject={selectedProject} workspaceStatus={workspaceStatus} newChatSignal={newChatSignal} onOpenCitation={openWorkspaceCitation} onEditApplied={openAppliedEdit} onEditUndone={openUndoneEdit} onExecutionTransactionUpdate={recordExecutionTransaction} />;
+    if (activeView === "home") return (
+      <Home
+        selectedProject={selectedProject}
+        workspaceStatus={workspaceStatus}
+        newChatSignal={newChatSignal}
+        onOpenCitation={openWorkspaceCitation}
+        onEditApplied={openAppliedEdit}
+        onEditUndone={openUndoneEdit}
+        onExecutionTransactionUpdate={recordExecutionTransaction}
+        onProjectOpened={acceptOpenedProject}
+        onOpenProject={() => setActiveView("explorer")}
+        onOpenTerminal={async () => {
+          const current = await window.levi.terminal.getLayout();
+          await window.levi.terminal.setLayout({ ...current, panelTab: "terminal", panelVisible: true });
+        }}
+        onOpenChangedFile={(relativePath) => openSearchMatch(relativePath, 1)}
+      />
+    );
     return <WorkspacePlaceholder view={activeView} />;
   }
 
