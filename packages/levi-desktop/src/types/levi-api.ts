@@ -385,15 +385,35 @@ export type ProjectStarterCategory =
   | "react-vite"
   | "nextjs"
   | "node-api"
-  | "android-kotlin-compose"
+  | "empty-project"
   | "empty"
   | "clone-github";
+
+export type StarterCommandInfo = {
+  label: string;
+  command: string;
+  args: string[];
+  cwd?: string;
+  kind: "install" | "build" | "test" | "dev" | "verify";
+  required: boolean;
+};
 
 export type ProjectStarterInfo = {
   id: ProjectStarterCategory;
   label: string;
+  projectFamily?: "web" | "api" | "empty" | "mobile" | "desktop";
+  framework?: string;
+  language?: string;
+  packageManager?: string;
+  requiredTools?: string[];
+  initializationActions?: "deterministic-files" | "ecosystem-initializer" | "empty";
+  expectedFiles?: string[];
+  verificationStrategy?: "build-command" | "syntax-check" | "static-files" | "none";
   description: string;
-  installCommand?: string;
+  installCommand?: string | StarterCommandInfo;
+  buildCommand?: StarterCommandInfo;
+  testCommand?: StarterCommandInfo;
+  devCommand?: StarterCommandInfo;
   verificationCommand?: string;
 };
 

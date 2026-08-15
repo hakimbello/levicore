@@ -19,6 +19,7 @@ import type {
   AIRuntimeRequest
 } from "../src/features/ai-runtime";
 import type { TaskDefinition, TaskEvent, TaskOutputEntry, TaskProblem, TaskRun } from "../src/types/task-api";
+import type { WorkspaceScanSummary } from "../src/types/levi-api";
 import { App } from "../src/app/App";
 
 const lazySurfaceWait = { timeout: 5000 };
@@ -343,7 +344,7 @@ function createFakeBrowserService() {
   };
 }
 
-async function createService(runtimeProvider = provider(), options: { taskService?: ReturnType<typeof createFakeTaskService>; gitService?: ReturnType<typeof createFakeGitService>; terminalManager?: ReturnType<typeof createFakeTerminalManager>; browserService?: ReturnType<typeof createFakeBrowserService>; getWindow?: () => ReturnType<typeof fakeWindow>; getChangedFiles?: () => string[] } = {}) {
+async function createService(runtimeProvider = provider(), options: { taskService?: ReturnType<typeof createFakeTaskService>; gitService?: ReturnType<typeof createFakeGitService>; terminalManager?: ReturnType<typeof createFakeTerminalManager>; browserService?: ReturnType<typeof createFakeBrowserService>; getWindow?: () => ReturnType<typeof fakeWindow>; getChangedFiles?: () => string[]; workspaceSummary?: WorkspaceScanSummary } = {}) {
   const statePath = path.join(await fsp.mkdtemp(path.join(os.tmpdir(), "levi-agent-")), "agent-state.json");
   const registry = new AIRuntimeProviderRegistry();
   registry.register(runtimeProvider.id, () => runtimeProvider);
@@ -354,7 +355,7 @@ async function createService(runtimeProvider = provider(), options: { taskServic
     getWorkspaceRoot: () => path.dirname(statePath),
     getWorkspaceStatus: () => ({
       state: "ready",
-      summary: {
+      summary: options.workspaceSummary ?? {
         projectName: "Project",
         rootPath: path.dirname(statePath),
         languages: ["TypeScript"],
@@ -401,6 +402,73 @@ describe("Coding Agent foundation", () => {
     expect(session.plan?.approvals).toHaveLength(2);
     expect(session.projectSummary).toMatchObject({ projectName: "Project", openFiles: ["src/main.tsx"], context: { attachmentCount: 1 } });
     expect(session.plan?.progress.completedActions).toBe(0);
+  });
+
+  it("uses deterministic React + Vite bootstrap for new fitness apps without model planning", async () => {
+    const runtimeProvider = provider();
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "levi-agent-new-app-"));
+    const { service } = await createService(runtimeProvider, {
+      workspaceSummary: {
+        projectName: "Empty",
+        rootPath: root,
+        languages: [],
+        frameworks: [],
+        packageManager: undefined,
+        likelyEntryPoints: [],
+        sourceDirectories: [],
+        testDirectories: [],
+        scripts: {},
+        documentationFiles: [],
+        manifestFiles: [],
+        includedFileCount: 0,
+        excludedFileCount: 0,
+        scanTimestamp: "2026-08-01T00:00:00.000Z"
+      }
+    });
+
+    const result = await service.plan({
+      prompt: "Build me a simple fitness tracking web app with a dashboard, workout list, add-workout form, and local data persistence.",
+      runtimeId: "ollama",
+      modelId: "model-a"
+    });
+
+    const plan = result.state.sessions[0].plan!;
+    expect(runtimeProvider.chat).not.toHaveBeenCalled();
+    expect(plan.planningMode).toBe("deterministic-bootstrap");
+    expect(plan.starterId).toBe("react-vite");
+    expect(plan.projectSlug).toBe("fitness-tracker");
+    expect(plan.approvals.some((action) => action.type === "create-file" && action.relativePath === "package.json")).toBe(true);
+    expect(plan.approvals.some((action) => action.type === "run-terminal-command" && action.command?.includes("npm"))).toBe(true);
+    expect(plan.approvals.some((action) => action.type === "modify-file" && action.relativePath === "src/App.tsx" && action.content?.includes("localStorage"))).toBe(true);
+    expect(plan.milestones).toContain("Verify completed app");
+  });
+
+  it("places deterministic new apps in a child folder when the workspace is non-empty", async () => {
+    const runtimeProvider = provider();
+    const { service } = await createService(runtimeProvider);
+
+    const result = await service.plan({
+      prompt: "Build me a calculator app",
+      runtimeId: "ollama",
+      modelId: "model-a"
+    });
+
+    const plan = result.state.sessions[0].plan!;
+    expect(runtimeProvider.chat).not.toHaveBeenCalled();
+    expect(plan.starterId).toBe("vanilla-web");
+    expect(plan.approvals.map((action) => action.relativePath).filter(Boolean)).toContain("calculator/index.html");
+    expect(plan.approvals.some((action) => action.type === "run-terminal-command" && action.cwd === "calculator")).toBe(true);
+  });
+
+  it("recovers structured plans from fenced JSON with trailing commas", async () => {
+    const malformed = "```json\n{\"summary\":\"Recovered plan\",\"steps\":[{\"title\":\"Edit\",\"description\":\"\",\"estimatedFiles\":[\"src/App.tsx\",],\"actions\":[{\"type\":\"modify-file\",\"title\":\"Edit app\",\"description\":\"\",\"relativePath\":\"src/App.tsx\",},],},],}\n```";
+    const { service } = await createService(provider(malformed));
+
+    const result = await service.plan({ prompt: "Update the existing dashboard copy", runtimeId: "ollama", modelId: "model-a" });
+
+    const plan = result.state.sessions[0].plan!;
+    expect(plan.summary).toBe("Recovered plan");
+    expect(plan.approvals[0]).toMatchObject({ type: "modify-file", relativePath: "src/App.tsx" });
   });
 
   it("previews and executes approved browser actions through BrowserService only", async () => {

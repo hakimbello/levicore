@@ -459,6 +459,13 @@ export type AgentExecutionPlan = {
   id: string;
   objective: string;
   summary: string;
+  planningMode?: "ai" | "deterministic-bootstrap" | "deterministic-existing-project" | "ai-with-bootstrap";
+  starterId?: string;
+  starterLabel?: string;
+  projectSlug?: string;
+  featurePlanningStatus?: "NotRequired" | "Planned" | "Retrying" | "TimedOut" | "Failed";
+  plannerRetries?: number;
+  milestones?: string[];
   steps: AgentPlanStep[];
   approvals: AgentApprovalAction[];
   executionQueue: AgentExecutionQueueItem[];

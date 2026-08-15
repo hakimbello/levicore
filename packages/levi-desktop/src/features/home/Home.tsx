@@ -750,7 +750,7 @@ export function Home({
   }
 
   async function waitForTerminalAction(sessionId: string, actionId: string): Promise<void> {
-    for (let attempt = 0; attempt < 180; attempt += 1) {
+    for (let attempt = 0; attempt < 600; attempt += 1) {
       const status = await window.levi.agent.terminalStatus({ sessionId, actionId });
       const run = status.terminalRuns[0];
       const next = sessionFromState(status.state, sessionId);
@@ -885,6 +885,7 @@ export function Home({
         setBuildError(repairBlockedReason ?? "Verification failed after 3 repair rounds. Review the final error and affected files.");
       } else {
         setBuildPhase("completed");
+        await window.levi.workspace.refresh().catch(() => null);
         const [detectedCommands, detectedChanges] = await Promise.all([
           window.levi.projects.runCommands().catch(() => []),
           window.levi.projects.viewChanges().catch(() => null)
@@ -1206,7 +1207,6 @@ export function Home({
                       <option value="react-vite">React + Vite</option>
                       <option value="nextjs">Next.js</option>
                       <option value="node-api">Node API</option>
-                      <option value="android-kotlin-compose">Android Kotlin + Compose</option>
                       <option value="empty">Empty Project</option>
                     </select>
                   </label>

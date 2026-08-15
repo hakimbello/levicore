@@ -47,6 +47,14 @@ import type { AIRuntimeProviderId } from "../../src/features/ai-runtime";
 import type { WorkspaceStatus } from "../../src/types/levi-api";
 import { RuntimeManager, validateModelId, validateRuntimeProviderId } from "./ai-runtime";
 import { AgentExecutionService } from "./agent-execution-service";
+import {
+  detectNewAppIntent,
+  shouldBootstrapInChild,
+  starterById,
+  type ProjectStarterInfo,
+  type StarterCommand,
+  type StarterFile
+} from "./project-workflows";
 import type { TaskService } from "./tasks/task-service";
 import type { GitService } from "./git-service";
 import type { TerminalManager } from "./terminal-manager";
@@ -224,6 +232,7 @@ export class AgentService {
 
   async plan(rawRequest: unknown): Promise<AgentPlanResult> {
     const request = validatePlanRequest(rawRequest);
+    const ownerObjective = ownerObjectiveFromPrompt(request.prompt);
     const session = request.sessionId
       ? this.requireSession(request.sessionId)
       : await this.createSessionForPlan(request);
@@ -233,11 +242,36 @@ export class AgentService {
     session.modelId = request.modelId;
     session.attachments = request.attachments ?? [];
     session.error = undefined;
-    session.messages = [...session.messages, { id: randomUUID(), role: "user" as const, content: request.prompt, createdAt: now }].slice(-MAX_MESSAGES);
+    session.messages = [...session.messages, { id: randomUUID(), role: "user" as const, content: ownerObjective, createdAt: now }].slice(-MAX_MESSAGES);
     this.persistence.activeSessionId = session.id;
     await this.persistAndEmit();
 
     const projectSummary = await this.analyzeWorkspace(request);
+    const workspaceSummary = this.options.getWorkspaceStatus?.().summary;
+    const bootstrapPlan = createDeterministicNewAppPlan(ownerObjective, projectSummary, workspaceSummary);
+    if (bootstrapPlan) {
+      session.projectSummary = projectSummary;
+      session.plan = bootstrapPlan;
+      session.status = "WaitingForApproval";
+      session.messages = [...session.messages, { id: randomUUID(), role: "assistant" as const, content: bootstrapPlan.summary, createdAt: new Date().toISOString() }].slice(-MAX_MESSAGES);
+      session.title = session.title === "New Agent Session" ? titleFromPrompt(ownerObjective) : session.title;
+      session.updatedAt = new Date().toISOString();
+      await this.persistAndEmit();
+      this.emit({ type: "progress", sessionId: session.id, state: this.snapshot() });
+      return { sessionId: session.id, state: this.snapshot() };
+    }
+    const existingBuildPlan = createDeterministicExistingProjectBuildPlan(ownerObjective, projectSummary, workspaceSummary);
+    if (existingBuildPlan) {
+      session.projectSummary = projectSummary;
+      session.plan = existingBuildPlan;
+      session.status = "WaitingForApproval";
+      session.messages = [...session.messages, { id: randomUUID(), role: "assistant" as const, content: existingBuildPlan.summary, createdAt: new Date().toISOString() }].slice(-MAX_MESSAGES);
+      session.title = session.title === "New Agent Session" ? titleFromPrompt(ownerObjective) : session.title;
+      session.updatedAt = new Date().toISOString();
+      await this.persistAndEmit();
+      this.emit({ type: "progress", sessionId: session.id, state: this.snapshot() });
+      return { sessionId: session.id, state: this.snapshot() };
+    }
     try {
       const response = await this.runtimeManager.chat({
         providerId: request.runtimeId ?? session.runtimeId,
@@ -251,18 +285,18 @@ export class AgentService {
           },
           {
             role: "user",
-            content: buildPlanningPrompt(request.prompt, projectSummary, request.attachments ?? [])
+            content: buildPlanningPrompt(ownerObjective, projectSummary, request.attachments ?? [])
           }
         ],
         options: { format: "json" }
       });
       session.projectSummary = projectSummary;
-      session.plan = createExecutionPlan(request.prompt, response.content, projectSummary);
+      session.plan = createExecutionPlan(ownerObjective, response.content, projectSummary);
       session.status = session.plan.progress.pendingActions > 0 ? "WaitingForApproval" : "Ready";
       session.messages = [...session.messages, { id: randomUUID(), role: "assistant" as const, content: session.plan.summary, createdAt: new Date().toISOString() }].slice(-MAX_MESSAGES);
     } catch (error) {
       session.projectSummary = projectSummary;
-      session.plan = createFallbackPlan(request.prompt, projectSummary);
+      session.plan = createFallbackPlan(ownerObjective, projectSummary);
       session.status = "WaitingForApproval";
       session.error = errorMessage(error);
       session.messages = [
@@ -275,7 +309,7 @@ export class AgentService {
         }
       ].slice(-MAX_MESSAGES);
     }
-    session.title = session.title === "New Agent Session" ? titleFromPrompt(request.prompt) : session.title;
+    session.title = session.title === "New Agent Session" ? titleFromPrompt(ownerObjective) : session.title;
     session.updatedAt = new Date().toISOString();
     await this.persistAndEmit();
     this.emit({ type: "progress", sessionId: session.id, state: this.snapshot() });
@@ -678,6 +712,634 @@ function validateAttachmentContent(value: unknown): string {
   return value;
 }
 
+function ownerObjectiveFromPrompt(prompt: string): string {
+  return prompt.split(/\n\s*Treat this as build execution intent/i)[0]?.trim() || prompt.trim();
+}
+
+function createDeterministicNewAppPlan(
+  objective: string,
+  projectSummary: AgentProjectSummary,
+  workspaceSummary: WorkspaceStatus["summary"] | undefined
+): AgentExecutionPlan | null {
+  const intent = detectNewAppIntent(objective);
+  if (!intent.isNewApplication) return null;
+  const starter = starterById(intent.starterId);
+  const slug = intent.projectName;
+  const targetDescription = projectSummary.rootPath ? ` Target workspace: ${projectSummary.rootPath}.` : "";
+  const childFolder = shouldBootstrapInChild(workspaceSummary) ? slug : "";
+  const now = new Date().toISOString();
+  const approvals: AgentApprovalAction[] = [];
+  const steps: AgentPlanStep[] = [];
+
+  const createStep = (title: string, description: string, estimatedFiles: string[]): AgentPlanStep => {
+    const step: AgentPlanStep = {
+      id: randomUUID(),
+      order: steps.length + 1,
+      title,
+      description,
+      status: "Pending",
+      estimatedFiles: uniqueStrings(estimatedFiles.map((file) => scopedPath(childFolder, file))),
+      actionIds: []
+    };
+    steps.push(step);
+    return step;
+  };
+  const addAction = (step: AgentPlanStep, action: Omit<AgentApprovalAction, "id" | "status" | "stepId" | "createdAt" | "updatedAt">) => {
+    const item: AgentApprovalAction = {
+      ...action,
+      id: randomUUID(),
+      status: "Pending",
+      stepId: step.id,
+      createdAt: now,
+      updatedAt: now
+    };
+    approvals.push(item);
+    step.actionIds.push(item.id);
+  };
+
+  const starterFiles = starterFilesForProject(starter, slug);
+  const bootstrapStep = createStep(
+    `Bootstrap ${starter.label}`,
+    childFolder
+      ? `Create the deterministic ${starter.label} starter in ${childFolder}.`
+      : `Create the deterministic ${starter.label} starter in the workspace root.`,
+    starter.expectedFiles
+  );
+  for (const file of starterFiles) {
+    addAction(bootstrapStep, {
+      type: "create-file",
+      title: `Create ${file.relativePath}`,
+      description: `Write deterministic starter file ${file.relativePath}.`,
+      relativePath: scopedPath(childFolder, file.relativePath),
+      content: file.content
+    });
+  }
+
+  if (starter.installCommand) {
+    const installStep = createStep("Install starter dependencies", `Install dependencies required by ${starter.label}.`, ["package.json"]);
+    addAction(installStep, terminalAction(starter.installCommand, childFolder, "Install dependencies", "Install deterministic starter dependencies."));
+  }
+
+  if (starter.buildCommand) {
+    const verifyStep = createStep("Verify starter", "Run the starter verification command before applying feature work.", starter.expectedFiles);
+    addAction(verifyStep, terminalAction(starter.buildCommand, childFolder, starter.buildCommand.label, "Verify the deterministic starter."));
+  }
+
+  const featureFiles = featureFilesForIntent(intent.requestedFeatures, starter);
+  if (featureFiles.length) {
+    const featureStep = createStep("Implement requested features", `Apply the requested features: ${intent.requestedFeatures.join(", ")}.`, featureFiles.map((file) => file.relativePath));
+    for (const file of featureFiles) {
+      addAction(featureStep, {
+        type: "modify-file",
+        title: `Update ${file.relativePath}`,
+        description: `Apply requested feature implementation to ${file.relativePath}.`,
+        relativePath: scopedPath(childFolder, file.relativePath),
+        content: file.content
+      });
+    }
+  }
+
+  if (starter.buildCommand) {
+    const finalStep = createStep("Verify completed app", "Run final verification after feature implementation.", starter.expectedFiles);
+    addAction(finalStep, terminalAction(starter.buildCommand, childFolder, "Run final verification", "Verify the completed generated app."));
+  }
+
+  const estimatedFiles = uniqueStrings(steps.flatMap((step) => step.estimatedFiles)).slice(0, 40);
+  const plan: AgentExecutionPlan = {
+    id: randomUUID(),
+    objective,
+    summary: `Deterministic new-app plan selected ${starter.label} for ${slug}. ${intent.reason}${targetDescription}`,
+    planningMode: "deterministic-bootstrap",
+    starterId: starter.id,
+    starterLabel: starter.label,
+    projectSlug: slug,
+    featurePlanningStatus: featureFiles.length ? "Planned" : "NotRequired",
+    plannerRetries: 0,
+    milestones: steps.map((step) => step.title),
+    steps,
+    approvals,
+    executionQueue: [],
+    taskRuns: [],
+    terminalRuns: [],
+    gitRuns: [],
+    browserRuns: [],
+    verificationReports: [],
+    repairQueue: [],
+    repairProgress: [],
+    estimatedFiles,
+    progress: { totalSteps: steps.length, pendingActions: 0, approvedActions: 0, rejectedActions: 0, completedActions: 0 },
+    createdAt: now,
+    updatedAt: now
+  };
+  plan.progress = progressFromApprovals(plan);
+  return plan;
+}
+
+function createDeterministicExistingProjectBuildPlan(
+  objective: string,
+  projectSummary: AgentProjectSummary,
+  workspaceSummary: WorkspaceStatus["summary"] | undefined
+): AgentExecutionPlan | null {
+  const text = objective.toLowerCase();
+  const explicitExistingProject = /\b(existing|current|this)\b.{0,40}\b(project|workspace|repo|repository|app|application)\b/.test(text);
+  if (detectNewAppIntent(objective).isNewApplication || !/\b(build|verify|compile|test)\b/.test(text)) return null;
+  if (!explicitExistingProject) return null;
+  if (!workspaceSummary || !shouldBootstrapInChild(workspaceSummary)) return null;
+  const script = workspaceSummary.scripts.build ? "build" : workspaceSummary.scripts.test ? "test" : undefined;
+  if (!script) return null;
+  const now = new Date().toISOString();
+  const stepId = randomUUID();
+  const actionId = randomUUID();
+  const command = packageManagerCommand(workspaceSummary.packageManager);
+  const action: AgentApprovalAction = {
+    id: actionId,
+    type: "run-terminal-command",
+    title: `Run ${script}`,
+    description: `Run the existing project's ${script} script for verification.`,
+    status: "Pending",
+    stepId,
+    command,
+    args: ["run", script],
+    cwd: ".",
+    expectedOutput: "Command exits successfully",
+    estimatedDurationMs: 120_000,
+    createdAt: now,
+    updatedAt: now
+  };
+  const step: AgentPlanStep = {
+    id: stepId,
+    order: 1,
+    title: "Verify existing project",
+    description: `Use the detected ${projectSummary.frameworks.join(", ") || "project"} configuration without scaffolding new files.`,
+    status: "Pending",
+    estimatedFiles: projectSummary.entryPoints.slice(0, 8),
+    actionIds: [actionId]
+  };
+  const plan: AgentExecutionPlan = {
+    id: randomUUID(),
+    objective,
+    summary: `Deterministic existing-project verification will run ${command} run ${script}. No new project scaffold will be created.`,
+    planningMode: "deterministic-existing-project",
+    featurePlanningStatus: "NotRequired",
+    plannerRetries: 0,
+    milestones: [step.title],
+    steps: [step],
+    approvals: [action],
+    executionQueue: [],
+    taskRuns: [],
+    terminalRuns: [],
+    gitRuns: [],
+    browserRuns: [],
+    verificationReports: [],
+    repairQueue: [],
+    repairProgress: [],
+    estimatedFiles: step.estimatedFiles,
+    progress: { totalSteps: 1, pendingActions: 1, approvedActions: 0, rejectedActions: 0, completedActions: 0 },
+    createdAt: now,
+    updatedAt: now
+  };
+  plan.progress = progressFromApprovals(plan);
+  return plan;
+}
+
+function packageManagerCommand(value: string | undefined): string {
+  if (value === "pnpm") return process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+  if (value === "yarn") return process.platform === "win32" ? "yarn.cmd" : "yarn";
+  return process.platform === "win32" ? "npm.cmd" : "npm";
+}
+
+function starterFilesForProject(starter: ProjectStarterInfo, slug: string): StarterFile[] {
+  return starter.files.map((file) => {
+    if (file.relativePath !== "package.json") return file;
+    try {
+      const parsed = JSON.parse(file.content) as Record<string, unknown>;
+      parsed.name = slug;
+      return { ...file, content: `${JSON.stringify(parsed, null, 2)}\n` };
+    } catch {
+      return file;
+    }
+  });
+}
+
+function terminalAction(
+  command: StarterCommand,
+  childFolder: string,
+  title: string,
+  description: string
+): Omit<AgentApprovalAction, "id" | "status" | "stepId" | "createdAt" | "updatedAt"> {
+  return {
+    type: "run-terminal-command",
+    title,
+    description,
+    command: command.command,
+    args: command.args,
+    cwd: childFolder || command.cwd || ".",
+    expectedOutput: command.kind === "install" ? "Dependencies installed" : "Command exits successfully",
+    estimatedDurationMs: command.kind === "install" ? 120_000 : 60_000
+  };
+}
+
+function featureFilesForIntent(features: string[], starter: ProjectStarterInfo): StarterFile[] {
+  if (features.includes("calculator") && starter.id === "vanilla-web") return calculatorFiles();
+  if (features.includes("workout tracking") && starter.id === "react-vite") return fitnessReactFiles();
+  return [];
+}
+
+function scopedPath(prefix: string, relativePath: string): string {
+  return prefix ? `${prefix}/${relativePath}` : relativePath;
+}
+
+function fitnessReactFiles(): StarterFile[] {
+  return [
+    {
+      relativePath: "src/App.tsx",
+      content: `import { FormEvent, useEffect, useMemo, useState } from 'react';
+
+type Workout = {
+  id: string;
+  name: string;
+  minutes: number;
+  intensity: 'Easy' | 'Moderate' | 'Hard';
+  completedAt: string;
+};
+
+const STORAGE_KEY = 'levi-fitness-workouts';
+
+const starterWorkouts: Workout[] = [
+  { id: 'seed-1', name: 'Morning mobility', minutes: 18, intensity: 'Easy', completedAt: '2026-08-10' },
+  { id: 'seed-2', name: 'Strength circuit', minutes: 42, intensity: 'Hard', completedAt: '2026-08-12' }
+];
+
+export default function App() {
+  const [workouts, setWorkouts] = useState<Workout[]>(() => {
+    const saved = window.localStorage.getItem(STORAGE_KEY);
+    return saved ? JSON.parse(saved) as Workout[] : starterWorkouts;
+  });
+  const [name, setName] = useState('');
+  const [minutes, setMinutes] = useState(30);
+  const [intensity, setIntensity] = useState<Workout['intensity']>('Moderate');
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(workouts));
+  }, [workouts]);
+
+  const stats = useMemo(() => {
+    const totalMinutes = workouts.reduce((sum, workout) => sum + workout.minutes, 0);
+    const hardSessions = workouts.filter((workout) => workout.intensity === 'Hard').length;
+    return { totalMinutes, hardSessions, sessions: workouts.length };
+  }, [workouts]);
+
+  function addWorkout(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setWorkouts((current) => [
+      {
+        id: crypto.randomUUID(),
+        name: trimmed,
+        minutes,
+        intensity,
+        completedAt: new Date().toISOString().slice(0, 10)
+      },
+      ...current
+    ]);
+    setName('');
+    setMinutes(30);
+    setIntensity('Moderate');
+  }
+
+  return (
+    <main className="app-shell">
+      <section className="dashboard" aria-label="Fitness dashboard">
+        <div>
+          <p className="eyebrow">Fitness Tracker</p>
+          <h1>Training dashboard</h1>
+        </div>
+        <div className="metric-row">
+          <article><span>Sessions</span><strong>{stats.sessions}</strong></article>
+          <article><span>Minutes</span><strong>{stats.totalMinutes}</strong></article>
+          <article><span>Hard days</span><strong>{stats.hardSessions}</strong></article>
+        </div>
+      </section>
+
+      <section className="content-grid">
+        <form className="workout-form" onSubmit={addWorkout}>
+          <h2>Add workout</h2>
+          <label>
+            Workout
+            <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Tempo run" />
+          </label>
+          <label>
+            Minutes
+            <input type="number" min="1" value={minutes} onChange={(event) => setMinutes(Number(event.target.value))} />
+          </label>
+          <label>
+            Intensity
+            <select value={intensity} onChange={(event) => setIntensity(event.target.value as Workout['intensity'])}>
+              <option>Easy</option>
+              <option>Moderate</option>
+              <option>Hard</option>
+            </select>
+          </label>
+          <button type="submit">Add workout</button>
+        </form>
+
+        <section className="workout-list" aria-label="Workout list">
+          <h2>Workout list</h2>
+          {workouts.map((workout) => (
+            <article key={workout.id} className="workout-item">
+              <div>
+                <strong>{workout.name}</strong>
+                <span>{workout.completedAt}</span>
+              </div>
+              <p>{workout.minutes} min · {workout.intensity}</p>
+            </article>
+          ))}
+        </section>
+      </section>
+    </main>
+  );
+}
+`
+    },
+    {
+      relativePath: "src/styles.css",
+      content: `:root {
+  color: #172033;
+  background: #eef2f7;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 32px;
+}
+
+.dashboard {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(220px, 1fr) minmax(280px, 620px);
+  align-items: end;
+  border-bottom: 1px solid #cbd5e1;
+  padding-bottom: 28px;
+}
+
+.eyebrow {
+  color: #0f766e;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  margin: 0 0 8px;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  font-size: clamp(2rem, 5vw, 4.5rem);
+  line-height: 1;
+  margin-bottom: 0;
+}
+
+.metric-row,
+.content-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.metric-row {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.metric-row article,
+.workout-form,
+.workout-item {
+  background: #ffffff;
+  border: 1px solid #d6dee8;
+  border-radius: 8px;
+  padding: 18px;
+}
+
+.metric-row span,
+.workout-item span {
+  color: #64748b;
+  display: block;
+  font-size: 0.85rem;
+}
+
+.metric-row strong {
+  display: block;
+  font-size: 2rem;
+  margin-top: 6px;
+}
+
+.content-grid {
+  grid-template-columns: minmax(260px, 360px) 1fr;
+  margin-top: 28px;
+}
+
+.workout-form {
+  display: grid;
+  gap: 14px;
+}
+
+.workout-form label {
+  display: grid;
+  gap: 6px;
+  font-weight: 700;
+}
+
+.workout-form input,
+.workout-form select {
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.workout-form button {
+  background: #0f766e;
+  border: 0;
+  border-radius: 6px;
+  color: white;
+  cursor: pointer;
+  font-weight: 800;
+  padding: 12px;
+}
+
+.workout-list {
+  display: grid;
+  gap: 12px;
+}
+
+.workout-item {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.workout-item p {
+  margin: 0;
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    padding: 20px;
+  }
+
+  .dashboard,
+  .content-grid,
+  .metric-row {
+    grid-template-columns: 1fr;
+  }
+
+  .workout-item {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+}
+`
+    }
+  ];
+}
+
+function calculatorFiles(): StarterFile[] {
+  return [
+    {
+      relativePath: "index.html",
+      content: `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Calculator</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="calculator" aria-label="Calculator">
+    <output id="display">0</output>
+    <div class="keys" id="keys"></div>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
+`
+    },
+    {
+      relativePath: "styles.css",
+      content: `body {
+  align-items: center;
+  background: #edf2f4;
+  color: #202631;
+  display: flex;
+  font-family: system-ui, sans-serif;
+  justify-content: center;
+  margin: 0;
+  min-height: 100vh;
+}
+
+.calculator {
+  background: #ffffff;
+  border: 1px solid #ccd6e0;
+  border-radius: 8px;
+  box-shadow: 0 18px 60px rgba(15, 23, 42, 0.14);
+  padding: 18px;
+  width: min(360px, calc(100vw - 32px));
+}
+
+output {
+  background: #101828;
+  border-radius: 6px;
+  color: #f8fafc;
+  display: block;
+  font-size: 2.5rem;
+  margin-bottom: 14px;
+  min-height: 72px;
+  overflow: hidden;
+  padding: 12px;
+  text-align: right;
+}
+
+.keys {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, 1fr);
+}
+
+button {
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  min-height: 54px;
+}
+
+button.operator,
+button.equals {
+  background: #0f766e;
+  color: white;
+}
+`
+    },
+    {
+      relativePath: "app.js",
+      content: `const display = document.querySelector('#display');
+const keys = document.querySelector('#keys');
+const buttons = ['7', '8', '9', '/', '4', '5', '6', '*', '1', '2', '3', '-', '0', '.', 'C', '+', '='];
+let expression = '';
+
+function render() {
+  display.textContent = expression || '0';
+}
+
+function calculate() {
+  if (!/^[0-9+\\-*\\/. ]+$/.test(expression)) return;
+  try {
+    expression = String(Function('"use strict"; return (' + expression + ')')());
+  } catch {
+    expression = '';
+  }
+  render();
+}
+
+for (const label of buttons) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = label;
+  if ('+-*/'.includes(label)) button.className = 'operator';
+  if (label === '=') button.className = 'equals';
+  button.addEventListener('click', () => {
+    if (label === 'C') expression = '';
+    else if (label === '=') calculate();
+    else expression += label;
+    render();
+  });
+  keys.append(button);
+}
+
+render();
+`
+    }
+  ];
+}
+
 function buildPlanningPrompt(prompt: string, summary: AgentProjectSummary, attachments: AIChatAttachment[]): string {
   const existingProject = Boolean(
     summary.rootPath &&
@@ -904,13 +1566,19 @@ function parsePlanContent(content: string): { summary: string; steps: ParsedStep
 function parseJsonObject(content: string): Record<string, unknown> | null {
   const trimmed = content.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim();
-  const candidate = fenced ?? trimmed.slice(trimmed.indexOf("{"), trimmed.lastIndexOf("}") + 1);
-  try {
-    const parsed = JSON.parse(candidate) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
-  } catch {
-    return null;
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  const candidate = fenced ?? (start >= 0 && end > start ? trimmed.slice(start, end + 1) : "");
+  if (!candidate) return null;
+  for (const attempt of [candidate, candidate.replace(/,\s*([}\]])/g, "$1")]) {
+    try {
+      const parsed = JSON.parse(attempt) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+    } catch {
+      // Try the next structured recovery candidate.
+    }
   }
+  return null;
 }
 
 function parseStep(value: unknown): ParsedStep | null {
@@ -958,6 +1626,10 @@ function parseAction(value: unknown): ParsedStep["actions"][number] | null {
 
 function parseRelativeAlias(value: unknown): string | undefined {
   return typeof value === "string" && !path.isAbsolute(value) && !value.includes("..") ? value.slice(0, 500).replace(/\\/g, "/") : undefined;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
 }
 
 function parseFileEdit(value: unknown): NonNullable<AgentApprovalAction["edits"]>[number] | null {

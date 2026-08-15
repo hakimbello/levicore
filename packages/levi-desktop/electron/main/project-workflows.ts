@@ -41,16 +41,50 @@ export type ProjectStarterCategory =
   | "react-vite"
   | "nextjs"
   | "node-api"
-  | "android-kotlin-compose"
+  | "empty-project"
   | "empty"
   | "clone-github";
+
+export type StarterFile = {
+  relativePath: string;
+  content: string;
+};
+
+export type StarterCommand = {
+  label: string;
+  command: string;
+  args: string[];
+  cwd?: string;
+  kind: "install" | "build" | "test" | "dev" | "verify";
+  required: boolean;
+};
 
 export type ProjectStarterInfo = {
   id: ProjectStarterCategory;
   label: string;
+  projectFamily: "web" | "api" | "empty" | "mobile" | "desktop";
+  framework?: string;
+  language: string;
+  packageManager?: string;
+  requiredTools: string[];
+  initializationActions: "deterministic-files" | "ecosystem-initializer" | "empty";
+  expectedFiles: string[];
+  verificationStrategy: "build-command" | "syntax-check" | "static-files" | "none";
   description: string;
-  installCommand?: string;
-  verificationCommand?: string;
+  installCommand?: StarterCommand;
+  buildCommand?: StarterCommand;
+  testCommand?: StarterCommand;
+  devCommand?: StarterCommand;
+  files: StarterFile[];
+};
+
+export type NewAppIntent = {
+  isNewApplication: boolean;
+  starterId: ProjectStarterCategory;
+  projectName: string;
+  requestedFeatures: string[];
+  confidence: number;
+  reason: string;
 };
 
 export type CloneRepositoryRequest = {
@@ -124,14 +158,111 @@ type ProjectWorkflowOptions = {
   execFile?: ExecFile;
 };
 
+const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const nodeCommand = process.platform === "win32" ? "node.exe" : "node";
+
 export const PROJECT_STARTERS: ProjectStarterInfo[] = [
-  { id: "vanilla-web", label: "Vanilla Web", description: "HTML, CSS, and JavaScript files.", verificationCommand: "node --check main.js" },
-  { id: "react-vite", label: "React + Vite", description: "React project initialized through Vite.", installCommand: "npm create vite@latest . -- --template react-ts", verificationCommand: "npm run build" },
-  { id: "nextjs", label: "Next.js", description: "Next.js app initialized through create-next-app.", installCommand: "npx create-next-app@latest . --ts --eslint --app --src-dir --import-alias @/*", verificationCommand: "npm run build" },
-  { id: "node-api", label: "Node API", description: "Small Node API starter.", verificationCommand: "node --check src/server.js" },
-  { id: "android-kotlin-compose", label: "Android Kotlin + Compose", description: "Creates an Android build request and tooling check.", verificationCommand: "gradle --version" },
-  { id: "empty", label: "Empty Project", description: "A safe empty workspace." },
-  { id: "clone-github", label: "Clone GitHub Repository", description: "Clone a public HTTPS GitHub repository." }
+  {
+    id: "vanilla-web",
+    label: "Vanilla Web",
+    projectFamily: "web",
+    framework: "HTML/CSS/JavaScript",
+    language: "JavaScript",
+    requiredTools: ["node"],
+    initializationActions: "deterministic-files",
+    expectedFiles: ["index.html", "styles.css", "app.js"],
+    verificationStrategy: "syntax-check",
+    description: "HTML, CSS, and JavaScript files.",
+    buildCommand: { label: "Check JavaScript", command: nodeCommand, args: ["--check", "app.js"], kind: "verify", required: true },
+    devCommand: { label: "Open static HTML", command: "open-static", args: ["index.html"], kind: "dev", required: false },
+    files: vanillaFiles()
+  },
+  {
+    id: "react-vite",
+    label: "React + Vite",
+    projectFamily: "web",
+    framework: "React + Vite",
+    language: "TypeScript",
+    packageManager: "npm",
+    requiredTools: ["node", "npm"],
+    initializationActions: "deterministic-files",
+    expectedFiles: ["package.json", "index.html", "src/main.tsx", "src/App.tsx", "src/styles.css", "vite.config.ts", "tsconfig.json"],
+    verificationStrategy: "build-command",
+    description: "React project initialized with a deterministic Vite scaffold.",
+    installCommand: { label: "Install dependencies", command: npmCommand, args: ["install"], kind: "install", required: true },
+    buildCommand: { label: "Build", command: npmCommand, args: ["run", "build"], kind: "build", required: true },
+    devCommand: { label: "Run dev server", command: npmCommand, args: ["run", "dev"], kind: "dev", required: false },
+    files: reactViteFiles()
+  },
+  {
+    id: "nextjs",
+    label: "Next.js",
+    projectFamily: "web",
+    framework: "Next.js",
+    language: "TypeScript",
+    packageManager: "npm",
+    requiredTools: ["node", "npm"],
+    initializationActions: "deterministic-files",
+    expectedFiles: ["package.json", "app/page.tsx", "app/layout.tsx", "next.config.mjs", "tsconfig.json"],
+    verificationStrategy: "build-command",
+    description: "Minimal deterministic Next.js App Router starter.",
+    installCommand: { label: "Install dependencies", command: npmCommand, args: ["install"], kind: "install", required: true },
+    buildCommand: { label: "Build", command: npmCommand, args: ["run", "build"], kind: "build", required: true },
+    devCommand: { label: "Run dev server", command: npmCommand, args: ["run", "dev"], kind: "dev", required: false },
+    files: nextFiles()
+  },
+  {
+    id: "node-api",
+    label: "Node API",
+    projectFamily: "api",
+    framework: "Node HTTP",
+    language: "JavaScript",
+    packageManager: "npm",
+    requiredTools: ["node", "npm"],
+    initializationActions: "deterministic-files",
+    expectedFiles: ["package.json", "src/server.js"],
+    verificationStrategy: "syntax-check",
+    description: "Small Node API starter.",
+    buildCommand: { label: "Check server", command: nodeCommand, args: ["--check", "src/server.js"], kind: "verify", required: true },
+    devCommand: { label: "Run API", command: nodeCommand, args: ["src/server.js"], kind: "dev", required: false },
+    files: nodeApiFiles()
+  },
+  {
+    id: "empty-project",
+    label: "Empty Project",
+    projectFamily: "empty",
+    language: "Plain text",
+    requiredTools: [],
+    initializationActions: "empty",
+    expectedFiles: [],
+    verificationStrategy: "none",
+    description: "A safe empty workspace.",
+    files: []
+  },
+  {
+    id: "empty",
+    label: "Empty Project",
+    projectFamily: "empty",
+    language: "Plain text",
+    requiredTools: [],
+    initializationActions: "empty",
+    expectedFiles: [],
+    verificationStrategy: "none",
+    description: "A safe empty workspace.",
+    files: []
+  },
+  {
+    id: "clone-github",
+    label: "Clone GitHub Repository",
+    projectFamily: "empty",
+    language: "Unknown",
+    requiredTools: ["git"],
+    initializationActions: "empty",
+    expectedFiles: [],
+    verificationStrategy: "none",
+    description: "Clone a public HTTPS GitHub repository.",
+    files: []
+  }
 ];
 
 export function validateGitHubRepositoryUrl(value: string): string {
@@ -172,6 +303,73 @@ export async function validateNewProjectDestination(destinationFolder: string, p
     throw new Error("Destination folder is not empty.");
   }
   return target;
+}
+
+export function starterById(id: ProjectStarterCategory): ProjectStarterInfo {
+  const starter = PROJECT_STARTERS.find((item) => item.id === id);
+  if (!starter || starter.id === "clone-github") throw new Error("Starter is not supported.");
+  return starter;
+}
+
+export function safeProjectSlug(prompt: string): string {
+  const normalized = prompt
+    .toLowerCase()
+    .replace(/\btracking\b/g, "tracker")
+    .replace(/[`"'’]/g, "")
+    .replace(/\b(build|create|make|generate|scaffold|implement|add|me|a|an|the|simple|basic|new|app|application|website|web|site|project|with|using|for|and|local|data|persistence|dashboard|list|form|workout|workouts)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  const words = normalized.split(/\s+/).filter(Boolean);
+  const selected = words.length ? words.slice(0, 3) : ["levi", "app"];
+  const slug = selected.join("-").replace(/^-+|-+$/g, "").slice(0, 60);
+  return slug || "levi-app";
+}
+
+export function detectNewAppIntent(prompt: string): NewAppIntent {
+  const text = prompt.toLowerCase();
+  const isNewApplication = /\b(build|create|make|generate|scaffold)\b/.test(text) && /\b(app|application|website|site|api|dashboard|tool|tracker|calculator)\b/.test(text);
+  let starterId: ProjectStarterCategory = "react-vite";
+  let reason = "General web application defaults to React + Vite.";
+  if (/\bcalculator\b/.test(text)) {
+    starterId = "vanilla-web";
+    reason = "Calculator prompts use the fast static web starter.";
+  } else if (/\bnext(?:\.js|js)?\b/.test(text)) {
+    starterId = "nextjs";
+    reason = "Prompt requested Next.js.";
+  } else if (/\b(node|express|api|backend|server)\b/.test(text) && !/\bwebsite|site|frontend\b/.test(text)) {
+    starterId = "node-api";
+    reason = "Prompt requested a Node/API backend.";
+  } else if (/\breact|vite\b/.test(text)) {
+    starterId = "react-vite";
+    reason = "Prompt requested React or Vite.";
+  } else if (/\b(calculator|static|landing page|homepage|portfolio|simple website|website|site)\b/.test(text) && !/\bapp|application|dashboard|tracker|saas\b/.test(text)) {
+    starterId = "vanilla-web";
+    reason = "Prompt describes a simple static website.";
+  }
+  return {
+    isNewApplication,
+    starterId,
+    projectName: safeProjectSlug(prompt),
+    requestedFeatures: extractRequestedFeatures(prompt),
+    confidence: isNewApplication ? 0.82 : 0.25,
+    reason
+  };
+}
+
+export function shouldBootstrapInChild(summary: WorkspaceScanSummary | undefined): boolean {
+  if (!summary) return false;
+  return summary.includedFileCount > 0 || summary.manifestFiles.length > 0 || summary.sourceDirectories.length > 0 || summary.likelyEntryPoints.length > 0;
+}
+
+function extractRequestedFeatures(prompt: string): string[] {
+  const text = prompt.toLowerCase();
+  const features: string[] = [];
+  if (/\bdashboard\b/.test(text)) features.push("dashboard");
+  if (/\bworkout|fitness|tracker|tracking\b/.test(text)) features.push("workout tracking");
+  if (/\bform|add\b/.test(text)) features.push("add form");
+  if (/\blocal storage|local data|persistence|persist\b/.test(text)) features.push("local persistence");
+  if (/\bcalculator\b/.test(text)) features.push("calculator");
+  return unique(features.length ? features : [prompt.replace(/\s+/g, " ").trim().slice(0, 120)]);
 }
 
 export function detectProjectFromSummary(summary: WorkspaceScanSummary): ProjectDetection {
@@ -255,8 +453,11 @@ export function detectRunCommands(summary: WorkspaceScanSummary): RunAppCommand[
   addScript("serve", "Run serve script", 0.76);
   addScript("dev", "Run dev script", 0.72);
 
-  if (summary.likelyEntryPoints.includes("index.html")) {
-    commands.push({ id: "static:index", label: "Open static HTML", command: "open-static", args: ["index.html"], confidence: 0.74, longRunning: false });
+  const htmlEntry = summary.likelyEntryPoints.map((entry) => entry.replace(/\\/g, "/")).find((entry) => entry === "index.html" || entry.endsWith(".html"));
+  if (htmlEntry) {
+    commands.push({ id: `static:${htmlEntry}`, label: "Open static HTML", command: "open-static", args: [htmlEntry], confidence: 0.74, longRunning: false });
+  } else if (detection.projectType === "vanilla-web") {
+    commands.push({ id: "static:index.html", label: "Open static HTML", command: "open-static", args: ["index.html"], confidence: 0.7, longRunning: false });
   }
 
   return uniqueRunCommands(commands).sort((left, right) => right.confidence - left.confidence);
@@ -365,20 +566,14 @@ export class ProjectWorkflowService {
     const commands: string[] = [];
     const warnings: string[] = [];
     let needsEnvironmentCheck = false;
-    if (request.starter === "vanilla-web") await createVanillaWeb(destination);
-    else if (request.starter === "node-api") await createNodeApi(destination);
-    else if (request.starter === "empty") await fs.writeFile(path.join(destination, ".gitkeep"), "", "utf8");
-    else if (request.starter === "android-kotlin-compose") {
-      needsEnvironmentCheck = true;
-      await createAndroidBuildRequest(destination);
-      warnings.push("Android project generation requires local Gradle and Android SDK checks before Levi can safely initialize it.");
+    const starter = starterById(request.starter);
+    if (starter.initializationActions === "empty") {
+      await fs.writeFile(path.join(destination, ".gitkeep"), "", "utf8");
     } else {
-      const starter = PROJECT_STARTERS.find((item) => item.id === request.starter);
-      if (!starter?.installCommand) throw new Error("Starter is not supported.");
-      commands.push(starter.installCommand);
-      await fs.writeFile(path.join(destination, ".levi-starter.json"), JSON.stringify({ starter: starter.id, installCommand: starter.installCommand }, null, 2), "utf8");
-      warnings.push("Levi prepared the ecosystem initializer command; run it through the terminal workflow before editing generated files.");
+      await writeStarterFiles(destination, starter);
     }
+    if (starter.installCommand) commands.push(commandText(starter.installCommand));
+    if (starter.buildCommand) commands.push(commandText(starter.buildCommand));
     const project = await this.options.openProjectAtPath(destination);
     if (!project) throw new Error("Created project could not be opened.");
     await this.options.refreshWorkspace();
@@ -486,21 +681,129 @@ function normalizeSlashes(value: string): string {
   return value.replace(/\\/g, "/");
 }
 
-async function createVanillaWeb(destination: string): Promise<void> {
-  await fs.writeFile(path.join(destination, "index.html"), "<!doctype html>\n<html>\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <title>Levi App</title>\n  <link rel=\"stylesheet\" href=\"styles.css\">\n</head>\n<body>\n  <main id=\"app\"></main>\n  <script src=\"main.js\"></script>\n</body>\n</html>\n", "utf8");
-  await fs.writeFile(path.join(destination, "styles.css"), "body {\n  margin: 0;\n  font-family: system-ui, sans-serif;\n}\n", "utf8");
-  await fs.writeFile(path.join(destination, "main.js"), "document.querySelector('#app').textContent = 'Ready to build with Levi.';\n", "utf8");
+function commandText(command: StarterCommand): string {
+  return [command.command, ...command.args].join(" ");
 }
 
-async function createNodeApi(destination: string): Promise<void> {
-  await fs.mkdir(path.join(destination, "src"), { recursive: true });
-  await fs.writeFile(path.join(destination, "package.json"), JSON.stringify({ name: path.basename(destination).toLowerCase().replace(/[^a-z0-9-]+/g, "-"), version: "0.1.0", private: true, scripts: { start: "node src/server.js", dev: "node src/server.js", test: "node --test", build: "node --check src/server.js" } }, null, 2), "utf8");
-  await fs.writeFile(path.join(destination, "src", "server.js"), "const http = require('node:http');\n\nconst server = http.createServer((_request, response) => {\n  response.writeHead(200, { 'content-type': 'application/json' });\n  response.end(JSON.stringify({ ok: true }));\n});\n\nserver.listen(process.env.PORT || 3000, () => {\n  console.log('API listening');\n});\n", "utf8");
+async function writeStarterFiles(destination: string, starter: ProjectStarterInfo): Promise<void> {
+  for (const file of starter.files) {
+    const target = path.join(destination, file.relativePath);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, file.content, "utf8");
+  }
 }
 
-async function createAndroidBuildRequest(destination: string): Promise<void> {
-  await fs.mkdir(path.join(destination, ".levi"), { recursive: true });
-  await fs.writeFile(path.join(destination, ".levi", "android-compose-request.json"), JSON.stringify({ starter: "android-kotlin-compose", requiredChecks: ["gradle --version", "ANDROID_HOME", "adb"] }, null, 2), "utf8");
+function vanillaFiles(): StarterFile[] {
+  return [
+    {
+      relativePath: "index.html",
+      content: "<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <title>Levi App</title>\n  <link rel=\"stylesheet\" href=\"styles.css\">\n</head>\n<body>\n  <main id=\"app\"></main>\n  <script src=\"app.js\"></script>\n</body>\n</html>\n"
+    },
+    {
+      relativePath: "styles.css",
+      content: "body {\n  margin: 0;\n  font-family: system-ui, sans-serif;\n  background: #f7f7fb;\n  color: #1f2937;\n}\n\n#app {\n  min-height: 100vh;\n}\n"
+    },
+    {
+      relativePath: "app.js",
+      content: "document.querySelector('#app').innerHTML = '<h1>Ready to build with Levi</h1>';\n"
+    }
+  ];
+}
+
+function reactViteFiles(): StarterFile[] {
+  return [
+    {
+      relativePath: "package.json",
+      content: `${JSON.stringify({
+        name: "levi-react-app",
+        version: "0.1.0",
+        private: true,
+        type: "module",
+        scripts: { dev: "vite --host 127.0.0.1", build: "tsc -b && vite build", preview: "vite preview --host 127.0.0.1" },
+        dependencies: { "@vitejs/plugin-react": "^4.7.0", "vite": "^7.0.6", "typescript": "^5.8.3", "react": "^19.1.1", "react-dom": "^19.1.1" },
+        devDependencies: { "@types/react": "^19.1.8", "@types/react-dom": "^19.1.6" }
+      }, null, 2)}\n`
+    },
+    {
+      relativePath: "index.html",
+      content: "<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"UTF-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <title>Levi React App</title>\n</head>\n<body>\n  <div id=\"root\"></div>\n  <script type=\"module\" src=\"/src/main.tsx\"></script>\n</body>\n</html>\n"
+    },
+    {
+      relativePath: "vite.config.ts",
+      content: "import { defineConfig } from 'vite';\nimport react from '@vitejs/plugin-react';\n\nexport default defineConfig({\n  plugins: [react()]\n});\n"
+    },
+    {
+      relativePath: "tsconfig.json",
+      content: `${JSON.stringify({
+        compilerOptions: {
+          target: "ES2020",
+          useDefineForClassFields: true,
+          lib: ["DOM", "DOM.Iterable", "ES2020"],
+          allowJs: false,
+          skipLibCheck: true,
+          esModuleInterop: true,
+          allowSyntheticDefaultImports: true,
+          strict: true,
+          forceConsistentCasingInFileNames: true,
+          module: "ESNext",
+          moduleResolution: "Bundler",
+          resolveJsonModule: true,
+          isolatedModules: true,
+          noEmit: true,
+          jsx: "react-jsx"
+        },
+        include: ["src"],
+        references: []
+      }, null, 2)}\n`
+    },
+    {
+      relativePath: "src/main.tsx",
+      content: "import React from 'react';\nimport { createRoot } from 'react-dom/client';\nimport App from './App';\nimport './styles.css';\n\ncreateRoot(document.getElementById('root')!).render(\n  <React.StrictMode>\n    <App />\n  </React.StrictMode>\n);\n"
+    },
+    {
+      relativePath: "src/App.tsx",
+      content: "export default function App() {\n  return (\n    <main className=\"app-shell\">\n      <h1>Ready to build with Levi</h1>\n    </main>\n  );\n}\n"
+    },
+    {
+      relativePath: "src/styles.css",
+      content: ":root {\n  color: #172033;\n  background: #f5f7fb;\n  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\nbody {\n  margin: 0;\n}\n\nbutton,\ninput {\n  font: inherit;\n}\n\n.app-shell {\n  min-height: 100vh;\n  display: grid;\n  place-items: center;\n  padding: 24px;\n}\n"
+    }
+  ];
+}
+
+function nextFiles(): StarterFile[] {
+  return [
+    {
+      relativePath: "package.json",
+      content: `${JSON.stringify({
+        name: "levi-next-app",
+        version: "0.1.0",
+        private: true,
+        scripts: { dev: "next dev", build: "next build", start: "next start" },
+        dependencies: { next: "^16.0.0", react: "^19.1.1", "react-dom": "^19.1.1", typescript: "^5.8.3", "@types/react": "^19.1.8", "@types/node": "^24.1.0" },
+        devDependencies: {}
+      }, null, 2)}\n`
+    },
+    { relativePath: "next.config.mjs", content: "const nextConfig = {};\n\nexport default nextConfig;\n" },
+    { relativePath: "tsconfig.json", content: `${JSON.stringify({ compilerOptions: { target: "ES2020", lib: ["dom", "dom.iterable", "esnext"], allowJs: false, skipLibCheck: true, strict: true, noEmit: true, esModuleInterop: true, module: "esnext", moduleResolution: "bundler", resolveJsonModule: true, isolatedModules: true, jsx: "preserve", incremental: true }, include: ["next-env.d.ts", "**/*.ts", "**/*.tsx"], exclude: ["node_modules"] }, null, 2)}\n` },
+    { relativePath: "next-env.d.ts", content: "/// <reference types=\"next\" />\n/// <reference types=\"next/image-types/global\" />\n" },
+    { relativePath: "app/layout.tsx", content: "import './globals.css';\n\nexport default function RootLayout({ children }: { children: React.ReactNode }) {\n  return <html lang=\"en\"><body>{children}</body></html>;\n}\n" },
+    { relativePath: "app/page.tsx", content: "export default function Page() {\n  return <main className=\"page\"><h1>Ready to build with Levi</h1></main>;\n}\n" },
+    { relativePath: "app/globals.css", content: "body { margin: 0; font-family: system-ui, sans-serif; background: #f7f7fb; color: #172033; }\n.page { min-height: 100vh; display: grid; place-items: center; }\n" }
+  ];
+}
+
+function nodeApiFiles(): StarterFile[] {
+  return [
+    {
+      relativePath: "package.json",
+      content: `${JSON.stringify({ name: "levi-node-api", version: "0.1.0", private: true, scripts: { start: "node src/server.js", dev: "node src/server.js", test: "node --test", build: "node --check src/server.js" } }, null, 2)}\n`
+    },
+    {
+      relativePath: "src/server.js",
+      content: "const http = require('node:http');\n\nconst server = http.createServer((_request, response) => {\n  response.writeHead(200, { 'content-type': 'application/json' });\n  response.end(JSON.stringify({ ok: true }));\n});\n\nserver.listen(process.env.PORT || 3000, () => {\n  console.log('API listening');\n});\n"
+    }
+  ];
 }
 
 async function exists(targetPath: string): Promise<boolean> {

@@ -119,6 +119,10 @@ export function BuildReviewPanel({
           <strong>{plan?.approvals.length ?? 0}</strong>
         </div>
         <div>
+          <span>Starter</span>
+          <strong>{plan?.starterLabel ?? "Custom"}</strong>
+        </div>
+        <div>
           <span>Files</span>
           <strong>{new Set([...created, ...modified, ...deleted]).size}</strong>
         </div>
@@ -155,6 +159,26 @@ export function BuildReviewPanel({
         <h3>Workspace Root</h3>
         <code>{session.projectSummary?.rootPath ?? "Current workspace"}</code>
       </div>
+
+      {plan?.milestones?.length ? (
+        <div className="levi-plan-section">
+          <h3>Milestones</h3>
+          {plan.milestones.map((milestone) => <p key={milestone}>{milestone}</p>)}
+        </div>
+      ) : null}
+
+      {plan?.featurePlanningStatus === "TimedOut" || plan?.featurePlanningStatus === "Failed" ? (
+        <div className="levi-plan-section levi-plan-blocked">
+          <h3>Feature Planning</h3>
+          <p>{plan.featurePlanningStatus}</p>
+          <div className="levi-build-run-row">
+            <button type="button" className="levi-secondary-button" onClick={onEditPlan}>Retry</button>
+            <button type="button" className="levi-secondary-button" onClick={onEditPlan}>Use smaller plan</button>
+            <button type="button" className="levi-secondary-button" onClick={onOpenProject}>Change model</button>
+            <button type="button" className="levi-secondary-button" onClick={() => void onCancel()}>Cancel</button>
+          </div>
+        </div>
+      ) : null}
 
       {verification ? (
         <div className={verification.status === "Succeeded" ? "levi-plan-section" : "levi-plan-section levi-plan-blocked"}>

@@ -2170,24 +2170,51 @@ function classifyFailure(value: string): AgentFailureClassification {
 function fallbackRepairs(report: AgentVerificationReport): AgentRepairQueueItem[] {
   const now = new Date().toISOString();
   const failures = report.failures.filter((failure) => failure.severity === "error").slice(0, 5);
-  return failures.map((failure) => ({
-    id: randomUUID(),
-    reportId: report.id,
-    attempt: 1,
-    problem: failure.message,
-    likelyCause: likelyCauseFor(failure.classification),
-    affectedFiles: failure.affectedFiles,
-    suggestedFix: suggestedFixFor(failure.classification),
-    actions: [],
-    requiresFreshApproval: true,
-    blockers: ["No structured repair action was generated."],
-    confidence: failure.classification === "Unknown" ? 0.35 : 0.6,
-    estimatedRisk: failure.affectedFiles.length > 1 ? "medium" : "low",
-    classification: failure.classification,
-    status: "Pending",
-    createdAt: now,
-    updatedAt: now
-  }));
+  return failures.map((failure) => {
+    const actions = deterministicFallbackRepairActions(failure, report, now);
+    return {
+      id: randomUUID(),
+      reportId: report.id,
+      attempt: 1,
+      problem: failure.message,
+      likelyCause: likelyCauseFor(failure.classification),
+      affectedFiles: failure.affectedFiles,
+      suggestedFix: actions.length ? "Apply the structured syntax repair inferred from verification output." : suggestedFixFor(failure.classification),
+      actions,
+      requiresFreshApproval: actions.length === 0,
+      blockers: actions.length ? [] : ["No structured repair action was generated."],
+      confidence: actions.length ? 0.72 : failure.classification === "Unknown" ? 0.35 : 0.6,
+      estimatedRisk: failure.affectedFiles.length > 1 ? "medium" : "low",
+      classification: failure.classification,
+      status: "Pending" as const,
+      createdAt: now,
+      updatedAt: now
+    };
+  });
+}
+
+function deterministicFallbackRepairActions(failure: AgentVerificationFailure, report: AgentVerificationReport, now: string): AgentApprovalAction[] {
+  const target = failure.affectedFiles.find((file) => file && !path.isAbsolute(file) && !normalizeSlashes(file).split("/").includes(".."));
+  if (!target) return [];
+  const text = `${failure.message}\n${report.terminalOutputExcerpt}`.replace(/\r\n/g, "\n");
+  const assignment = text.match(/\b(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*;/);
+  if (!assignment) return [];
+  const original = assignment[0];
+  const replacement = `${assignment[1]} ${assignment[2]} = 0;`;
+  return [
+    {
+      id: randomUUID(),
+      type: "modify-file",
+      title: "Repair invalid assignment",
+      description: "Replace the missing assignment value reported by verification.",
+      status: "Pending",
+      relativePath: normalizeSlashes(target),
+      edits: [{ kind: "replace", find: original, replace: replacement }],
+      affectedFiles: [normalizeSlashes(target)],
+      createdAt: now,
+      updatedAt: now
+    }
+  ];
 }
 
 function parseRepairPlan(content: string, report: AgentVerificationReport): AgentRepairQueueItem[] {

@@ -6,8 +6,12 @@ import type { WorkspaceScanSummary } from "../src/types/levi-api";
 import {
   ProjectWorkflowService,
   analyzeGitChanges,
+  detectNewAppIntent,
   detectProjectFromSummary,
   detectRunCommands,
+  safeProjectSlug,
+  shouldBootstrapInChild,
+  starterById,
   validateGitHubRepositoryUrl,
   validateNewProjectDestination
 } from "../electron/main/project-workflows";
@@ -83,6 +87,34 @@ describe("project workflow service", () => {
     }));
     expect(commands[0]).toMatchObject({ command: process.platform === "win32" ? "pnpm.cmd" : "pnpm", args: ["run", "dev"] });
     expect(detectRunCommands(summary({ scripts: {} }))).toEqual([]);
+    expect(detectRunCommands(summary({ likelyEntryPoints: ["./index.html"], languages: ["HTML"] }))[0]).toMatchObject({ command: "open-static", args: ["./index.html"] });
+    expect(detectRunCommands(summary({ languages: ["HTML"] }))[0]).toMatchObject({ command: "open-static", args: ["index.html"] });
+  });
+
+  it("selects deterministic starters for new-app prompts", () => {
+    const fitness = detectNewAppIntent("Build me a simple fitness tracking web app with a dashboard, workout list, add-workout form, and local data persistence.");
+    expect(fitness).toMatchObject({ isNewApplication: true, starterId: "react-vite", projectName: "fitness-tracker" });
+
+    const calculator = detectNewAppIntent("Build me a calculator app");
+    expect(calculator).toMatchObject({ isNewApplication: true, starterId: "vanilla-web", projectName: "calculator" });
+
+    expect(detectNewAppIntent("Update the existing dashboard copy").isNewApplication).toBe(false);
+    expect(detectNewAppIntent("Create a Next.js dashboard app").starterId).toBe("nextjs");
+    expect(detectNewAppIntent("Create a Node API for workouts").starterId).toBe("node-api");
+  });
+
+  it("exposes starter registry metadata and child-folder rules", () => {
+    const react = starterById("react-vite");
+    expect(react).toMatchObject({
+      projectFamily: "web",
+      framework: "React + Vite",
+      initializationActions: "deterministic-files",
+      verificationStrategy: "build-command"
+    });
+    expect(react.files.map((file) => file.relativePath)).toContain("src/App.tsx");
+    expect(shouldBootstrapInChild(summary({ includedFileCount: 1 }))).toBe(true);
+    expect(shouldBootstrapInChild(summary({ includedFileCount: 0, manifestFiles: [], sourceDirectories: [], likelyEntryPoints: [] }))).toBe(false);
+    expect(safeProjectSlug("Build me a fitness tracking web app")).toBe("fitness-tracker");
   });
 
   it("creates safe built-in starters and opens the workspace", async () => {
@@ -103,6 +135,32 @@ describe("project workflow service", () => {
     expect(result.project.name).toBe("fitness-api");
     expect(opened).toEqual([path.join(root, "fitness-api")]);
     await expect(fs.readFile(path.join(root, "fitness-api", "src", "server.js"), "utf8")).resolves.toContain("createServer");
+  });
+
+  it("creates deterministic React + Vite starter files", async () => {
+    const root = await tempDir();
+    const service = new ProjectWorkflowService({
+      getWorkspaceRoot: () => path.join(root, "fitness-tracker"),
+      openProjectAtPath: async (directoryPath) => ({ path: directoryPath, name: path.basename(directoryPath) }),
+      refreshWorkspace: async () => undefined,
+      getWorkspaceSummary: () => summary({
+        frameworks: ["React", "Vite"],
+        languages: ["TypeScript"],
+        packageManager: "npm",
+        manifestFiles: ["package.json", "vite.config.ts"],
+        scripts: { dev: "vite --host 127.0.0.1", build: "tsc -b && vite build" }
+      }),
+      terminalManager: {} as never,
+      getWindow: () => null
+    });
+
+    const result = await service.createStarter({ starter: "react-vite", destinationFolder: root, projectName: "fitness-tracker" });
+    expect(result.commands).toEqual(expect.arrayContaining([
+      expect.stringContaining("install"),
+      expect.stringContaining("build")
+    ]));
+    await expect(fs.readFile(path.join(root, "fitness-tracker", "package.json"), "utf8")).resolves.toContain("levi-react-app");
+    await expect(fs.readFile(path.join(root, "fitness-tracker", "src", "App.tsx"), "utf8")).resolves.toContain("Ready to build");
   });
 
   it("surfaces clone failures cleanly", async () => {
