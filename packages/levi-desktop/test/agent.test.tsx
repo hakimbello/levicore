@@ -304,6 +304,8 @@ function createFakeTerminalManager() {
   return service;
 }
 
+const nodeExecutable = process.platform === "win32" ? "node.exe" : "node";
+
 function createFakeBrowserService() {
   const session = {
     id: "browser-1",
@@ -807,19 +809,18 @@ describe("Coding Agent foundation", () => {
     await expect(service.repairPlan({ sessionId: "missing", reportId: verified.report.id })).rejects.toThrow(/not found/i);
   });
 
-  it("executes approved terminal commands through TerminalManager and records live output", async () => {
-    const terminalManager = createFakeTerminalManager();
+  it("executes approved non-interactive terminal commands directly and records stdout, stderr, and exit code", async () => {
     const runtimeProvider = providerWithActions([{
       type: "run-terminal-command",
       title: "Run terminal tests",
       description: "Run a safe validation command.",
-      command: "npm.cmd",
-      args: ["test"],
+      command: nodeExecutable,
+      args: ["-e", "process.stdout.write('running tests\\n'),process.stderr.write('src/index.ts(1,7): error TS1109: Expression expected.\\n'),process.exit(7)"],
       cwd: ".",
-      expectedOutput: "Tests pass.",
+      expectedOutput: "Tests fail with compiler output.",
       estimatedDurationMs: 1000
     }]);
-    const { service, runtimeProvider: providerInstance } = await createService(runtimeProvider, { terminalManager, getWindow: fakeWindow });
+    const { service, runtimeProvider: providerInstance } = await createService(runtimeProvider);
     const planned = await service.plan({ prompt: "Run terminal command", runtimeId: "ollama", modelId: "model-a" });
     const sessionId = planned.sessionId;
     const action = planned.state.sessions[0].plan!.approvals[0];
@@ -827,19 +828,77 @@ describe("Coding Agent foundation", () => {
     await expect(service.terminalPreview({ sessionId, actionId: action.id })).rejects.toThrow(/approved/i);
     await service.approve({ sessionId, actionId: action.id });
     const preview = await service.terminalPreview({ sessionId, actionId: action.id });
-    expect(preview.preview).toMatchObject({ executable: "npm.cmd", args: ["test"], riskLevel: "low", expectedOutput: "Tests pass." });
+    expect(preview.preview).toMatchObject({ executable: nodeExecutable, riskLevel: "medium", expectedOutput: "Tests fail with compiler output." });
     expect(path.isAbsolute(preview.preview.cwd)).toBe(true);
 
     const execution = await service.terminalExecute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
-    expect(terminalManager.createCommand).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ command: "npm.cmd", args: ["test"], cwd: preview.preview.cwd }), expect.any(Function));
-    expect(execution.terminalRun).toMatchObject({ status: "Running", terminalSessionId: "terminal-1" });
-    terminalManager.emitData("running tests\n");
-    expect(service.terminalStatus({ sessionId }).terminalRuns[0].outputPreview).toContain("running tests");
-    terminalManager.finish(0);
+    expect(execution.terminalRun).toMatchObject({ status: "Running", terminalSessionId: undefined });
     await waitFor(() => expect(service.terminalStatus({ sessionId }).terminalRuns[0].verification).toBeDefined());
     const finished = service.terminalStatus({ sessionId }).terminalRuns[0];
-    expect(finished).toMatchObject({ status: "Succeeded", exitCode: 0, verification: expect.objectContaining({ outputExcerpt: expect.stringContaining("running tests") }) });
+    expect(finished).toMatchObject({
+      status: "Failed",
+      resultStatus: "failed",
+      exitCode: 7,
+      outputPreview: expect.stringContaining("running tests"),
+      stderrPreview: expect.stringContaining("src/index.ts"),
+      verification: expect.objectContaining({ outputExcerpt: expect.stringContaining("running tests") })
+    });
+    const verified = await service.verify({ sessionId });
+    const terminalFailure = verified.report.failures.find((failure) => failure.source === "terminal");
+    expect(terminalFailure).toMatchObject({
+      source: "terminal",
+      exitCode: 7,
+      affectedFiles: ["src/index.ts"],
+      details: expect.objectContaining({
+        command: nodeExecutable,
+        exitCode: 7,
+        relevantFiles: ["src/index.ts"],
+        stderr: expect.stringContaining("src/index.ts"),
+        stdout: expect.stringContaining("running tests")
+      })
+    });
     expect(providerInstance.chat).toHaveBeenCalledTimes(2);
+  });
+
+  it("distinguishes terminal infrastructure failures from project command failures", async () => {
+    const runtimeProvider = providerWithActions([{
+      type: "run-terminal-command",
+      title: "Run missing wrapper",
+      description: "Run an allowed executable that is not present.",
+      command: "gradlew.bat",
+      args: ["test"],
+      cwd: "."
+    }]);
+    const { service, runtimeProvider: providerInstance } = await createService(runtimeProvider);
+    const planned = await service.plan({ prompt: "Run missing wrapper", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const action = planned.state.sessions[0].plan!.approvals[0];
+    await service.approve({ sessionId, actionId: action.id });
+    const preview = await service.terminalPreview({ sessionId, actionId: action.id });
+
+    await service.terminalExecute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    await waitFor(() => expect(service.terminalStatus({ sessionId }).terminalRuns[0].resultStatus).toBe("infrastructure-error"));
+    const failed = service.terminalStatus({ sessionId }).terminalRuns[0];
+    expect(failed).toMatchObject({
+      status: "Failed",
+      resultStatus: "infrastructure-error",
+      failureReason: expect.stringContaining("Terminal execution failed")
+    });
+
+    const verified = await service.verify({ sessionId });
+    expect(verified.report.terminalOutputExcerpt).toBe("");
+    expect(verified.report.failures[0]).toMatchObject({
+      source: "terminal",
+      message: expect.stringContaining("Terminal execution failed"),
+      affectedFiles: []
+    });
+    const repairs = await service.repairPlan({ sessionId, reportId: verified.report.id });
+    expect(repairs.repairs[0]).toMatchObject({
+      actions: [],
+      requiresFreshApproval: true,
+      blockers: ["No structured repair action was generated."]
+    });
+    expect(providerInstance.chat).toHaveBeenCalledTimes(1);
   });
 
   it("rejects dangerous terminal commands, handles cancellation, run-again, queue blocking, and interrupted restore", async () => {
@@ -848,8 +907,9 @@ describe("Coding Agent foundation", () => {
       { type: "run-terminal-command", title: "Chained", description: "Bad chain.", command: "npm.cmd test && npm.cmd build" },
       { type: "run-terminal-command", title: "Shell", description: "Bad shell.", command: "cmd", args: ["/c", "npm test"] },
       { type: "run-terminal-command", title: "Env", description: "Bad env.", command: "npm.cmd", args: ["test", "TOKEN=value"] },
-      { type: "run-terminal-command", title: "Safe", description: "Safe command.", command: "npm.cmd", args: ["test"], cwd: "." },
-      { type: "run-terminal-command", title: "Second", description: "Second command.", command: "node", args: ["--version"], cwd: "." }
+      { type: "run-terminal-command", title: "Safe", description: "Safe command.", command: nodeExecutable, args: ["-e", "setInterval(function(){},1000)"], cwd: "." },
+      { type: "run-terminal-command", title: "Second", description: "Second command.", command: nodeExecutable, args: ["--version"], cwd: "." },
+      { type: "run-terminal-command", title: "Failing", description: "Failing command.", command: nodeExecutable, args: ["-e", "process.stderr.write('compile failed\\n'),process.exit(1)"], cwd: "." }
     ]), { terminalManager, getWindow: fakeWindow });
     const planned = await service.plan({ prompt: "Terminal safety", runtimeId: "ollama", modelId: "model-a" });
     const sessionId = planned.sessionId;
@@ -864,13 +924,21 @@ describe("Coding Agent foundation", () => {
     await service.terminalExecute({ sessionId, actionId: actions[3].id, previewId: preview.preview.previewId });
     await expect(service.terminalExecute({ sessionId, actionId: actions[4].id })).rejects.toThrow(/already running/i);
     await service.terminalCancel({ sessionId, actionId: actions[3].id });
-    expect(terminalManager.kill).toHaveBeenCalledWith("terminal-1");
-    expect(service.terminalStatus({ sessionId }).terminalRuns.find((run) => run.actionId === actions[3].id)?.status).toBe("Cancelled");
+    expect(terminalManager.kill).not.toHaveBeenCalled();
+    expect(service.terminalStatus({ sessionId }).terminalRuns.find((run) => run.actionId === actions[3].id)).toMatchObject({ status: "Cancelled", resultStatus: "cancelled" });
 
-    await service.terminalExecute({ sessionId, actionId: actions[3].id, previewId: preview.preview.previewId });
-    terminalManager.finish(1);
-    await waitFor(() => expect(service.terminalStatus({ sessionId }).terminalRuns.find((run) => run.actionId === actions[3].id)?.verification).toBeDefined());
-    expect(service.terminalStatus({ sessionId }).terminalRuns.find((run) => run.actionId === actions[3].id)).toMatchObject({ status: "Failed", failureReason: "Terminal command failed with exit code 1." });
+    const nextPreview = await service.terminalPreview({ sessionId, actionId: actions[4].id });
+    await service.terminalExecute({ sessionId, actionId: actions[4].id, previewId: nextPreview.preview.previewId });
+    await waitFor(() => expect(service.terminalStatus({ sessionId }).terminalRuns.find((run) => run.actionId === actions[4].id)?.verification).toBeDefined());
+    expect(service.terminalStatus({ sessionId }).terminalRuns.find((run) => run.actionId === actions[4].id)).toMatchObject({ status: "Succeeded", resultStatus: "completed", exitCode: 0 });
+
+    const failingPreview = await service.terminalPreview({ sessionId, actionId: actions[5].id });
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await service.terminalExecute({ sessionId, actionId: actions[5].id, previewId: failingPreview.preview.previewId });
+      await waitFor(() => expect(service.terminalStatus({ sessionId }).terminalRuns.find((run) => run.actionId === actions[5].id)?.verification).toBeDefined());
+      const failed = service.terminalStatus({ sessionId }).terminalRuns.find((run) => run.actionId === actions[5].id);
+      expect(failed).toMatchObject({ status: "Failed", resultStatus: "failed", exitCode: 1, failureReason: "Terminal command failed with exit code 1." });
+    }
 
     const restored = new AgentService(new RuntimeManager({ registry: new AIRuntimeProviderRegistry(), statePath: path.join(path.dirname(statePath), "runtime-restore.json"), monitorIntervalMs: 60_000 }), {
       statePath,
@@ -882,10 +950,11 @@ describe("Coding Agent foundation", () => {
     raw.sessions[0].plan.terminalRuns = [{
       actionId: actions[4].id,
       commandId: "restore-command",
-      executable: "node",
+      executable: nodeExecutable,
       args: ["--version"],
       cwd: path.dirname(statePath),
       status: "Running",
+      resultStatus: undefined,
       terminalSessionId: "terminal-restore",
       outputPreview: "",
       stderrPreview: "",

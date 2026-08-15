@@ -162,6 +162,7 @@ export class AgentService {
   }
 
   dispose(): void {
+    this.executionService.dispose();
     while (this.disposables.length) {
       this.disposables.pop()?.();
     }

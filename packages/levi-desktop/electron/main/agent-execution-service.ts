@@ -1,7 +1,9 @@
+import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { TextDecoder } from "node:util";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { BrowserWindow } from "electron";
 import type {
   AgentActionPreview,
@@ -102,6 +104,23 @@ const MAX_TERMINAL_ARG_LENGTH = 500;
 const MAX_TERMINAL_ARGS = 80;
 const SUPPORTED_ACTIONS = new Set(["create-file", "modify-file", "delete-file", "rename-file", "create-folder", "rename-folder"]);
 const AUTOMATIC_REPAIR_ACTIONS = new Set(["create-file", "modify-file", "create-folder"]);
+const DIRECT_PROCESS_EXECUTABLES = new Set([
+  "node",
+  "node.exe",
+  "npm",
+  "npm.cmd",
+  "npx",
+  "npx.cmd",
+  "gradlew.bat",
+  "python",
+  "python.exe",
+  "dotnet",
+  "dotnet.exe",
+  "cargo",
+  "cargo.exe",
+  "go",
+  "go.exe"
+]);
 const SAFE_TERMINAL_EXECUTABLES = new Set([
   "node",
   "node.exe",
@@ -120,6 +139,7 @@ const SAFE_TERMINAL_EXECUTABLES = new Set([
   "python3",
   "py",
   "py.exe",
+  "gradlew.bat",
   "dotnet",
   "dotnet.exe",
   "cargo",
@@ -204,6 +224,7 @@ export class AgentExecutionService {
   private readonly previews = new Map<string, AgentActionPreview>();
   private readonly taskPreviews = new Map<string, AgentTaskPreview>();
   private readonly terminalPreviews = new Map<string, AgentTerminalPreview>();
+  private readonly terminalProcesses = new Map<string, ChildProcessWithoutNullStreams>();
   private readonly gitPreviews = new Map<string, AgentGitPreview>();
   private readonly undoBySession = new Map<string, UndoRecord>();
 
@@ -462,9 +483,6 @@ export class AgentExecutionService {
     if (ensureTerminalRuns(session).some((run) => run.status === "Running")) {
       throw new Error("Another agent terminal command is already running.");
     }
-    if (!this.options.terminalManager) throw new Error("TerminalManager is unavailable.");
-    const window = this.options.getWindow?.();
-    if (!window || window.isDestroyed()) throw new Error("No active Levi window is available for terminal execution.");
     const preview = request.previewId ? this.requireTerminalPreview(request.previewId, session.id, action.id) : await this.createTerminalPreview(session.id, action);
     const freshPreview = await this.createTerminalPreview(session.id, action);
     if (terminalPreviewFingerprint(preview) !== terminalPreviewFingerprint(freshPreview)) {
@@ -475,6 +493,7 @@ export class AgentExecutionService {
     Object.assign(terminalRun, {
       status: "Running" as const,
       startedAt,
+      resultStatus: undefined,
       endedAt: undefined,
       exitCode: undefined,
       durationMs: undefined,
@@ -487,21 +506,36 @@ export class AgentExecutionService {
     });
     session.status = "Executing";
     await this.touch(session);
-    const terminal = this.options.terminalManager.createCommand(
-      window,
-      {
-        command: preview.executable,
-        args: preview.args,
-        cwd: preview.cwd,
-        name: `Agent: ${preview.executable}`,
-        cols: 96,
-        rows: 16
-      },
-      (exitCode) => {
-        void this.recordTerminalCompletion(session, terminalRun, exitCode);
+    if (shouldUseDirectProcessExecution(preview)) {
+      this.startDirectTerminalProcess(session, terminalRun, preview);
+    } else {
+      if (!this.options.terminalManager) throw new Error("TerminalManager is unavailable.");
+      const window = this.options.getWindow?.();
+      if (!window || window.isDestroyed()) throw new Error("No active Levi window is available for terminal execution.");
+      try {
+        const terminal = this.options.terminalManager.createCommand(
+          window,
+          {
+            command: preview.executable,
+            args: preview.args,
+            cwd: preview.cwd,
+            name: `Agent: ${preview.executable}`,
+            cols: 96,
+            rows: 16
+          },
+          (exitCode) => {
+            void this.recordTerminalCompletion(session, terminalRun, exitCode);
+          }
+        );
+        terminalRun.terminalSessionId = terminal.id;
+      } catch (error) {
+        if (!canDirectProcessExecute(preview)) {
+          await this.recordTerminalInfrastructureFailure(session, terminalRun, error);
+          return { sessionId: session.id, actionId: action.id, terminalRun, state: this.options.snapshot() };
+        }
+        this.startDirectTerminalProcess(session, terminalRun, preview);
       }
-    );
-    terminalRun.terminalSessionId = terminal.id;
+    }
     terminalRun.updatedAt = new Date().toISOString();
     await this.touch(session);
     this.options.emitTerminal?.(session.id, action.id, terminalRun);
@@ -511,10 +545,15 @@ export class AgentExecutionService {
   async terminalCancel(session: AgentSession, rawRequest: unknown): Promise<AgentTerminalExecutionResult> {
     const request = validateTerminalCancelRequest(rawRequest);
     const terminalRun = requireTerminalRun(session, request.actionId);
-    if (!terminalRun.terminalSessionId || terminalRun.status !== "Running") {
+    if (terminalRun.status !== "Running") {
       throw new Error("Agent terminal command is not running.");
     }
-    this.options.terminalManager?.kill(terminalRun.terminalSessionId);
+    const child = this.terminalProcesses.get(terminalRun.actionId);
+    if (child) {
+      child.kill();
+    } else if (terminalRun.terminalSessionId) {
+      this.options.terminalManager?.kill(terminalRun.terminalSessionId);
+    }
     await this.recordTerminalCompletion(session, terminalRun, terminalRun.exitCode ?? 1, "Cancelled");
     return { sessionId: session.id, actionId: request.actionId, terminalRun, state: this.options.snapshot() };
   }
@@ -864,7 +903,10 @@ export class AgentExecutionService {
     }
     for (const terminalRun of session.plan?.terminalRuns ?? []) {
       if (terminalRun.status === "Running") {
+        this.terminalProcesses.get(terminalRun.actionId)?.kill();
+        this.terminalProcesses.delete(terminalRun.actionId);
         terminalRun.status = "Interrupted";
+        terminalRun.resultStatus = "cancelled";
         terminalRun.endedAt = new Date().toISOString();
         terminalRun.failureReason = "Terminal command was interrupted before Levi shut down.";
         terminalRun.updatedAt = terminalRun.endedAt;
@@ -888,6 +930,13 @@ export class AgentExecutionService {
     }
   }
 
+  dispose(): void {
+    for (const child of this.terminalProcesses.values()) {
+      child.kill();
+    }
+    this.terminalProcesses.clear();
+  }
+
   private createVerificationReport(session: AgentSession, startedAt: string): AgentVerificationReport {
     const plan = session.plan;
     if (!plan) throw new Error("Agent session has no execution plan.");
@@ -897,7 +946,7 @@ export class AgentExecutionService {
     const queue = ensureQueue(session);
     const problems = taskRuns.flatMap((run) => run.problems ?? []).slice(0, MAX_TASK_PROBLEMS);
     const taskOutputExcerpt = boundTerminalOutput(taskRuns.flatMap((run) => run.outputPreview ?? []).map((entry) => entry.text).join(""));
-    const terminalOutputExcerpt = boundTerminalOutput(terminalRuns.map((run) => run.outputPreview).join("\n"));
+    const terminalOutputExcerpt = boundTerminalOutput(terminalRuns.filter((run) => run.resultStatus !== "infrastructure-error").map((run) => run.outputPreview).join("\n"));
     const gitChangedFiles = uniqueStrings([
       ...(this.options.getChangedFiles?.() ?? []),
       ...gitRuns.flatMap((run) => run.affectedFiles ?? [])
@@ -926,12 +975,20 @@ export class AgentExecutionService {
     }
     for (const terminalRun of terminalRuns) {
       if (terminalRun.status === "Failed" || (typeof terminalRun.exitCode === "number" && terminalRun.exitCode !== 0)) {
+        const affectedFiles = inferAffectedFilesFromTerminalOutput(`${terminalRun.stderrPreview}\n${terminalRun.outputPreview}`);
+        const infrastructureError = terminalRun.resultStatus === "infrastructure-error";
+        const details = terminalFailureDetails(terminalRun, session, affectedFiles);
         failures.push(createVerificationFailure({
           source: "terminal",
           severity: "error",
-          message: terminalRun.failureReason ?? `${terminalRun.executable} failed${terminalRun.exitCode === undefined ? "" : ` with exit code ${terminalRun.exitCode}`}.`,
-          text: `${terminalRun.executable} ${terminalRun.args.join(" ")}\n${terminalRun.stderrPreview}\n${terminalRun.outputPreview}`,
-          affectedFiles: [],
+          message: infrastructureError
+            ? terminalRun.failureReason ?? "Terminal execution failed."
+            : terminalRun.failureReason ?? `${terminalRun.executable} failed${terminalRun.exitCode === undefined ? "" : ` with exit code ${terminalRun.exitCode}`}.`,
+          text: infrastructureError
+            ? `Terminal execution failed while launching ${terminalRun.executable}.`
+            : JSON.stringify(details),
+          affectedFiles,
+          details,
           actionId: terminalRun.actionId,
           exitCode: terminalRun.exitCode
         }));
@@ -1001,7 +1058,9 @@ export class AgentExecutionService {
   }
 
   private async createRepairPlan(session: AgentSession, report: AgentVerificationReport): Promise<AgentRepairQueueItem[]> {
-    const fallback = fallbackRepairs(report);
+    const fallback = await this.createFallbackRepairPlan(session, report);
+    if (fallback.some((repair) => repair.actions.length > 0)) return fallback;
+    if (hasOnlyInfrastructureFailures(report)) return fallback;
     if (!this.options.runtimeManager || !session.modelId) return fallback;
     try {
       const response: AIRuntimeInvocationResponse = await this.options.runtimeManager.chat({
@@ -1030,6 +1089,34 @@ export class AgentExecutionService {
       });
       const repairs = parseRepairPlan(response.content, report);
       return repairs.length ? repairs : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  private async createFallbackRepairPlan(session: AgentSession, report: AgentVerificationReport): Promise<AgentRepairQueueItem[]> {
+    const fallback = fallbackRepairs(report);
+    if (fallback.some((repair) => repair.actions.length > 0)) return fallback;
+    const workspaceRoot = this.options.getWorkspaceRoot();
+    if (!workspaceRoot) return fallback;
+    try {
+      const rootRealPath = await fs.realpath(workspaceRoot);
+      const snippets: string[] = [];
+      for (const relativePath of uniqueStrings(report.failures.flatMap((failure) => failure.affectedFiles)).slice(0, 5)) {
+        const normalized = normalizeSlashes(relativePath);
+        if (!normalized || normalized.split("/").includes("..") || path.isAbsolute(normalized)) continue;
+        const absolutePath = path.resolve(rootRealPath, normalized);
+        if (!isInsideRoot(rootRealPath, absolutePath)) continue;
+        const content = await fs.readFile(absolutePath, "utf8").catch(() => "");
+        if (content) snippets.push(`${normalized}\n${content.slice(0, MAX_REPAIR_TEXT)}`);
+      }
+      if (!snippets.length) return fallback;
+      const enrichedReport = {
+        ...report,
+        terminalOutputExcerpt: boundTerminalOutput(`${report.terminalOutputExcerpt}\n${snippets.join("\n")}`)
+      };
+      const enrichedFallback = fallbackRepairs(enrichedReport);
+      return enrichedFallback.some((repair) => repair.actions.length > 0) ? enrichedFallback : fallback;
     } catch {
       return fallback;
     }
@@ -1411,16 +1498,64 @@ export class AgentExecutionService {
     return preview;
   }
 
+  private startDirectTerminalProcess(session: AgentSession, terminalRun: AgentTerminalRunState, preview: AgentTerminalPreview): void {
+    let completed = false;
+    try {
+      const launch = resolveDirectProcessLaunch(preview);
+      const child = spawn(launch.executable, launch.args, {
+        cwd: preview.cwd,
+        env: { ...process.env },
+        shell: false,
+        windowsHide: true
+      });
+      this.terminalProcesses.set(terminalRun.actionId, child);
+      child.stdout.on("data", (chunk) => {
+        this.recordDirectTerminalData(session, terminalRun, String(chunk), "stdout");
+      });
+      child.stderr.on("data", (chunk) => {
+        this.recordDirectTerminalData(session, terminalRun, String(chunk), "stderr");
+      });
+      child.on("error", (error) => {
+        if (completed) return;
+        completed = true;
+        this.terminalProcesses.delete(terminalRun.actionId);
+        void this.recordTerminalInfrastructureFailure(session, terminalRun, error);
+      });
+      child.on("close", (exitCode, signal) => {
+        if (completed) return;
+        completed = true;
+        this.terminalProcesses.delete(terminalRun.actionId);
+        const code = typeof exitCode === "number" ? exitCode : signal ? 1 : 0;
+        void this.recordTerminalCompletion(session, terminalRun, code);
+      });
+    } catch (error) {
+      void this.recordTerminalInfrastructureFailure(session, terminalRun, error);
+    }
+  }
+
+  private recordDirectTerminalData(session: AgentSession, terminalRun: AgentTerminalRunState, data: string, stream: "stdout" | "stderr"): void {
+    if (terminalRun.status !== "Running") return;
+    terminalRun.outputPreview = boundTerminalOutput(`${terminalRun.outputPreview}${data}`);
+    if (stream === "stderr") {
+      terminalRun.stderrPreview = boundTerminalOutput(`${terminalRun.stderrPreview}${data}`);
+    }
+    terminalRun.updatedAt = new Date().toISOString();
+    void this.touch(session);
+    this.options.emitTerminal?.(session.id, terminalRun.actionId, terminalRun);
+  }
+
   private async recordTerminalCompletion(session: AgentSession, terminalRun: AgentTerminalRunState, exitCode: number, forcedStatus?: AgentTerminalRunState["status"]): Promise<void> {
     if (terminalRun.status !== "Running" && forcedStatus !== "Cancelled") return;
+    this.terminalProcesses.delete(terminalRun.actionId);
     terminalRun.exitCode = exitCode;
     terminalRun.endedAt = new Date().toISOString();
     terminalRun.durationMs = terminalRun.startedAt ? Math.max(0, Date.parse(terminalRun.endedAt) - Date.parse(terminalRun.startedAt)) : undefined;
     terminalRun.status = forcedStatus ?? (exitCode === 0 ? "Succeeded" : "Failed");
+    terminalRun.resultStatus = terminalRun.status === "Cancelled" ? "cancelled" : exitCode === 0 ? "completed" : "failed";
     if (terminalRun.status === "Failed") {
       terminalRun.failureReason = `Terminal command failed with exit code ${exitCode}.`;
-      session.status = "Error";
-      session.error = terminalRun.failureReason;
+      session.status = "Ready";
+      session.error = undefined;
     } else {
       session.status = "Ready";
       terminalRun.failureReason = terminalRun.status === "Cancelled" ? "Terminal command was cancelled." : undefined;
@@ -1432,13 +1567,32 @@ export class AgentExecutionService {
     this.options.emitTerminal?.(session.id, terminalRun.actionId, terminalRun);
   }
 
+  private async recordTerminalInfrastructureFailure(session: AgentSession, terminalRun: AgentTerminalRunState, error: unknown): Promise<void> {
+    if (terminalRun.status !== "Running") return;
+    this.terminalProcesses.delete(terminalRun.actionId);
+    const message = `Terminal execution failed: ${errorMessage(error)}`;
+    terminalRun.status = "Failed";
+    terminalRun.resultStatus = "infrastructure-error";
+    terminalRun.exitCode = undefined;
+    terminalRun.endedAt = new Date().toISOString();
+    terminalRun.durationMs = terminalRun.startedAt ? Math.max(0, Date.parse(terminalRun.endedAt) - Date.parse(terminalRun.startedAt)) : undefined;
+    terminalRun.failureReason = message;
+    terminalRun.verification = await this.createTerminalVerification(session, terminalRun);
+    terminalRun.updatedAt = terminalRun.endedAt;
+    session.status = "Error";
+    session.error = message;
+    session.plan!.progress = progressFromSession(session);
+    await this.touch(session);
+    this.options.emitTerminal?.(session.id, terminalRun.actionId, terminalRun);
+  }
+
   private async createTerminalVerification(session: AgentSession, terminalRun: AgentTerminalRunState): Promise<AgentTerminalVerificationSummary> {
     const outputExcerpt = terminalRun.outputPreview.slice(-MAX_TERMINAL_OUTPUT_CHARS);
     const warnings = linesMatching(outputExcerpt, /\b(warn|warning|deprecated)\b/i);
     const errors = linesMatching(`${terminalRun.stderrPreview}\n${outputExcerpt}`, /\b(error|failed|exception)\b/i);
     const fallback = `${terminalRun.executable} ${terminalRun.status.toLowerCase()}${terminalRun.exitCode === undefined ? "" : ` with exit code ${terminalRun.exitCode}`}.`;
     let summary = fallback;
-    if (this.options.runtimeManager && session.modelId) {
+    if (this.options.runtimeManager && session.modelId && terminalRun.resultStatus !== "infrastructure-error") {
       try {
         const response: AIRuntimeInvocationResponse = await this.options.runtimeManager.chat({
           providerId: session.runtimeId,
@@ -2140,6 +2294,7 @@ function createVerificationFailure(options: {
   message: string;
   text: string;
   affectedFiles: string[];
+  details?: Record<string, unknown>;
   actionId?: string;
   exitCode?: number;
 }): AgentVerificationFailure {
@@ -2149,6 +2304,7 @@ function createVerificationFailure(options: {
     source: options.source,
     message: truncateText(options.message, 600),
     affectedFiles: uniqueStrings(options.affectedFiles.filter(Boolean)).slice(0, 20),
+    details: options.details,
     actionId: options.actionId,
     exitCode: options.exitCode,
     severity: options.severity
@@ -2498,6 +2654,60 @@ function terminalPreviewFingerprint(preview: AgentTerminalPreview): string {
   return JSON.stringify({ executable: preview.executable, args: preview.args, cwd: preview.cwd, commandId: preview.commandId });
 }
 
+function canDirectProcessExecute(preview: AgentTerminalPreview): boolean {
+  return DIRECT_PROCESS_EXECUTABLES.has(path.basename(preview.executable).toLowerCase());
+}
+
+function shouldUseDirectProcessExecution(preview: AgentTerminalPreview): boolean {
+  return canDirectProcessExecute(preview);
+}
+
+function resolveDirectProcessLaunch(preview: AgentTerminalPreview): { executable: string; args: string[] } {
+  const base = path.basename(preview.executable).toLowerCase();
+  if (base === "npm" || base === "npm.cmd") {
+    return { executable: process.execPath, args: [resolveNodePackageCli("npm"), ...preview.args] };
+  }
+  if (base === "npx" || base === "npx.cmd") {
+    return { executable: process.execPath, args: [resolveNodePackageCli("npx"), ...preview.args] };
+  }
+  return { executable: preview.executable, args: preview.args };
+}
+
+function resolveNodePackageCli(command: "npm" | "npx"): string {
+  const cliFile = command === "npm" ? "npm-cli.js" : "npx-cli.js";
+  const npmExecPath = process.env.npm_execpath && path.basename(process.env.npm_execpath).toLowerCase() === cliFile ? process.env.npm_execpath : undefined;
+  const candidates = [
+    npmExecPath,
+    process.env.npm_execpath ? path.join(path.dirname(process.env.npm_execpath), cliFile) : undefined,
+    path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", cliFile),
+    ...findPathExecutables(command === "npm" ? ["npm.cmd", "npm"] : ["npx.cmd", "npx"]).flatMap((executable) => [
+      path.join(path.dirname(executable), "node_modules", "npm", "bin", cliFile),
+      path.join(path.dirname(path.dirname(executable)), "node_modules", "npm", "bin", cliFile)
+    ])
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  const match = candidates.find((candidate) => existsSync(candidate));
+  if (!match) {
+    throw new Error(`${command} CLI could not be resolved without a shell.`);
+  }
+  return match;
+}
+
+function findPathExecutables(names: string[]): string[] {
+  const extensions = process.platform === "win32" ? ["", ".cmd", ".exe", ".bat"] : [""];
+  const paths = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
+  const matches: string[] = [];
+  for (const directory of paths) {
+    for (const name of names) {
+      const hasExtension = Boolean(path.extname(name));
+      const candidates = hasExtension ? [path.join(directory, name)] : extensions.map((extension) => path.join(directory, `${name}${extension}`));
+      for (const candidate of candidates) {
+        if (existsSync(candidate)) matches.push(candidate);
+      }
+    }
+  }
+  return matches;
+}
+
 function boundTerminalOutput(value: string): string {
   return value.length > MAX_TERMINAL_OUTPUT_CHARS ? value.slice(value.length - MAX_TERMINAL_OUTPUT_CHARS) : value;
 }
@@ -2508,6 +2718,43 @@ function isLikelyStderr(data: string): boolean {
 
 function linesMatching(value: string, pattern: RegExp): string[] {
   return value.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && pattern.test(line)).slice(-20);
+}
+
+function inferAffectedFilesFromTerminalOutput(output: string): string[] {
+  const files = new Set<string>();
+  const normalized = output.replace(/\r\n/g, "\n");
+  const patterns = [
+    /(?:^|\s)([A-Za-z0-9_.\-\/\\]+?\.(?:tsx?|jsx?|css|scss|json|html|vue|svelte|cs|go|rs|py|java|kt|gradle))(?:[:(]\d+)?/g,
+    /(?:^|\n)\s*(?:at\s+)?([A-Za-z0-9_.\-\/\\]+?\.(?:tsx?|jsx?|css|scss|json|html|vue|svelte|cs|go|rs|py|java|kt|gradle))\b/g
+  ];
+  for (const pattern of patterns) {
+    for (const match of normalized.matchAll(pattern)) {
+      const value = normalizeSlashes(match[1]).replace(/^\.\//, "");
+      if (!value || path.isAbsolute(value) || value.split("/").includes("..")) continue;
+      files.add(value);
+      if (files.size >= 10) break;
+    }
+  }
+  return [...files];
+}
+
+function terminalFailureDetails(terminalRun: AgentTerminalRunState, session: AgentSession, affectedFiles: string[]): Record<string, unknown> {
+  return {
+    command: terminalRun.executable,
+    args: terminalRun.args,
+    cwd: terminalRun.cwd,
+    exitCode: terminalRun.exitCode,
+    resultStatus: terminalRun.resultStatus ?? "failed",
+    projectType: session.plan?.starterLabel ?? session.plan?.planningMode ?? "unknown",
+    relevantFiles: affectedFiles,
+    stderr: terminalRun.stderrPreview,
+    stdout: terminalRun.outputPreview
+  };
+}
+
+function hasOnlyInfrastructureFailures(report: AgentVerificationReport): boolean {
+  const errors = report.failures.filter((failure) => failure.severity === "error");
+  return errors.length > 0 && errors.every((failure) => failure.source === "terminal" && /^Terminal execution failed\b/i.test(failure.message));
 }
 
 function normalizeGitOperation(value: unknown): GitOperation {

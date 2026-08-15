@@ -757,7 +757,7 @@ export function Home({
       if (next) {
         setActiveBuildSession(next);
       }
-      if (!run || run.status === "Succeeded") {
+      if (!run || run.status === "Succeeded" || (run.status === "Failed" && run.resultStatus === "failed")) {
         return;
       }
       if (run.status === "Failed" || run.status === "Cancelled" || run.status === "Interrupted") {
@@ -802,6 +802,16 @@ export function Home({
       throw new Error(`${action.title} requires separate approval before Levi can continue.`);
     }
     await window.levi.agent.execute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+  }
+
+  async function rerunVerificationActions(sessionId: string): Promise<void> {
+    const latest = await refreshBuildSession(sessionId);
+    const actions = latest.plan?.approvals ?? [];
+    for (const action of actions) {
+      if (action.type === "run-terminal-command" || action.type === "run-task") {
+        await executeApprovedBuildAction(sessionId, action);
+      }
+    }
   }
 
   async function approveAndBuild() {
@@ -876,6 +886,7 @@ export function Home({
                 : message
             )
           );
+          await rerunVerificationActions(sessionId);
           verification = await window.levi.agent.verify({ sessionId });
           setBuildVerification(verification.report);
         }

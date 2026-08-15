@@ -193,6 +193,7 @@ export type AgentTaskVerificationSummary = {
 };
 
 export type AgentTerminalActionStatus = "Pending" | "Approved" | "Running" | "Succeeded" | "Failed" | "Cancelled" | "Interrupted";
+export type AgentTerminalResultStatus = "completed" | "failed" | "cancelled" | "infrastructure-error";
 
 export type AgentTerminalPreview = {
   previewId: string;
@@ -216,6 +217,7 @@ export type AgentTerminalRunState = {
   args: string[];
   cwd: string;
   status: AgentTerminalActionStatus;
+  resultStatus?: AgentTerminalResultStatus;
   terminalSessionId?: string;
   startedAt?: string;
   endedAt?: string;
@@ -405,6 +407,7 @@ export type AgentVerificationFailure = {
   source: "task" | "terminal" | "problems" | "git" | "execution";
   message: string;
   affectedFiles: string[];
+  details?: Record<string, unknown>;
   actionId?: string;
   exitCode?: number;
   severity: "error" | "warning";
