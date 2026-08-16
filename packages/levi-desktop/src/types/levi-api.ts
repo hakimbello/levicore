@@ -364,9 +364,114 @@ export type ProjectType =
   | "typescript"
   | "android-gradle"
   | "kotlin-android"
+  | "flutter"
+  | "react-native"
+  | "expo"
+  | "ios"
   | "git"
   | "empty"
   | "unknown";
+
+export type MobilePlatform = "android" | "ios" | "flutter" | "react-native" | "expo";
+export type MobileLanguage = "kotlin" | "java" | "swift" | "dart" | "typescript" | "javascript";
+export type MobileFramework = "jetpack-compose" | "android-views" | "swiftui" | "flutter" | "react-native" | "expo";
+export type MobileBuildSystem = "gradle" | "xcode" | "swift-package-manager" | "flutter" | "npm";
+export type UniversalRunTargetKind =
+  | "browser"
+  | "android-device"
+  | "android-emulator"
+  | "ios-simulator"
+  | "ios-device"
+  | "desktop"
+  | "local-server";
+
+export type MobileProjectModel = {
+  platform: MobilePlatform;
+  language: MobileLanguage;
+  framework: MobileFramework;
+  buildSystem: MobileBuildSystem;
+  requiredTools: string[];
+  buildCommand?: string;
+  testCommand?: string;
+  runCommand?: string;
+  deviceTargets: UniversalRunTargetKind[];
+  emulatorTargets: UniversalRunTargetKind[];
+  packageIdentifier?: string;
+  minimumPlatformVersion?: string;
+  projectRoot: string;
+  modules: string[];
+  appModule?: string;
+  confidence: number;
+  evidence: string[];
+};
+
+export type MobileToolStatus = "ready" | "missing" | "unavailable" | "unknown";
+
+export type MobileTool = {
+  name: string;
+  status: MobileToolStatus;
+  version?: string;
+  detail?: string;
+  executablePath?: string;
+  guidance?: string;
+};
+
+export type AndroidDeviceTarget = {
+  id: string;
+  kind: "android-device" | "android-emulator";
+  state: "device" | "offline" | "unauthorized" | "unknown";
+  model?: string;
+  product?: string;
+  name?: string;
+};
+
+export type MobileEnvironment = {
+  os: NodeJS.Platform;
+  android: {
+    jdk: MobileTool;
+    javaHome: MobileTool;
+    androidSdk: MobileTool;
+    adb: MobileTool;
+    gradle: MobileTool;
+    gradleWrapper: MobileTool;
+    buildTools: MobileTool;
+    platformTools: MobileTool;
+    platforms: MobileTool;
+    emulator: MobileTool;
+    avds: MobileTool & { names: string[] };
+    devices: MobileTool & { targets: AndroidDeviceTarget[] };
+    status: "ready" | "missing-tools" | "no-targets" | "unknown";
+    summary: string;
+  };
+  flutter: {
+    flutter: MobileTool;
+    dart: MobileTool;
+    doctor: MobileTool;
+    androidTarget: MobileTool;
+    iosTarget: MobileTool;
+  };
+  reactNative: {
+    node: MobileTool;
+    npm: MobileTool;
+    pnpm: MobileTool;
+    yarn: MobileTool;
+    npx: MobileTool;
+    expoCli: MobileTool;
+    androidTooling: MobileTool;
+    iosTooling: MobileTool;
+  };
+  ios: {
+    sourceDevelopment: MobileTool;
+    nativeBuild: MobileTool;
+    xcode: MobileTool;
+    xcodebuild: MobileTool;
+    swift: MobileTool;
+    swiftPackageManager: MobileTool;
+    simulators: MobileTool;
+    devices: MobileTool;
+    summary: string;
+  };
+};
 
 export type ProjectDetection = {
   projectType: ProjectType;
@@ -376,6 +481,8 @@ export type ProjectDetection = {
   testCommand?: string;
   devCommand?: string;
   entryPoint?: string;
+  mobile?: MobileProjectModel;
+  runTargets?: UniversalRunTargetKind[];
   confidence: number;
   evidence: string[];
 };
@@ -385,6 +492,7 @@ export type ProjectStarterCategory =
   | "react-vite"
   | "nextjs"
   | "node-api"
+  | "android-compose"
   | "empty-project"
   | "empty"
   | "clone-github";
@@ -460,6 +568,7 @@ export type RunAppStatus = {
   running: boolean;
   terminalSessionId?: string;
   command?: RunAppCommand;
+  target?: AndroidDeviceTarget;
   outputPreview: string;
   startedAt?: string;
   stoppedAt?: string;
@@ -1265,6 +1374,7 @@ export type LeviApi = {
     createStarter: (request: CreateStarterRequest) => Promise<CreateStarterResult>;
     cloneRepository: (request: CloneRepositoryRequest) => Promise<CloneRepositoryResult>;
     detect: () => Promise<ProjectDetection>;
+    mobileEnvironment: () => Promise<MobileEnvironment>;
     runCommands: () => Promise<RunAppCommand[]>;
     runApp: (request?: { commandId?: string }) => Promise<RunAppResult>;
     stopApp: () => Promise<RunAppResult>;

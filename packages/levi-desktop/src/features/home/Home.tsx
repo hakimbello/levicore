@@ -9,6 +9,7 @@ import {
   type EditUndoResult,
   type ExecutionPlan,
   type ExecutionPublicTransaction,
+  type MobileEnvironment,
   type ProjectStarterCategory,
   type RunAppCommand,
   type RunAppStatus,
@@ -149,6 +150,7 @@ export function Home({
   const [projectName, setProjectName] = useState("");
   const [repositoryUrl, setRepositoryUrl] = useState("");
   const [projectWorkflowStatus, setProjectWorkflowStatus] = useState<string | null>(null);
+  const [mobileEnvironment, setMobileEnvironment] = useState<MobileEnvironment | null>(null);
   const [editProposal, setEditProposal] = useState<EditProposal | null>(null);
   const [editReviewError, setEditReviewError] = useState<string | null>(null);
   const [lastEditPrompt, setLastEditPrompt] = useState<string | null>(null);
@@ -535,6 +537,7 @@ export function Home({
     setExecutionError(null);
     setPlanNotice(null);
     setIsStarting(false);
+    setMobileEnvironment(null);
   }, [newChatSignal]);
 
   useEffect(() => {
@@ -957,6 +960,26 @@ export function Home({
     }
   }
 
+  useEffect(() => {
+    let disposed = false;
+    if (projectMode !== "new" || starter !== "android-compose") {
+      setMobileEnvironment(null);
+      return () => {
+        disposed = true;
+      };
+    }
+    window.levi.projects.mobileEnvironment()
+      .then((environment) => {
+        if (!disposed) setMobileEnvironment(environment);
+      })
+      .catch(() => {
+        if (!disposed) setMobileEnvironment(null);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [projectMode, starter]);
+
   async function runApp(commandId?: string) {
     setPostBuildError(null);
     try {
@@ -1218,6 +1241,7 @@ export function Home({
                       <option value="react-vite">React + Vite</option>
                       <option value="nextjs">Next.js</option>
                       <option value="node-api">Node API</option>
+                      <option value="android-compose">Android App - Kotlin + Compose</option>
                       <option value="empty">Empty Project</option>
                     </select>
                   </label>
@@ -1242,6 +1266,23 @@ export function Home({
                     {projectMode === "clone" ? "Clone and Open" : "Create and Open"}
                   </button>
                 </div>
+                {projectMode === "new" && starter === "android-compose" && mobileEnvironment ? (
+                  <div className="levi-mobile-environment" aria-label="Android development environment">
+                    <div><span>JDK</span><strong>{mobileEnvironment.android.jdk.status === "ready" ? "Ready" : "Missing"}</strong></div>
+                    <div><span>Android SDK</span><strong>{mobileEnvironment.android.androidSdk.status === "ready" ? "Ready" : "Missing"}</strong></div>
+                    <div><span>ADB</span><strong>{mobileEnvironment.android.adb.status === "ready" ? "Ready" : "Missing"}</strong></div>
+                    <div><span>Gradle</span><strong>{mobileEnvironment.android.gradle.status === "ready" ? "Ready" : "Missing"}</strong></div>
+                    <div><span>Emulator</span><strong>{mobileEnvironment.android.avds.names.length ? `${mobileEnvironment.android.avds.names.length} available` : "None"}</strong></div>
+                    <div><span>Connected devices</span><strong>{mobileEnvironment.android.devices.targets.length}</strong></div>
+                    <p>{mobileEnvironment.android.summary}</p>
+                    <details>
+                      <summary>Details</summary>
+                      {[mobileEnvironment.android.jdk, mobileEnvironment.android.androidSdk, mobileEnvironment.android.adb, mobileEnvironment.android.gradle, mobileEnvironment.android.emulator].map((tool) => (
+                        <p key={tool.name}>{tool.name}: {tool.detail ?? tool.guidance ?? tool.status}</p>
+                      ))}
+                    </details>
+                  </div>
+                ) : null}
                 {projectWorkflowStatus ? <p>{projectWorkflowStatus}</p> : null}
               </div>
             ) : null}

@@ -8,6 +8,7 @@ export const IPC_CHANNELS = {
   projectsCreateStarter: "levi:projects:create-starter",
   projectsCloneRepository: "levi:projects:clone-repository",
   projectsDetect: "levi:projects:detect",
+  projectsMobileEnvironment: "levi:projects:mobile-environment",
   projectsRunCommands: "levi:projects:run-commands",
   projectsRunApp: "levi:projects:run-app",
   projectsStopApp: "levi:projects:stop-app",

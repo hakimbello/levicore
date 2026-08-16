@@ -1623,6 +1623,10 @@ function registerIpc(): void {
     assertNoIpcArgs(args);
     return projectWorkflowService.detect();
   });
+  ipcMain.handle(IPC_CHANNELS.projectsMobileEnvironment, async (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return projectWorkflowService.mobileEnvironment();
+  });
   ipcMain.handle(IPC_CHANNELS.projectsRunCommands, (_event, ...args) => {
     assertNoIpcArgs(args);
     return projectWorkflowService.runCommands();

@@ -143,6 +143,53 @@ function createDefaultApi(): LeviApi {
         durationMs: 1
       })),
       detect: vi.fn(async () => ({ projectType: "vanilla-web" as const, confidence: 0.8, evidence: [] })),
+      mobileEnvironment: vi.fn(async () => ({
+        os: process.platform,
+        android: {
+          jdk: { name: "JDK", status: "missing" as const },
+          javaHome: { name: "JAVA_HOME", status: "missing" as const },
+          androidSdk: { name: "Android SDK", status: "missing" as const },
+          adb: { name: "ADB", status: "missing" as const },
+          gradle: { name: "Gradle", status: "missing" as const },
+          gradleWrapper: { name: "Gradle wrapper", status: "missing" as const },
+          buildTools: { name: "Android build-tools", status: "missing" as const },
+          platformTools: { name: "platform-tools", status: "missing" as const },
+          platforms: { name: "Android platforms", status: "missing" as const },
+          emulator: { name: "Emulator", status: "missing" as const },
+          avds: { name: "AVDs", status: "missing" as const, names: [] },
+          devices: { name: "Connected devices", status: "missing" as const, targets: [] },
+          status: "missing-tools" as const,
+          summary: "Missing Android requirements"
+        },
+        flutter: {
+          flutter: { name: "flutter", status: "missing" as const },
+          dart: { name: "dart", status: "missing" as const },
+          doctor: { name: "Flutter doctor", status: "missing" as const },
+          androidTarget: { name: "Flutter Android target", status: "missing" as const },
+          iosTarget: { name: "Flutter iOS target", status: "unavailable" as const }
+        },
+        reactNative: {
+          node: { name: "node", status: "ready" as const },
+          npm: { name: "npm", status: "ready" as const },
+          pnpm: { name: "pnpm", status: "missing" as const },
+          yarn: { name: "yarn", status: "missing" as const },
+          npx: { name: "npx", status: "ready" as const },
+          expoCli: { name: "Expo CLI", status: "missing" as const },
+          androidTooling: { name: "React Native Android tooling", status: "missing" as const },
+          iosTooling: { name: "React Native iOS tooling", status: "unavailable" as const }
+        },
+        ios: {
+          sourceDevelopment: { name: "iOS source development", status: "ready" as const },
+          nativeBuild: { name: "Native iOS build", status: "unavailable" as const },
+          xcode: { name: "Xcode", status: "unavailable" as const },
+          xcodebuild: { name: "xcodebuild", status: "unavailable" as const },
+          swift: { name: "Swift", status: "unavailable" as const },
+          swiftPackageManager: { name: "Swift Package Manager", status: "unavailable" as const },
+          simulators: { name: "iOS simulators", status: "unavailable" as const },
+          devices: { name: "Apple devices", status: "unavailable" as const },
+          summary: "iOS source development: available. Native iOS build: requires macOS + Xcode."
+        }
+      })),
       runCommands: vi.fn(async () => []),
       runApp: vi.fn(async () => ({ status: { running: false, outputPreview: "" } })),
       stopApp: vi.fn(async () => ({ status: { running: false, outputPreview: "" } })),

@@ -5,6 +5,19 @@ import { performance } from "node:perf_hooks";
 import type { BrowserWindow } from "electron";
 import type { SelectedProject, WorkspaceScanSummary } from "../../src/types/levi-api";
 import type { TerminalManager } from "./terminal-manager";
+import {
+  androidComposeStarterFiles,
+  androidRunCommands,
+  androidStarterCommands,
+  detectMobileEnvironment,
+  detectMobileProject,
+  detectMobileProjectFromSummary,
+  universalTargetsFor,
+  type AndroidDeviceTarget,
+  type MobileEnvironment,
+  type MobileProjectModel,
+  type UniversalRunTargetKind
+} from "./mobile-projects";
 
 const CLONE_TIMEOUT_MS = 120_000;
 const GIT_TIMEOUT_MS = 12_000;
@@ -20,6 +33,10 @@ export type ProjectType =
   | "typescript"
   | "android-gradle"
   | "kotlin-android"
+  | "flutter"
+  | "react-native"
+  | "expo"
+  | "ios"
   | "git"
   | "empty"
   | "unknown";
@@ -32,6 +49,8 @@ export type ProjectDetection = {
   testCommand?: string;
   devCommand?: string;
   entryPoint?: string;
+  mobile?: MobileProjectModel;
+  runTargets?: UniversalRunTargetKind[];
   confidence: number;
   evidence: string[];
 };
@@ -41,6 +60,7 @@ export type ProjectStarterCategory =
   | "react-vite"
   | "nextjs"
   | "node-api"
+  | "android-compose"
   | "empty-project"
   | "empty"
   | "clone-github";
@@ -130,6 +150,7 @@ export type RunAppStatus = {
   running: boolean;
   terminalSessionId?: string;
   command?: RunAppCommand;
+  target?: AndroidDeviceTarget;
   outputPreview: string;
   startedAt?: string;
   stoppedAt?: string;
@@ -160,6 +181,7 @@ type ProjectWorkflowOptions = {
 
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const nodeCommand = process.platform === "win32" ? "node.exe" : "node";
+const gradleCommand = process.platform === "win32" ? "gradle.bat" : "gradle";
 
 export const PROJECT_STARTERS: ProjectStarterInfo[] = [
   {
@@ -226,6 +248,23 @@ export const PROJECT_STARTERS: ProjectStarterInfo[] = [
     buildCommand: { label: "Check server", command: nodeCommand, args: ["--check", "src/server.js"], kind: "verify", required: true },
     devCommand: { label: "Run API", command: nodeCommand, args: ["src/server.js"], kind: "dev", required: false },
     files: nodeApiFiles()
+  },
+  {
+    id: "android-compose",
+    label: "Android App",
+    projectFamily: "mobile",
+    framework: "Kotlin + Jetpack Compose",
+    language: "Kotlin",
+    requiredTools: ["JDK", "Android SDK", "Gradle", "ADB"],
+    initializationActions: "deterministic-files",
+    expectedFiles: ["settings.gradle.kts", "build.gradle.kts", "gradle.properties", "app/build.gradle.kts", "app/src/main/AndroidManifest.xml", "app/src/main/java/app/levi/generated/MainActivity.kt"],
+    verificationStrategy: "build-command",
+    description: "Android app initialized with deterministic Kotlin and Jetpack Compose project files.",
+    installCommand: androidStarterCommands().wrapper,
+    buildCommand: androidStarterCommands().build,
+    testCommand: androidStarterCommands().test,
+    devCommand: androidStarterCommands().dev,
+    files: androidComposeStarterFiles()
   },
   {
     id: "empty-project",
@@ -312,11 +351,14 @@ export function starterById(id: ProjectStarterCategory): ProjectStarterInfo {
 }
 
 export function safeProjectSlug(prompt: string): string {
+  if (/\btruck(?:er|ers| drivers?)\b/i.test(prompt) && /\bfitness|workout|training\b/i.test(prompt)) {
+    return "trucker-fitness";
+  }
   const normalized = prompt
     .toLowerCase()
     .replace(/\btracking\b/g, "tracker")
     .replace(/[`"'’]/g, "")
-    .replace(/\b(build|create|make|generate|scaffold|implement|add|me|a|an|the|simple|basic|new|app|application|website|web|site|project|with|using|for|and|local|data|persistence|dashboard|list|form|workout|workouts)\b/g, " ")
+    .replace(/\b(build|create|make|generate|scaffold|implement|add|me|a|an|the|simple|basic|new|app|application|website|web|site|project|with|using|for|and|local|data|persistence|dashboard|list|form|workout|workouts|android|kotlin|jetpack|compose)\b/g, " ")
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
   const words = normalized.split(/\s+/).filter(Boolean);
@@ -330,7 +372,10 @@ export function detectNewAppIntent(prompt: string): NewAppIntent {
   const isNewApplication = /\b(build|create|make|generate|scaffold)\b/.test(text) && /\b(app|application|website|site|api|dashboard|tool|tracker|calculator)\b/.test(text);
   let starterId: ProjectStarterCategory = "react-vite";
   let reason = "General web application defaults to React + Vite.";
-  if (/\bcalculator\b/.test(text)) {
+  if (/\bandroid\b|\bkotlin\b|\bjetpack\s+compose\b|\bcompose\b/.test(text) && /\b(app|application)\b/.test(text)) {
+    starterId = "android-compose";
+    reason = "Prompt requested an Android Kotlin/Compose app.";
+  } else if (/\bcalculator\b/.test(text)) {
     starterId = "vanilla-web";
     reason = "Calculator prompts use the fast static web starter.";
   } else if (/\bnext(?:\.js|js)?\b/.test(text)) {
@@ -373,6 +418,29 @@ function extractRequestedFeatures(prompt: string): string[] {
 }
 
 export function detectProjectFromSummary(summary: WorkspaceScanSummary): ProjectDetection {
+  const mobile = detectMobileProjectFromSummary(summary);
+  if (mobile) {
+    const typeByPlatform: Record<MobileProjectModel["platform"], ProjectType> = {
+      android: mobile.language === "kotlin" ? "kotlin-android" : "android-gradle",
+      flutter: "flutter",
+      "react-native": "react-native",
+      expo: "expo",
+      ios: "ios"
+    };
+    return {
+      projectType: typeByPlatform[mobile.platform],
+      framework: mobile.framework,
+      packageManager: summary.packageManager,
+      buildCommand: mobile.buildCommand,
+      testCommand: mobile.testCommand,
+      devCommand: mobile.runCommand,
+      entryPoint: summary.likelyEntryPoints[0],
+      mobile,
+      runTargets: universalTargetsFor(mobile),
+      confidence: mobile.confidence,
+      evidence: mobile.evidence
+    };
+  }
   const scripts = summary.scripts;
   const manifests = new Set(summary.manifestFiles.map((file) => file.replace(/\\/g, "/")));
   const entryPoints = new Set(summary.likelyEntryPoints.map((file) => file.replace(/\\/g, "/")));
@@ -427,6 +495,7 @@ export function detectProjectFromSummary(summary: WorkspaceScanSummary): Project
     testCommand: commandForScript(summary.packageManager, scripts, ["test", "test:unit"]),
     devCommand: commandForScript(summary.packageManager, scripts, ["dev", "develop", "start", "serve"]),
     entryPoint: summary.likelyEntryPoints[0],
+    runTargets: universalTargetsFor(null),
     confidence,
     evidence
   };
@@ -435,6 +504,20 @@ export function detectProjectFromSummary(summary: WorkspaceScanSummary): Project
 export function detectRunCommands(summary: WorkspaceScanSummary): RunAppCommand[] {
   const detection = detectProjectFromSummary(summary);
   const commands: RunAppCommand[] = [];
+  if (detection.mobile?.platform === "android") {
+    commands.push(...androidRunCommands(detection.mobile));
+  }
+  if (detection.mobile?.platform === "flutter") {
+    commands.push({ id: "flutter:run", label: "Flutter run", command: process.platform === "win32" ? "flutter.bat" : "flutter", args: ["run"], confidence: 0.84, longRunning: true });
+  }
+  if (detection.mobile?.platform === "expo") {
+    const pm = packageManagerExecutable(summary.packageManager);
+    commands.push({ id: "expo:start", label: "Expo start", command: pm, args: summary.scripts.start ? packageManagerArgs(summary.packageManager, "start") : ["exec", "expo", "start"], confidence: 0.84, longRunning: true });
+  }
+  if (detection.mobile?.platform === "react-native") {
+    const pm = packageManagerExecutable(summary.packageManager);
+    commands.push({ id: "react-native:android", label: "React Native Android", command: pm, args: summary.scripts.android ? packageManagerArgs(summary.packageManager, "android") : ["exec", "react-native", "run-android"], confidence: 0.82, longRunning: true });
+  }
   const pm = packageManagerExecutable(summary.packageManager);
   const addScript = (script: string, label: string, confidence: number) => {
     if (!summary.scripts[script]) return;
@@ -526,6 +609,21 @@ export class ProjectWorkflowService {
     }
     const detection = detectProjectFromSummary(summary);
     const root = this.options.getWorkspaceRoot();
+    const mobile = await detectMobileProject(root, summary);
+    if (mobile) {
+      return {
+        ...detection,
+        projectType: mobile.platform === "android" ? mobile.language === "kotlin" ? "kotlin-android" : "android-gradle" : mobile.platform,
+        framework: mobile.framework,
+        buildCommand: mobile.buildCommand,
+        testCommand: mobile.testCommand,
+        devCommand: mobile.runCommand,
+        mobile,
+        runTargets: universalTargetsFor(mobile),
+        confidence: mobile.confidence,
+        evidence: mobile.evidence
+      };
+    }
     if (root && detection.projectType === "unknown" && await exists(path.join(root, ".git"))) {
       return { ...detection, projectType: "git", confidence: 0.55, evidence: [...detection.evidence, "Git repository"] };
     }
@@ -535,6 +633,10 @@ export class ProjectWorkflowService {
   runCommands(): RunAppCommand[] {
     const summary = this.options.getWorkspaceSummary();
     return summary ? detectRunCommands(summary) : [];
+  }
+
+  async mobileEnvironment(): Promise<MobileEnvironment> {
+    return detectMobileEnvironment(this.options.getWorkspaceRoot(), this.options.execFile);
   }
 
   async cloneRepository(request: CloneRepositoryRequest): Promise<CloneRepositoryResult> {
@@ -567,6 +669,17 @@ export class ProjectWorkflowService {
     const warnings: string[] = [];
     let needsEnvironmentCheck = false;
     const starter = starterById(request.starter);
+    if (starter.id === "android-compose") {
+      const environment = await detectMobileEnvironment(destination, this.options.execFile);
+      const missing = [
+        environment.android.jdk,
+        environment.android.androidSdk,
+        environment.android.gradle
+      ].filter((tool) => tool.status !== "ready");
+      if (missing.length) {
+        throw new Error(`Android starter requires setup first: ${missing.map((tool) => tool.name).join(", ")}. ${environment.android.summary}`);
+      }
+    }
     if (starter.initializationActions === "empty") {
       await fs.writeFile(path.join(destination, ".gitkeep"), "", "utf8");
     } else {
@@ -590,6 +703,9 @@ export class ProjectWorkflowService {
     }
     const workspaceRoot = this.options.getWorkspaceRoot();
     if (!workspaceRoot) throw new Error("Open a workspace before running an app.");
+    if (command.id.startsWith("android:")) {
+      return this.startAndroidRun(workspaceRoot, command);
+    }
     if (command.command === "open-static") {
       this.runStatus = { running: false, command, outputPreview: `Static entry: ${command.args[0]}`, startedAt: new Date().toISOString(), stoppedAt: new Date().toISOString(), exitCode: 0 };
       return { status: { ...this.runStatus } };
@@ -612,6 +728,9 @@ export class ProjectWorkflowService {
   }
 
   stopRun(): RunAppResult {
+    if (this.runStatus.command?.id.startsWith("android:")) {
+      void this.stopAndroidRun();
+    }
     if (this.runStatus.terminalSessionId) {
       this.options.terminalManager.kill(this.runStatus.terminalSessionId);
     }
@@ -629,6 +748,44 @@ export class ProjectWorkflowService {
     const workspaceRoot = this.options.getWorkspaceRoot();
     if (!workspaceRoot) throw new Error("Open a workspace before viewing changes.");
     return analyzeGitChanges(workspaceRoot, this.options.execFile);
+  }
+
+  private async startAndroidRun(workspaceRoot: string, command: RunAppCommand): Promise<RunAppResult> {
+    const environment = await detectMobileEnvironment(workspaceRoot, this.options.execFile);
+    const targets = environment.android.devices.targets.filter((target) => target.state === "device");
+    if (!targets.length) {
+      throw new Error("No Android target is available. Launch Emulator or Connect Android Device.");
+    }
+    const target = targets[0];
+    const gradlew = path.join(workspaceRoot, process.platform === "win32" ? "gradlew.bat" : "gradlew");
+    const executable = await exists(gradlew) ? gradlew : gradleCommand;
+    const summary = this.options.getWorkspaceSummary();
+    const packageId = summary ? (await detectMobileProject(workspaceRoot, summary))?.packageIdentifier ?? "app.levi.generated" : "app.levi.generated";
+    this.runStatus = { running: true, command, target, outputPreview: "Building debug APK for Android target...\n", startedAt: new Date().toISOString() };
+    const install = await exec(this.options.execFile ?? execFileCallback, executable, [":app:installDebug"], workspaceRoot, CLONE_TIMEOUT_MS).catch((error) => {
+      throw new Error(error instanceof Error ? error.message : "Android install failed.");
+    });
+    const adbCommand = environment.android.adb.executablePath ?? "adb";
+    const launch = await exec(this.options.execFile ?? execFileCallback, adbCommand, ["-s", target.id, "shell", "monkey", "-p", packageId, "1"], workspaceRoot, GIT_TIMEOUT_MS).catch((error) => {
+      throw new Error(error instanceof Error ? error.message : "Android launch failed.");
+    });
+    this.runStatus = {
+      running: true,
+      command,
+      target,
+      outputPreview: `${install.stdout}\n${install.stderr}\n${launch.stdout}\n${launch.stderr}`.slice(-MAX_OUTPUT_CHARS),
+      startedAt: this.runStatus.startedAt
+    };
+    return { status: { ...this.runStatus } };
+  }
+
+  private async stopAndroidRun(): Promise<void> {
+    const workspaceRoot = this.options.getWorkspaceRoot();
+    const summary = this.options.getWorkspaceSummary();
+    if (!workspaceRoot || !summary || !this.runStatus.target) return;
+    const environment = await detectMobileEnvironment(workspaceRoot, this.options.execFile);
+    const packageId = (await detectMobileProject(workspaceRoot, summary))?.packageIdentifier ?? "app.levi.generated";
+    await exec(this.options.execFile ?? execFileCallback, environment.android.adb.executablePath ?? "adb", ["-s", this.runStatus.target.id, "shell", "am", "force-stop", packageId], workspaceRoot, GIT_TIMEOUT_MS).catch(() => ({ stdout: "", stderr: "" }));
   }
 }
 

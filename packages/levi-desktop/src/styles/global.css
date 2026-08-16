@@ -685,6 +685,38 @@ textarea:focus-visible,
   font-size: var(--levi-font-size-caption);
 }
 
+.levi-mobile-environment {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--levi-space-8);
+  text-align: left;
+}
+
+.levi-mobile-environment div {
+  display: grid;
+  gap: 2px;
+  padding: var(--levi-space-8);
+  border: 1px solid var(--levi-color-border);
+  border-radius: var(--levi-radius-control);
+  background: var(--levi-color-surface);
+}
+
+.levi-mobile-environment span,
+.levi-mobile-environment summary {
+  color: var(--levi-color-secondaryText);
+  font-size: var(--levi-font-size-caption);
+}
+
+.levi-mobile-environment strong {
+  color: var(--levi-color-primaryText);
+  font-size: var(--levi-font-size-body);
+}
+
+.levi-mobile-environment p,
+.levi-mobile-environment details {
+  grid-column: 1 / -1;
+}
+
 .levi-build-completion-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

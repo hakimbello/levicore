@@ -943,6 +943,7 @@ function terminalAction(
 function featureFilesForIntent(features: string[], starter: ProjectStarterInfo): StarterFile[] {
   if (features.includes("calculator") && starter.id === "vanilla-web") return calculatorFiles();
   if (features.includes("workout tracking") && starter.id === "react-vite") return fitnessReactFiles();
+  if (features.includes("workout tracking") && starter.id === "android-compose") return androidFitnessFiles();
   return [];
 }
 
@@ -1212,6 +1213,192 @@ h1 {
     flex-direction: column;
     gap: 8px;
   }
+}
+`
+    }
+  ];
+}
+
+function androidFitnessFiles(): StarterFile[] {
+  return [
+    {
+      relativePath: "app/src/main/java/app/levi/generated/MainActivity.kt",
+      content: `package app.levi.generated
+
+import android.content.Context
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+data class CompletedWorkout(
+  val id: String,
+  val name: String,
+  val minutes: Int,
+  val completedAt: String
+)
+
+private const val PREFS_NAME = "trucker_fitness"
+private const val HISTORY_KEY = "history"
+
+class MainActivity : ComponentActivity() {
+  override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    setContent {
+      MaterialTheme {
+        Surface(modifier = Modifier.fillMaxSize()) {
+          TruckerFitnessApp()
+        }
+      }
+    }
+  }
+}
+
+@Composable
+fun TruckerFitnessApp() {
+  val context = LocalContext.current
+  val history = remember {
+    mutableStateListOf<CompletedWorkout>().also { list ->
+      list.addAll(loadHistory(context))
+    }
+  }
+  val customName = remember { mutableStateOf("") }
+  val totalMinutes = history.sumOf { it.minutes }
+
+  fun addWorkout(name: String, minutes: Int) {
+    val workout = CompletedWorkout(
+      id = System.currentTimeMillis().toString(),
+      name = name,
+      minutes = minutes,
+      completedAt = SimpleDateFormat("MMM d, HH:mm", Locale.US).format(Date())
+    )
+    history.add(0, workout)
+    saveHistory(context, history)
+  }
+
+  Column(
+    modifier = Modifier
+      .fillMaxSize()
+      .verticalScroll(rememberScrollState())
+      .padding(20.dp),
+    verticalArrangement = Arrangement.spacedBy(16.dp)
+  ) {
+    Text("Trucker Fitness", style = MaterialTheme.typography.headlineMedium)
+    Text("Offline-first workouts designed for short stops and long routes.")
+
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+      MetricCard("Sessions", history.size.toString(), Modifier.weight(1f))
+      MetricCard("Minutes", totalMinutes.toString(), Modifier.weight(1f))
+    }
+
+    Text("Workout list", style = MaterialTheme.typography.titleLarge)
+    PresetWorkout("5-minute workout", "Cab mobility and breathing reset", 5, ::addWorkout)
+    PresetWorkout("10-minute workout", "Core, squats, and shoulder work", 10, ::addWorkout)
+    PresetWorkout("20-minute workout", "Full body no-equipment circuit", 20, ::addWorkout)
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+      Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Add completed workout", style = MaterialTheme.typography.titleMedium)
+        OutlinedTextField(
+          value = customName.value,
+          onValueChange = { customName.value = it },
+          label = { Text("Workout name") },
+          modifier = Modifier.fillMaxWidth()
+        )
+        Button(
+          onClick = {
+            val name = customName.value.trim().ifEmpty { "Custom truck-stop workout" }
+            addWorkout(name, 15)
+            customName.value = ""
+          }
+        ) {
+          Text("Add completed workout")
+        }
+      }
+    }
+
+    Text("Workout history", style = MaterialTheme.typography.titleLarge)
+    if (history.isEmpty()) {
+      Text("No completed workouts yet. Choose a 5, 10, or 20 minute workout to begin.")
+    } else {
+      history.forEach { workout ->
+        Card(modifier = Modifier.fillMaxWidth()) {
+          Column(modifier = Modifier.padding(16.dp)) {
+            Text(workout.name, style = MaterialTheme.typography.titleMedium)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text("${'$'}{workout.minutes} minutes - ${'$'}{workout.completedAt}")
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+fun MetricCard(label: String, value: String, modifier: Modifier = Modifier) {
+  Card(modifier = modifier) {
+    Column(modifier = Modifier.padding(16.dp)) {
+      Text(label)
+      Text(value, style = MaterialTheme.typography.headlineSmall)
+    }
+  }
+}
+
+@Composable
+fun PresetWorkout(title: String, description: String, minutes: Int, onComplete: (String, Int) -> Unit) {
+  Card(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      Text(title, style = MaterialTheme.typography.titleMedium)
+      Text(description)
+      Button(onClick = { onComplete(title, minutes) }) {
+        Text("Complete ${'$'}minutes-minute workout")
+      }
+    }
+  }
+}
+
+fun loadHistory(context: Context): List<CompletedWorkout> {
+  val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(HISTORY_KEY, "") ?: ""
+  if (raw.isBlank()) return emptyList()
+  return raw.split("\\n").mapNotNull { line ->
+    val parts = line.split("|")
+    if (parts.size != 4) null else CompletedWorkout(parts[0], parts[1], parts[2].toIntOrNull() ?: 0, parts[3])
+  }
+}
+
+fun saveHistory(context: Context, history: List<CompletedWorkout>) {
+  val raw = history.joinToString("\\n") { workout ->
+    listOf(workout.id, workout.name.replace("|", " "), workout.minutes.toString(), workout.completedAt).joinToString("|")
+  }
+  context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    .edit()
+    .putString(HISTORY_KEY, raw)
+    .apply()
 }
 `
     }
