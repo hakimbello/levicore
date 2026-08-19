@@ -1,3 +1,4 @@
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -7,6 +8,10 @@ import type { StarterCommand, StarterFile } from "./project-workflows";
 
 const TOOL_TIMEOUT_MS = 8_000;
 const MAX_TOOL_OUTPUT = 24_000;
+const ANDROID_GRADLE_VERSION = "9.6.1";
+const ANDROID_GRADLE_PLUGIN_VERSION = "9.3.0";
+const KOTLIN_ANDROID_PLUGIN_VERSION = "2.3.21";
+const COMPOSE_BOM_VERSION = "2025.07.00";
 
 export type MobilePlatform = "android" | "ios" | "flutter" | "react-native" | "expo";
 export type MobileLanguage = "kotlin" | "java" | "swift" | "dart" | "typescript" | "javascript";
@@ -59,6 +64,9 @@ export type AndroidDeviceTarget = {
   model?: string;
   product?: string;
   name?: string;
+  manufacturer?: string;
+  androidVersion?: string;
+  apiLevel?: string;
 };
 
 export type MobileEnvironment = {
@@ -211,7 +219,7 @@ export function detectMobileProjectFromSummary(summary: WorkspaceScanSummary): M
 }
 
 export async function detectMobileProject(root: string | null, summary: WorkspaceScanSummary): Promise<MobileProjectModel | null> {
-  const model = detectMobileProjectFromSummary(summary);
+  const model = detectMobileProjectFromSummary(summary) ?? (root ? await detectMobileProjectFromFiles(root) : null);
   if (!root || !model) return model;
   if (model.platform === "android") return enrichAndroidProject(root, model);
   if (model.platform === "ios") return enrichIosProject(root, model);
@@ -219,7 +227,10 @@ export async function detectMobileProject(root: string | null, summary: Workspac
 }
 
 export async function detectMobileEnvironment(root: string | null, execFile: ExecFile = execFileCallback, env: NodeJS.ProcessEnv = process.env): Promise<MobileEnvironment> {
-  const java = await commandTool(execFile, "java", ["-version"], undefined, /version\s+"([^"]+)"/i);
+  const javaExecutable = env.JAVA_HOME
+    ? path.join(env.JAVA_HOME, "bin", process.platform === "win32" ? "java.exe" : "java")
+    : defaultAndroidStudioJavaPath();
+  const java = await commandTool(execFile, await exists(javaExecutable) ? javaExecutable : "java", ["-version"], undefined, /version\s+"([^"]+)"/i);
   const node = await commandTool(execFile, process.platform === "win32" ? "node.exe" : "node", ["--version"], undefined, /(v?\d+[^\s]*)/);
   const npm = await commandTool(execFile, process.platform === "win32" ? "npm.cmd" : "npm", ["--version"], undefined, /(\d+[^\s]*)/);
   const npx = await commandTool(execFile, process.platform === "win32" ? "npx.cmd" : "npx", ["--version"], undefined, /(\d+[^\s]*)/);
@@ -235,7 +246,7 @@ export async function detectMobileEnvironment(root: string | null, execFile: Exe
   const adbPath = sdkRoot ? path.join(sdkRoot, "platform-tools", process.platform === "win32" ? "adb.exe" : "adb") : (process.platform === "win32" ? "adb.exe" : "adb");
   const adb = await commandTool(execFile, adbPath, ["version"], undefined, /Android Debug Bridge version\s+([^\s]+)/i);
   const deviceOutput = await execText(execFile, adbPath, ["devices", "-l"], undefined).catch(() => ({ stdout: "", stderr: "" }));
-  const devices = adb.status === "ready" ? parseAdbDevices(deviceOutput.stdout) : [];
+  const devices = adb.status === "ready" ? await enrichAndroidDeviceTargets(execFile, adbPath, parseAdbDevices(deviceOutput.stdout)) : [];
   const emulatorPath = sdkRoot ? path.join(sdkRoot, "emulator", process.platform === "win32" ? "emulator.exe" : "emulator") : (process.platform === "win32" ? "emulator.exe" : "emulator");
   const avdOutput = await execText(execFile, emulatorPath, ["-list-avds"], undefined).catch(() => ({ stdout: "", stderr: "" }));
   const avds = avdOutput.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
@@ -246,7 +257,9 @@ export async function detectMobileEnvironment(root: string | null, execFile: Exe
   const swift = process.platform === "darwin" ? await commandTool(execFile, "swift", ["--version"], undefined, /Swift version\s+([^\s]+)/i) : unavailableTool("Swift", "Swift compilation for Apple platforms requires macOS toolchains.");
   const simctl = process.platform === "darwin" ? await commandTool(execFile, "xcrun", ["simctl", "list", "devices", "available"], undefined) : unavailableTool("iOS simulators", "iOS simulators require macOS + Xcode.");
 
-  const androidMissing = [java, adb, gradle].filter((tool) => tool.status !== "ready").map((tool) => tool.name);
+  const gradleAvailableForAndroidStarter = gradleWrapperReady || gradle.status === "ready" || process.platform === "win32";
+  const androidMissing = [java, adb].filter((tool) => tool.status !== "ready").map((tool) => tool.name);
+  if (!gradleAvailableForAndroidStarter) androidMissing.push("Gradle");
   const targetCount = devices.filter((device) => device.state === "device").length + avds.length;
   const androidStatus = androidMissing.length ? "missing-tools" : targetCount ? "ready" : "no-targets";
   return {
@@ -256,8 +269,8 @@ export async function detectMobileEnvironment(root: string | null, execFile: Exe
       javaHome: env.JAVA_HOME ? readyTool("JAVA_HOME", env.JAVA_HOME) : missingTool("JAVA_HOME", "Set JAVA_HOME to the installed JDK when Gradle requires it."),
       androidSdk: androidSdkReady ? readyTool("Android SDK", sdkRoot) : missingTool("Android SDK", "Install Android Studio or the command line SDK and set ANDROID_HOME or ANDROID_SDK_ROOT."),
       adb: adb.status === "ready" ? { ...adb, name: "ADB", executablePath: adbPath } : missingTool("ADB", "Install Android platform-tools or add adb to PATH."),
-      gradle: gradle.status === "ready" ? { ...gradle, name: gradleWrapperReady ? "Gradle wrapper" : "Gradle" } : missingTool("Gradle", "Use a repository Gradle wrapper or install Gradle."),
-      gradleWrapper: gradleWrapperReady ? readyTool("Gradle wrapper", normalizeSlashes(gradleWrapperPath)) : missingTool("Gradle wrapper", "Create a Gradle wrapper for reproducible Android builds."),
+      gradle: gradle.status === "ready" ? { ...gradle, name: gradleWrapperReady ? "Gradle wrapper" : "Gradle" } : readyTool("Gradle", "Android starters create a workspace-local Gradle wrapper."),
+      gradleWrapper: gradleWrapperReady ? readyTool("Gradle wrapper", normalizeSlashes(gradleWrapperPath)) : readyTool("Gradle wrapper", "Created for Android starters when missing."),
       buildTools: androidSdkReady && await hasSdkChild(sdkRoot, "build-tools") ? readyTool("Android build-tools", "Installed") : missingTool("Android build-tools", "Install Android SDK build-tools."),
       platformTools: androidSdkReady && await hasSdkChild(sdkRoot, "platform-tools") ? readyTool("platform-tools", "Installed") : missingTool("platform-tools", "Install Android SDK platform-tools."),
       platforms: androidSdkReady && await hasSdkChild(sdkRoot, "platforms") ? readyTool("Android platforms", "Installed") : missingTool("Android platforms", "Install at least one Android SDK platform."),
@@ -323,6 +336,33 @@ export function parseAdbDevices(output: string): AndroidDeviceTarget[] {
     .filter((target) => target.id);
 }
 
+async function enrichAndroidDeviceTargets(execFile: ExecFile, adbPath: string, targets: AndroidDeviceTarget[]): Promise<AndroidDeviceTarget[]> {
+  const readyTargets = targets.filter((target) => target.state === "device");
+  const enriched = new Map<string, AndroidDeviceTarget>();
+  for (const target of readyTargets) {
+    const [manufacturer, androidVersion, apiLevel, model] = await Promise.all([
+      readAndroidProperty(execFile, adbPath, target.id, "ro.product.manufacturer"),
+      readAndroidProperty(execFile, adbPath, target.id, "ro.build.version.release"),
+      readAndroidProperty(execFile, adbPath, target.id, "ro.build.version.sdk"),
+      readAndroidProperty(execFile, adbPath, target.id, "ro.product.model")
+    ]);
+    enriched.set(target.id, {
+      ...target,
+      manufacturer,
+      androidVersion,
+      apiLevel,
+      model: model ?? target.model,
+      name: model ?? target.name
+    });
+  }
+  return targets.map((target) => enriched.get(target.id) ?? target);
+}
+
+async function readAndroidProperty(execFile: ExecFile, adbPath: string, serial: string, property: string): Promise<string | undefined> {
+  const result = await execText(execFile, adbPath, ["-s", serial, "shell", "getprop", property], undefined).catch(() => ({ stdout: "", stderr: "" }));
+  return firstLine(result.stdout)?.trim() || undefined;
+}
+
 export function androidRunCommands(model: MobileProjectModel): Array<{ id: string; label: string; command: string; args: string[]; cwd?: string; confidence: number; longRunning: boolean; targetKind: UniversalRunTargetKind }> {
   if (model.platform !== "android") return [];
   const gradlew = process.platform === "win32" ? "gradlew.bat" : "./gradlew";
@@ -339,11 +379,16 @@ export function universalTargetsFor(model: MobileProjectModel | null): Universal
 }
 
 export function androidComposeStarterFiles(): StarterFile[] {
+  const sdk = installedAndroidSdk();
+  const compileSdk = installedCompileSdk(sdk) ?? 36;
   return [
+    { relativePath: "gradlew.bat", content: windowsGradleWrapperScript() },
+    { relativePath: "gradlew", content: unixGradleWrapperScript() },
+    { relativePath: "gradle/wrapper/gradle-wrapper.properties", content: `distributionUrl=https\\://services.gradle.org/distributions/gradle-${ANDROID_GRADLE_VERSION}-bin.zip\n` },
     { relativePath: "settings.gradle.kts", content: "pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }\ndependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }\nrootProject.name = \"LeviAndroidApp\"\ninclude(\":app\")\n" },
-    { relativePath: "build.gradle.kts", content: "plugins {\n  id(\"com.android.application\") version \"8.12.1\" apply false\n  id(\"org.jetbrains.kotlin.android\") version \"2.2.0\" apply false\n  id(\"org.jetbrains.kotlin.plugin.compose\") version \"2.2.0\" apply false\n}\n" },
+    { relativePath: "build.gradle.kts", content: `plugins {\n  id(\"com.android.application\") version \"${ANDROID_GRADLE_PLUGIN_VERSION}\" apply false\n  id(\"org.jetbrains.kotlin.android\") version \"${KOTLIN_ANDROID_PLUGIN_VERSION}\" apply false\n  id(\"org.jetbrains.kotlin.plugin.compose\") version \"${KOTLIN_ANDROID_PLUGIN_VERSION}\" apply false\n}\n` },
     { relativePath: "gradle.properties", content: "org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8\nandroid.useAndroidX=true\nkotlin.code.style=official\nandroid.nonTransitiveRClass=true\n" },
-    { relativePath: "app/build.gradle.kts", content: "plugins {\n  id(\"com.android.application\")\n  id(\"org.jetbrains.kotlin.android\")\n  id(\"org.jetbrains.kotlin.plugin.compose\")\n}\n\nandroid {\n  namespace = \"app.levi.generated\"\n  compileSdk = 36\n\n  defaultConfig {\n    applicationId = \"app.levi.generated\"\n    minSdk = 24\n    targetSdk = 36\n    versionCode = 1\n    versionName = \"1.0\"\n    testInstrumentationRunner = \"androidx.test.runner.AndroidJUnitRunner\"\n  }\n}\n\ndependencies {\n  implementation(platform(\"androidx.compose:compose-bom:2025.07.00\"))\n  implementation(\"androidx.activity:activity-compose:1.10.1\")\n  implementation(\"androidx.compose.material3:material3\")\n  implementation(\"androidx.compose.ui:ui\")\n  implementation(\"androidx.compose.ui:ui-tooling-preview\")\n  debugImplementation(\"androidx.compose.ui:ui-tooling\")\n}\n" },
+    { relativePath: "app/build.gradle.kts", content: `plugins {\n  id(\"com.android.application\")\n  id(\"org.jetbrains.kotlin.plugin.compose\")\n}\n\nandroid {\n  namespace = \"app.levi.generated\"\n  compileSdk = ${compileSdk}\n\n  defaultConfig {\n    applicationId = \"app.levi.generated\"\n    minSdk = 24\n    targetSdk = ${compileSdk}\n    versionCode = 1\n    versionName = \"1.0\"\n    testInstrumentationRunner = \"androidx.test.runner.AndroidJUnitRunner\"\n  }\n}\n\ndependencies {\n  implementation(platform(\"androidx.compose:compose-bom:${COMPOSE_BOM_VERSION}\"))\n  implementation(\"androidx.activity:activity-compose:1.11.0\")\n  implementation(\"androidx.compose.material3:material3\")\n  implementation(\"androidx.compose.ui:ui\")\n  implementation(\"androidx.compose.ui:ui-tooling-preview\")\n  debugImplementation(\"androidx.compose.ui:ui-tooling\")\n}\n` },
     { relativePath: "app/src/main/AndroidManifest.xml", content: "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\">\n  <application android:theme=\"@style/AppTheme\" android:label=\"Levi Android App\" android:allowBackup=\"false\" android:supportsRtl=\"true\">\n    <activity android:name=\".MainActivity\" android:exported=\"true\">\n      <intent-filter>\n        <action android:name=\"android.intent.action.MAIN\" />\n        <category android:name=\"android.intent.category.LAUNCHER\" />\n      </intent-filter>\n    </activity>\n  </application>\n</manifest>\n" },
     { relativePath: "app/src/main/res/values/styles.xml", content: "<resources>\n  <style name=\"AppTheme\" parent=\"android:style/Theme.Material.Light.NoActionBar\" />\n</resources>\n" },
     { relativePath: "app/src/main/java/app/levi/generated/MainActivity.kt", content: "package app.levi.generated\n\nimport android.os.Bundle\nimport androidx.activity.ComponentActivity\nimport androidx.activity.compose.setContent\nimport androidx.compose.material3.MaterialTheme\nimport androidx.compose.material3.Surface\nimport androidx.compose.material3.Text\n\nclass MainActivity : ComponentActivity() {\n  override fun onCreate(savedInstanceState: Bundle?) {\n    super.onCreate(savedInstanceState)\n    setContent {\n      MaterialTheme {\n        Surface {\n          Text(\"Ready to build with Levi\")\n        }\n      }\n    }\n  }\n}\n" }
@@ -351,10 +396,9 @@ export function androidComposeStarterFiles(): StarterFile[] {
 }
 
 export function androidStarterCommands(): { wrapper: StarterCommand; build: StarterCommand; test: StarterCommand; dev: StarterCommand } {
-  const gradle = process.platform === "win32" ? "gradle.bat" : "gradle";
   const gradlew = process.platform === "win32" ? "gradlew.bat" : "./gradlew";
   return {
-    wrapper: { label: "Create Gradle wrapper", command: gradle, args: ["wrapper", "--gradle-version", "8.14.3"], kind: "verify", required: true },
+    wrapper: { label: "Prepare Gradle wrapper", command: gradlew, args: ["--version"], kind: "verify", required: true },
     build: { label: "Assemble debug APK", command: gradlew, args: [":app:assembleDebug"], kind: "build", required: true },
     test: { label: "Run Android unit tests", command: gradlew, args: [":app:testDebugUnitTest"], kind: "test", required: false },
     dev: { label: "Install debug APK", command: gradlew, args: [":app:installDebug"], kind: "dev", required: false }
@@ -384,6 +428,41 @@ async function enrichAndroidProject(root: string, model: MobileProjectModel): Pr
     appModule,
     confidence: Math.max(model.confidence, compose ? 0.96 : 0.9),
     evidence: unique([...model.evidence, ...(compose ? ["Jetpack Compose source imports"] : []), ...(manifest ? ["AndroidManifest.xml"] : [])])
+  };
+}
+
+async function detectMobileProjectFromFiles(root: string): Promise<MobileProjectModel | null> {
+  const files = await listFiles(root, 5_000);
+  const fileSet = new Set(files);
+  const hasGradle = files.some((file) => /(^|\/)(settings|build)\.gradle(\.kts)?$/i.test(file));
+  const hasAndroidManifest = files.some((file) => /(^|\/)AndroidManifest\.xml$/i.test(file));
+  const sourceFiles = files.filter((file) => /\.(kt|java)$/i.test(file));
+  if (!hasGradle && !hasAndroidManifest) return null;
+  const usesKotlin = sourceFiles.some((file) => file.endsWith(".kt")) || files.some((file) => /\.gradle\.kts$/i.test(file));
+  const compose = await containsInFiles(root, sourceFiles, /androidx\.compose|setContent\s*\{/);
+  const modules = inferModulesFromFiles(files);
+  const appModule = modules.includes("app") ? "app" : modules[0] ?? (fileSet.has("app/build.gradle.kts") || fileSet.has("app/build.gradle") ? "app" : undefined);
+  return {
+    platform: "android",
+    language: usesKotlin ? "kotlin" : "java",
+    framework: compose || usesKotlin ? "jetpack-compose" : "android-views",
+    buildSystem: "gradle",
+    requiredTools: ["JDK", "Android SDK", "ADB", "Gradle wrapper"],
+    buildCommand: gradleCommand("assembleDebug"),
+    testCommand: gradleCommand("testDebugUnitTest"),
+    runCommand: "installDebug + adb shell monkey",
+    deviceTargets: ["android-device"],
+    emulatorTargets: ["android-emulator"],
+    projectRoot: ".",
+    modules: modules.length ? modules : ["app"],
+    appModule,
+    confidence: hasGradle && hasAndroidManifest ? 0.94 : 0.82,
+    evidence: unique([
+      ...(hasGradle ? ["Gradle Android metadata"] : []),
+      ...(hasAndroidManifest ? ["Android manifest"] : []),
+      ...(usesKotlin ? ["Kotlin sources"] : []),
+      ...(compose ? ["Jetpack Compose source imports"] : [])
+    ])
   };
 }
 
@@ -471,6 +550,74 @@ function defaultAndroidSdkPath(): string {
   return process.platform === "win32"
     ? path.join(os.homedir(), "AppData", "Local", "Android", "Sdk")
     : path.join(os.homedir(), "Android", "Sdk");
+}
+
+function defaultAndroidStudioJavaPath(): string {
+  return process.platform === "win32"
+    ? "C:\\Program Files\\Android\\Android Studio\\jbr\\bin\\java.exe"
+    : "java";
+}
+
+function installedAndroidSdk(): string {
+  return process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || defaultAndroidSdkPath();
+}
+
+function installedCompileSdk(sdkRoot: string): number | undefined {
+  const platforms = path.join(sdkRoot, "platforms");
+  if (!existsSync(platforms)) return undefined;
+  const apiLevels = readdirSync(platforms, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^android-\d+(?:\.\d+)?$/.test(entry.name))
+    .map((entry) => {
+      const properties = path.join(platforms, entry.name, "source.properties");
+      const api = existsSync(properties)
+        ? readFileSync(properties, "utf8").match(/AndroidVersion\.ApiLevel=(\d+)/)?.[1]
+        : entry.name.match(/^android-(\d+)/)?.[1];
+      return api ? Number(api) : 0;
+    })
+    .filter((level) => Number.isInteger(level) && level > 0);
+  return apiLevels.length ? Math.max(...apiLevels) : undefined;
+}
+
+function windowsGradleWrapperScript(): string {
+  return `@echo off
+setlocal EnableDelayedExpansion
+set "DIR=%~dp0"
+set "GRADLE_VERSION=${ANDROID_GRADLE_VERSION}"
+if not defined JAVA_HOME if exist "C:\\Program Files\\Android\\Android Studio\\jbr\\bin\\java.exe" set "JAVA_HOME=C:\\Program Files\\Android\\Android Studio\\jbr"
+set "GRADLE_HOME=%DIR%.gradle\\levi\\gradle-%GRADLE_VERSION%"
+set "GRADLE_EXE=%GRADLE_HOME%\\bin\\gradle.bat"
+if not exist "%GRADLE_EXE%" (
+  set "ZIP=%DIR%.gradle\\levi\\gradle-%GRADLE_VERSION%-bin.zip"
+  mkdir "%DIR%.gradle\\levi" 2>nul
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri 'https://services.gradle.org/distributions/gradle-!GRADLE_VERSION!-bin.zip' -OutFile '!ZIP!'; Expand-Archive -Force '!ZIP!' '!DIR!.gradle\\levi'"
+)
+if not exist "%GRADLE_EXE%" (
+  echo Gradle bootstrap failed 1>&2
+  exit /b 1
+)
+call "%GRADLE_EXE%" %*
+`;
+}
+
+function unixGradleWrapperScript(): string {
+  return `#!/usr/bin/env sh
+set -eu
+DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+GRADLE_VERSION="${ANDROID_GRADLE_VERSION}"
+GRADLE_HOME="$DIR/.gradle/levi/gradle-$GRADLE_VERSION"
+GRADLE_EXE="$GRADLE_HOME/bin/gradle"
+if [ ! -x "$GRADLE_EXE" ]; then
+  ZIP="$DIR/.gradle/levi/gradle-$GRADLE_VERSION-bin.zip"
+  mkdir -p "$DIR/.gradle/levi"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip" -o "$ZIP"
+  else
+    wget -q "https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip" -O "$ZIP"
+  fi
+  unzip -oq "$ZIP" -d "$DIR/.gradle/levi"
+fi
+exec "$GRADLE_EXE" "$@"
+`;
 }
 
 function readyTool(name: string, detail?: string): MobileTool {

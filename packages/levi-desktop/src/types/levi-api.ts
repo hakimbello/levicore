@@ -423,6 +423,9 @@ export type AndroidDeviceTarget = {
   model?: string;
   product?: string;
   name?: string;
+  manufacturer?: string;
+  androidVersion?: string;
+  apiLevel?: string;
 };
 
 export type MobileEnvironment = {

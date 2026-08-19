@@ -1559,9 +1559,17 @@ export class AgentExecutionService {
     terminalRun.status = forcedStatus ?? (exitCode === 0 ? "Succeeded" : "Failed");
     terminalRun.resultStatus = terminalRun.status === "Cancelled" ? "cancelled" : exitCode === 0 ? "completed" : "failed";
     if (terminalRun.status === "Failed") {
-      terminalRun.failureReason = `Terminal command failed with exit code ${exitCode}.`;
-      session.status = "Ready";
-      session.error = undefined;
+      const infrastructureMessage = terminalExitInfrastructureMessage(terminalRun);
+      if (infrastructureMessage) {
+        terminalRun.resultStatus = "infrastructure-error";
+        terminalRun.failureReason = infrastructureMessage;
+        session.status = "Error";
+        session.error = infrastructureMessage;
+      } else {
+        terminalRun.failureReason = `Terminal command failed with exit code ${exitCode}.`;
+        session.status = "Ready";
+        session.error = undefined;
+      }
     } else {
       session.status = "Ready";
       terminalRun.failureReason = terminalRun.status === "Cancelled" ? "Terminal command was cancelled." : undefined;
@@ -2359,6 +2367,22 @@ function deterministicFallbackRepairActions(failure: AgentVerificationFailure, r
   const target = failure.affectedFiles.find((file) => file && !path.isAbsolute(file) && !normalizeSlashes(file).split("/").includes(".."));
   if (!target) return [];
   const text = `${failure.message}\n${report.terminalOutputExcerpt}`.replace(/\r\n/g, "\n");
+  if (/org\.jetbrains\.kotlin\.android/i.test(text) && /no longer required for Kotlin support since AGP 9\.0/i.test(text)) {
+    return [
+      {
+        id: randomUUID(),
+        type: "modify-file",
+        title: "Remove obsolete Kotlin Android plugin",
+        description: "Remove the Kotlin Android plugin line rejected by AGP 9.0 and keep Kotlin support provided by the Android Gradle plugin.",
+        status: "Pending",
+        relativePath: normalizeSlashes(target),
+        edits: [{ kind: "replace", find: "  id(\"org.jetbrains.kotlin.android\")\n", replace: "" }],
+        affectedFiles: [normalizeSlashes(target)],
+        createdAt: now,
+        updatedAt: now
+      }
+    ];
+  }
   const assignment = text.match(/\b(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*;/);
   if (!assignment) return [];
   const original = assignment[0];
@@ -2676,7 +2700,20 @@ function resolveDirectProcessLaunch(preview: AgentTerminalPreview): { executable
   if (base === "npx" || base === "npx.cmd") {
     return { executable: process.execPath, args: [resolveNodePackageCli("npx"), ...preview.args] };
   }
+  if (process.platform === "win32" && (base === "gradlew.bat" || base === "gradle.bat")) {
+    return { executable: process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe", args: ["/d", "/s", "/c", preview.executable, ...preview.args] };
+  }
   return { executable: preview.executable, args: preview.args };
+}
+
+function terminalExitInfrastructureMessage(run: AgentTerminalRunState): string | undefined {
+  const base = path.basename(run.executable).toLowerCase();
+  const text = `${run.stderrPreview}\n${run.outputPreview}`.toLowerCase();
+  const bridgeMissing = /not recognized as an internal or external command|cannot find the path specified|no such file or directory|command not found/.test(text);
+  if (bridgeMissing && /^(gradlew\.bat|gradle\.bat|gradlew|gradle|node|node\.exe|npm|npm\.cmd|npx|npx\.cmd|python|python\.exe|dotnet|dotnet\.exe|cargo|cargo\.exe|go|go\.exe)$/.test(base)) {
+    return `Terminal execution failed: ${run.executable} could not be launched.`;
+  }
+  return undefined;
 }
 
 function resolveNodePackageCli(command: "npm" | "npx"): string {
@@ -2729,9 +2766,13 @@ function linesMatching(value: string, pattern: RegExp): string[] {
 function inferAffectedFilesFromTerminalOutput(output: string): string[] {
   const files = new Set<string>();
   const normalized = output.replace(/\r\n/g, "\n");
+  for (const match of normalized.matchAll(/Build file '([^']+?build\.gradle(?:\.kts)?)'/g)) {
+    const buildFile = relativeGradleBuildPath(match[1]);
+    if (buildFile) files.add(buildFile);
+  }
   const patterns = [
-    /(?:^|\s)([A-Za-z0-9_.\-\/\\]+?\.(?:tsx?|jsx?|css|scss|json|html|vue|svelte|cs|go|rs|py|java|kt|gradle))(?:[:(]\d+)?/g,
-    /(?:^|\n)\s*(?:at\s+)?([A-Za-z0-9_.\-\/\\]+?\.(?:tsx?|jsx?|css|scss|json|html|vue|svelte|cs|go|rs|py|java|kt|gradle))\b/g
+    /(?:^|\s)([A-Za-z0-9_.\-\/\\]+?\.(?:tsx?|jsx?|css|scss|json|html|vue|svelte|cs|go|rs|py|java|kt|gradle\.kts|gradle))(?:[:(]\d+)?/g,
+    /(?:^|\n)\s*(?:at\s+)?([A-Za-z0-9_.\-\/\\]+?\.(?:tsx?|jsx?|css|scss|json|html|vue|svelte|cs|go|rs|py|java|kt|gradle\.kts|gradle))\b/g
   ];
   for (const pattern of patterns) {
     for (const match of normalized.matchAll(pattern)) {
@@ -2742,6 +2783,14 @@ function inferAffectedFilesFromTerminalOutput(output: string): string[] {
     }
   }
   return [...files];
+}
+
+function relativeGradleBuildPath(value: string): string | undefined {
+  const normalized = normalizeSlashes(value);
+  const moduleBuild = normalized.match(/(?:^|\/)([^/]+\/build\.gradle(?:\.kts)?)$/i)?.[1];
+  if (moduleBuild) return moduleBuild;
+  const rootBuild = normalized.match(/(?:^|\/)(build\.gradle(?:\.kts)?)$/i)?.[1];
+  return rootBuild;
 }
 
 function terminalFailureDetails(terminalRun: AgentTerminalRunState, session: AgentSession, affectedFiles: string[]): Record<string, unknown> {

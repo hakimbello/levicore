@@ -257,7 +257,7 @@ export const PROJECT_STARTERS: ProjectStarterInfo[] = [
     language: "Kotlin",
     requiredTools: ["JDK", "Android SDK", "Gradle", "ADB"],
     initializationActions: "deterministic-files",
-    expectedFiles: ["settings.gradle.kts", "build.gradle.kts", "gradle.properties", "app/build.gradle.kts", "app/src/main/AndroidManifest.xml", "app/src/main/java/app/levi/generated/MainActivity.kt"],
+    expectedFiles: ["gradlew.bat", "gradle/wrapper/gradle-wrapper.properties", "settings.gradle.kts", "build.gradle.kts", "gradle.properties", "app/build.gradle.kts", "app/src/main/AndroidManifest.xml", "app/src/main/java/app/levi/generated/MainActivity.kt"],
     verificationStrategy: "build-command",
     description: "Android app initialized with deterministic Kotlin and Jetpack Compose project files.",
     installCommand: androidStarterCommands().wrapper,
@@ -674,7 +674,7 @@ export class ProjectWorkflowService {
       const missing = [
         environment.android.jdk,
         environment.android.androidSdk,
-        environment.android.gradle
+        environment.android.adb
       ].filter((tool) => tool.status !== "ready");
       if (missing.length) {
         throw new Error(`Android starter requires setup first: ${missing.map((tool) => tool.name).join(", ")}. ${environment.android.summary}`);
@@ -973,10 +973,19 @@ async function exists(targetPath: string): Promise<boolean> {
 }
 
 function exec(execFile: ExecFile, executable: string, args: string[], cwd: string, timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
+  const launch = resolveExecLaunch(executable, args);
   return new Promise((resolve, reject) => {
-    execFile(executable, args, { cwd, timeout: timeoutMs, windowsHide: true, maxBuffer: MAX_OUTPUT_CHARS * 2 }, (error, stdout, stderr) => {
+    execFile(launch.executable, launch.args, { cwd, timeout: timeoutMs, windowsHide: true, maxBuffer: MAX_OUTPUT_CHARS * 2 }, (error, stdout, stderr) => {
       if (error) reject(new Error(stderr.toString().trim() || stdout.toString().trim() || error.message));
       else resolve({ stdout: stdout.toString(), stderr: stderr.toString() });
     });
   });
+}
+
+function resolveExecLaunch(executable: string, args: string[]): { executable: string; args: string[] } {
+  const base = path.basename(executable).toLowerCase();
+  if (process.platform === "win32" && (base === "gradlew.bat" || base === "gradle.bat")) {
+    return { executable: process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe", args: ["/d", "/s", "/c", executable, ...args] };
+  }
+  return { executable, args };
 }

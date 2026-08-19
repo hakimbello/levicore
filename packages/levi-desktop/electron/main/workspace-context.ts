@@ -28,6 +28,7 @@ const EXCLUDED_DIRECTORIES = new Set([
   ".next",
   ".turbo",
   ".cache",
+  ".gradle",
   "vendor",
   "target",
   "release"
@@ -82,6 +83,10 @@ const MANIFEST_NAMES = new Set([
   "go.mod",
   "pom.xml",
   "build.gradle",
+  "build.gradle.kts",
+  "settings.gradle",
+  "settings.gradle.kts",
+  "AndroidManifest.xml",
   "Dockerfile",
   "docker-compose.yml",
   "docker-compose.yaml",
@@ -167,6 +172,8 @@ function languageForExtension(extension: string): string | null {
     ".rs": "Rust",
     ".go": "Go",
     ".java": "Java",
+    ".kt": "Kotlin",
+    ".kts": "Kotlin",
     ".gradle": "Gradle",
     ".toml": "TOML",
     ".yaml": "YAML",
@@ -192,6 +199,8 @@ export function getMonacoLanguage(relativePath: string): string {
     ".rs": "rust",
     ".go": "go",
     ".java": "java",
+    ".kt": "kotlin",
+    ".kts": "kotlin",
     ".toml": "toml",
     ".yaml": "yaml",
     ".yml": "yaml"
@@ -298,6 +307,11 @@ function detectFrameworks(files: WorkspaceFileRecord[], dependencies: Record<str
   if (dependencyNames.has("express")) names.add("Express");
   if (files.some((file) => file.relativePath === "Cargo.toml")) names.add("Cargo");
   if (files.some((file) => file.relativePath === "go.mod")) names.add("Go modules");
+  const androidManifests = files.some((file) => /(^|\/)AndroidManifest\.xml$/i.test(file.relativePath));
+  const androidGradle = files.some((file) => /(^|\/)(settings|build)\.gradle(\.kts)?$/i.test(file.relativePath));
+  const androidSources = files.some((file) => /(^|\/)app\/src\/main\//i.test(file.relativePath));
+  if (androidManifests || androidGradle && androidSources) names.add("Android");
+  if (files.some((file) => /\.(kt|kts)$/i.test(file.relativePath)) && (androidManifests || androidGradle)) names.add("Jetpack Compose");
   return Array.from(names);
 }
 
@@ -320,6 +334,9 @@ function detectApplicationType(frameworks: string[]): string | undefined {
   if (frameworks.includes("Vite") && frameworks.includes("React")) {
     return "Vite React application";
   }
+  if (frameworks.includes("Android")) {
+    return frameworks.includes("Jetpack Compose") ? "Android Kotlin application with Jetpack Compose" : "Android application";
+  }
   return undefined;
 }
 
@@ -331,7 +348,7 @@ async function buildSummary(rootPath: string, files: WorkspaceFileRecord[]): Pro
   const frameworks = detectFrameworks(files, packageInfo.dependencies).sort();
   const pathSet = new Set(files.map((file) => file.relativePath));
   const manifests = files.filter((file) => MANIFEST_NAMES.has(path.basename(file.relativePath)) || DOC_NAME_PATTERN.test(path.basename(file.relativePath)));
-  const sourceDirectories = ["src", "app", "pages", "lib", "packages", "electron"].filter((directory) =>
+  const sourceDirectories = ["src", "app", "app/src/main", "pages", "lib", "packages", "electron"].filter((directory) =>
     files.some((file) => file.relativePath.startsWith(`${directory}/`))
   );
   const testDirectories = ["test", "tests", "__tests__", "cypress", "e2e"].filter((directory) =>
@@ -349,6 +366,10 @@ async function buildSummary(rootPath: string, files: WorkspaceFileRecord[]): Pro
     "main.go",
     "src/main.rs"
   ].filter((entry) => pathSet.has(entry));
+  const androidActivity = files
+    .map((file) => file.relativePath)
+    .find((file) => /(^|\/)MainActivity\.(kt|java)$/i.test(file));
+  if (androidActivity) entryPoints.push(androidActivity);
 
   return {
     projectName: packageInfo.packageName ?? path.basename(rootPath),

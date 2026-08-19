@@ -727,7 +727,8 @@ function createDeterministicNewAppPlan(
   const starter = starterById(intent.starterId);
   const slug = intent.projectName;
   const targetDescription = projectSummary.rootPath ? ` Target workspace: ${projectSummary.rootPath}.` : "";
-  const childFolder = shouldBootstrapInChild(workspaceSummary) ? slug : "";
+  const useExistingMobileRoot = starter.id === "android-compose" && isAndroidWorkspace(workspaceSummary);
+  const childFolder = useExistingMobileRoot ? "" : shouldBootstrapInChild(workspaceSummary) ? slug : "";
   const now = new Date().toISOString();
   const approvals: AgentApprovalAction[] = [];
   const steps: AgentPlanStep[] = [];
@@ -758,32 +759,34 @@ function createDeterministicNewAppPlan(
     step.actionIds.push(item.id);
   };
 
-  const starterFiles = starterFilesForProject(starter, slug);
-  const bootstrapStep = createStep(
-    `Bootstrap ${starter.label}`,
-    childFolder
-      ? `Create the deterministic ${starter.label} starter in ${childFolder}.`
-      : `Create the deterministic ${starter.label} starter in the workspace root.`,
-    starter.expectedFiles
-  );
-  for (const file of starterFiles) {
-    addAction(bootstrapStep, {
-      type: "create-file",
-      title: `Create ${file.relativePath}`,
-      description: `Write deterministic starter file ${file.relativePath}.`,
-      relativePath: scopedPath(childFolder, file.relativePath),
-      content: file.content
-    });
-  }
+  if (!useExistingMobileRoot) {
+    const starterFiles = starterFilesForProject(starter, slug);
+    const bootstrapStep = createStep(
+      `Bootstrap ${starter.label}`,
+      childFolder
+        ? `Create the deterministic ${starter.label} starter in ${childFolder}.`
+        : `Create the deterministic ${starter.label} starter in the workspace root.`,
+      starter.expectedFiles
+    );
+    for (const file of starterFiles) {
+      addAction(bootstrapStep, {
+        type: "create-file",
+        title: `Create ${file.relativePath}`,
+        description: `Write deterministic starter file ${file.relativePath}.`,
+        relativePath: scopedPath(childFolder, file.relativePath),
+        content: file.content
+      });
+    }
 
-  if (starter.installCommand) {
-    const installStep = createStep("Install starter dependencies", `Install dependencies required by ${starter.label}.`, ["package.json"]);
-    addAction(installStep, terminalAction(starter.installCommand, childFolder, "Install dependencies", "Install deterministic starter dependencies."));
-  }
+    if (starter.installCommand) {
+      const installStep = createStep("Prepare starter dependencies", `Prepare dependencies required by ${starter.label}.`, ["package.json"]);
+      addAction(installStep, terminalAction(starter.installCommand, childFolder, starter.installCommand.label, "Prepare deterministic starter dependencies."));
+    }
 
-  if (starter.buildCommand) {
-    const verifyStep = createStep("Verify starter", "Run the starter verification command before applying feature work.", starter.expectedFiles);
-    addAction(verifyStep, terminalAction(starter.buildCommand, childFolder, starter.buildCommand.label, "Verify the deterministic starter."));
+    if (starter.buildCommand) {
+      const verifyStep = createStep("Verify starter", "Run the starter verification command before applying feature work.", starter.expectedFiles);
+      addAction(verifyStep, terminalAction(starter.buildCommand, childFolder, starter.buildCommand.label, "Verify the deterministic starter."));
+    }
   }
 
   const featureFiles = featureFilesForIntent(intent.requestedFeatures, starter);
@@ -809,7 +812,9 @@ function createDeterministicNewAppPlan(
   const plan: AgentExecutionPlan = {
     id: randomUUID(),
     objective,
-    summary: `Deterministic new-app plan selected ${starter.label} for ${slug}. ${intent.reason}${targetDescription}`,
+    summary: useExistingMobileRoot
+      ? `Deterministic Android feature plan will update the current Kotlin + Compose workspace. ${intent.reason}${targetDescription}`
+      : `Deterministic new-app plan selected ${starter.label} for ${slug}. ${intent.reason}${targetDescription}`,
     planningMode: "deterministic-bootstrap",
     starterId: starter.id,
     starterLabel: starter.label,
@@ -907,6 +912,16 @@ function packageManagerCommand(value: string | undefined): string {
   if (value === "pnpm") return process.platform === "win32" ? "pnpm.cmd" : "pnpm";
   if (value === "yarn") return process.platform === "win32" ? "yarn.cmd" : "yarn";
   return process.platform === "win32" ? "npm.cmd" : "npm";
+}
+
+function isAndroidWorkspace(summary: WorkspaceStatus["summary"] | undefined): boolean {
+  if (!summary) return false;
+  return summary.manifestFiles.some((file) => /(^|\/|\\)(settings\.gradle(\.kts)?|build\.gradle(\.kts)?|AndroidManifest\.xml)$/i.test(file))
+    && (summary.languages.some((language) => /^kotlin$/i.test(language)) || summary.sourceDirectories.some((directory) => normalizeSlashes(directory).startsWith("app/src/main")));
+}
+
+function normalizeSlashes(value: string): string {
+  return value.replace(/\\/g, "/");
 }
 
 function starterFilesForProject(starter: ProjectStarterInfo, slug: string): StarterFile[] {

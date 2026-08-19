@@ -104,6 +104,24 @@ describe("mobile project support", () => {
     }))).toMatchObject({ platform: "ios", framework: "swiftui" });
   });
 
+  it("detects Android projects from files when the workspace summary is sparse", async () => {
+    const root = await tempDir();
+    await fs.mkdir(path.join(root, "app", "src", "main", "java", "app", "levi", "generated"), { recursive: true });
+    await fs.writeFile(path.join(root, "settings.gradle.kts"), "include(\":app\")\n", "utf8");
+    await fs.writeFile(path.join(root, "app", "build.gradle.kts"), "android { namespace = \"app.levi.generated\" }\n", "utf8");
+    await fs.writeFile(path.join(root, "app", "src", "main", "AndroidManifest.xml"), "<manifest />\n", "utf8");
+    await fs.writeFile(path.join(root, "app", "src", "main", "java", "app", "levi", "generated", "MainActivity.kt"), "import androidx.compose.material3.Text\nfun Screen() { setContent { Text(\"Hi\") } }\n", "utf8");
+
+    const model = await detectMobileProject(root, summary({}));
+
+    expect(model).toMatchObject({
+      platform: "android",
+      language: "kotlin",
+      framework: "jetpack-compose",
+      appModule: "app"
+    });
+  });
+
   it("parses ADB targets including multiple and offline devices", () => {
     const targets = parseAdbDevices("List of devices attached\nemulator-5554 device product:sdk_gphone model:Pixel_8 device:emu\nR58N offline model:Galaxy_S23\nABC unauthorized\n");
     expect(targets).toEqual([
@@ -128,12 +146,23 @@ describe("mobile project support", () => {
       "gradle.bat --version": { stdout: "Gradle 8.14.3" },
       "adb.exe version": { stdout: "Android Debug Bridge version 1.0.41" },
       "adb.exe devices -l": { stdout: "List of devices attached\nemulator-5554 device model:Pixel_8\n" },
+      "adb.exe -s emulator-5554 shell getprop ro.product.manufacturer": { stdout: "Google\n" },
+      "adb.exe -s emulator-5554 shell getprop ro.build.version.release": { stdout: "16\n" },
+      "adb.exe -s emulator-5554 shell getprop ro.build.version.sdk": { stdout: "36\n" },
+      "adb.exe -s emulator-5554 shell getprop ro.product.model": { stdout: "Pixel 8\n" },
       "emulator.exe -list-avds": { stdout: "Pixel_8\n" }
     });
 
     const environment = await detectMobileEnvironment(root, exec, { ANDROID_HOME: sdk, JAVA_HOME: "C:\\Java" });
     expect(environment.android.status).toBe("ready");
-    expect(environment.android.devices.targets[0]).toMatchObject({ kind: "android-emulator", state: "device" });
+    expect(environment.android.devices.targets[0]).toMatchObject({
+      kind: "android-emulator",
+      state: "device",
+      manufacturer: "Google",
+      androidVersion: "16",
+      apiLevel: "36",
+      model: "Pixel 8"
+    });
     expect(environment.android.avds.names).toEqual(["Pixel_8"]);
     expect(environment.ios.sourceDevelopment.status).toBe("ready");
     if (process.platform === "win32") {
@@ -146,6 +175,7 @@ describe("mobile project support", () => {
     expect(starter.expectedFiles).toEqual(expect.arrayContaining(["app/build.gradle.kts", "app/src/main/AndroidManifest.xml"]));
     expect(starter.buildCommand).toMatchObject({ command: process.platform === "win32" ? "gradlew.bat" : "./gradlew", args: [":app:assembleDebug"] });
     expect(starter.files.map((file) => file.relativePath)).toContain("app/src/main/java/app/levi/generated/MainActivity.kt");
+    expect(starter.files.find((file) => file.relativePath === "gradlew.bat")?.content).toContain("setlocal EnableDelayedExpansion");
 
     const intent = detectNewAppIntent("Build me an Android fitness app for truck drivers using Kotlin and Jetpack Compose.");
     expect(intent).toMatchObject({ starterId: "android-compose", projectName: "trucker-fitness" });
@@ -185,6 +215,10 @@ describe("mobile project support", () => {
     const exec = ((command: string, args: string[], _options: unknown, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
       calls.push(`${path.basename(command)} ${args.join(" ")}`);
       if (args.join(" ") === "devices -l") callback(null, "List of devices attached\nemulator-5554 device model:Pixel_8\n", "");
+      else if (args.join(" ") === "-s emulator-5554 shell getprop ro.product.manufacturer") callback(null, "Google\n", "");
+      else if (args.join(" ") === "-s emulator-5554 shell getprop ro.build.version.release") callback(null, "16\n", "");
+      else if (args.join(" ") === "-s emulator-5554 shell getprop ro.build.version.sdk") callback(null, "36\n", "");
+      else if (args.join(" ") === "-s emulator-5554 shell getprop ro.product.model") callback(null, "Pixel 8\n", "");
       else if (args.includes(":app:installDebug")) callback(null, "BUILD SUCCESSFUL\nInstalled on emulator-5554\n", "");
       else if (args.includes("monkey")) callback(null, "Events injected: 1\n", "");
       else if (args.includes("force-stop")) callback(null, "", "");

@@ -462,6 +462,42 @@ describe("Coding Agent foundation", () => {
     expect(plan.approvals.some((action) => action.type === "run-terminal-command" && action.cwd === "calculator")).toBe(true);
   });
 
+  it("updates an existing Android starter in place for Android build prompts", async () => {
+    const runtimeProvider = provider();
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "levi-agent-android-app-"));
+    const { service } = await createService(runtimeProvider, {
+      workspaceSummary: {
+        projectName: "TruckerFitness",
+        rootPath: root,
+        languages: ["Kotlin"],
+        frameworks: ["Jetpack Compose"],
+        packageManager: undefined,
+        likelyEntryPoints: ["app/src/main/java/app/levi/generated/MainActivity.kt"],
+        sourceDirectories: ["app/src/main"],
+        testDirectories: [],
+        scripts: {},
+        documentationFiles: [],
+        manifestFiles: ["settings.gradle.kts", "build.gradle.kts", "gradlew.bat", "app/build.gradle.kts", "app/src/main/AndroidManifest.xml"],
+        includedFileCount: 8,
+        excludedFileCount: 0,
+        scanTimestamp: "2026-08-19T00:00:00.000Z"
+      }
+    });
+
+    const result = await service.plan({
+      prompt: "Build me an Android fitness app for truck drivers using Kotlin and Jetpack Compose.",
+      runtimeId: "ollama",
+      modelId: "model-a"
+    });
+
+    const plan = result.state.sessions[0].plan!;
+    expect(runtimeProvider.chat).not.toHaveBeenCalled();
+    expect(plan.starterId).toBe("android-compose");
+    expect(plan.approvals.some((action) => action.type === "create-file" && action.relativePath?.startsWith("trucker-fitness/"))).toBe(false);
+    expect(plan.approvals.some((action) => action.type === "modify-file" && action.relativePath === "app/src/main/java/app/levi/generated/MainActivity.kt" && action.content?.includes("Trucker Fitness"))).toBe(true);
+    expect(plan.approvals.some((action) => action.type === "run-terminal-command" && action.command === (process.platform === "win32" ? "gradlew.bat" : "./gradlew") && action.cwd === ".")).toBe(true);
+  });
+
   it("recovers structured plans from fenced JSON with trailing commas", async () => {
     const malformed = "```json\n{\"summary\":\"Recovered plan\",\"steps\":[{\"title\":\"Edit\",\"description\":\"\",\"estimatedFiles\":[\"src/App.tsx\",],\"actions\":[{\"type\":\"modify-file\",\"title\":\"Edit app\",\"description\":\"\",\"relativePath\":\"src/App.tsx\",},],},],}\n```";
     const { service } = await createService(provider(malformed));

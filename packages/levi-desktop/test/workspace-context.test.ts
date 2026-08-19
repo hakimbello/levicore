@@ -30,6 +30,7 @@ describe("workspace context scanning and retrieval", () => {
     await writeFile(root, "dist/bundle.js", "generated\n");
     await writeFile(root, "build/output.js", "generated\n");
     await writeFile(root, "release/app.exe", "generated\n");
+    await writeFile(root, ".gradle/levi/README", "generated cache\n");
     await writeFile(root, ".env", "TOKEN=secret\n");
     await writeFile(root, "private.key", "secret\n");
     await writeFile(root, "src/logo.png", Buffer.from([0, 1, 2, 3]));
@@ -45,6 +46,7 @@ describe("workspace context scanning and retrieval", () => {
     expect(paths).not.toContain("dist/bundle.js");
     expect(paths).not.toContain("build/output.js");
     expect(paths).not.toContain("release/app.exe");
+    expect(paths).not.toContain(".gradle/levi/README");
     expect(scan.files.find((file) => file.relativePath === ".env")?.contentEligible).toBe(false);
     expect(scan.files.find((file) => file.relativePath === "private.key")?.contentEligible).toBe(false);
     expect(scan.files.find((file) => file.relativePath === "src/logo.png")?.contentEligible).toBe(false);
@@ -84,6 +86,24 @@ describe("workspace context scanning and retrieval", () => {
     expect(scan.summary.testDirectories).toContain("test");
     expect(scan.summary.documentationFiles).toContain("README.md");
     expect(scan.summary.likelyEntryPoints).toEqual(expect.arrayContaining(["src/main.tsx", "electron/main/index.ts"]));
+  });
+
+  it("detects Android Kotlin Compose workspace metadata", async () => {
+    const root = await makeWorkspace();
+    await writeFile(root, "settings.gradle.kts", "include(\":app\")\n");
+    await writeFile(root, "build.gradle.kts", "plugins { id(\"com.android.application\") apply false }\n");
+    await writeFile(root, "app/build.gradle.kts", "plugins { id(\"org.jetbrains.kotlin.android\") }\n");
+    await writeFile(root, "app/src/main/AndroidManifest.xml", "<manifest />\n");
+    await writeFile(root, "app/src/main/java/app/levi/generated/MainActivity.kt", "import androidx.compose.material3.Text\nfun Screen() { Text(\"Hi\") }\n");
+
+    const scan = await scanWorkspace(root);
+
+    expect(scan.summary.languages).toContain("Kotlin");
+    expect(scan.summary.frameworks).toEqual(expect.arrayContaining(["Android", "Jetpack Compose"]));
+    expect(scan.summary.applicationType).toBe("Android Kotlin application with Jetpack Compose");
+    expect(scan.summary.manifestFiles).toEqual(expect.arrayContaining(["settings.gradle.kts", "build.gradle.kts", "app/build.gradle.kts", "app/src/main/AndroidManifest.xml"]));
+    expect(scan.summary.sourceDirectories).toContain("app/src/main");
+    expect(scan.summary.likelyEntryPoints[0]).toContain("MainActivity.kt");
   });
 
   it("prioritizes exact filenames, keywords, package scripts, and bounded excerpts", async () => {
