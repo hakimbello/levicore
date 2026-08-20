@@ -397,6 +397,7 @@ export type MobileProjectModel = {
   deviceTargets: UniversalRunTargetKind[];
   emulatorTargets: UniversalRunTargetKind[];
   packageIdentifier?: string;
+  launcherActivity?: string;
   minimumPlatformVersion?: string;
   projectRoot: string;
   modules: string[];

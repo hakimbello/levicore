@@ -49,7 +49,7 @@ describe("mobile project support", () => {
     await fs.mkdir(path.join(root, "app", "src", "main", "java", "app", "levi", "generated"), { recursive: true });
     await fs.writeFile(path.join(root, "settings.gradle.kts"), "include(\":app\")\n", "utf8");
     await fs.writeFile(path.join(root, "app", "build.gradle.kts"), "android { namespace = \"app.levi.generated\" applicationId = \"app.levi.generated\" }\n", "utf8");
-    await fs.writeFile(path.join(root, "app", "src", "main", "AndroidManifest.xml"), "<manifest />\n", "utf8");
+    await fs.writeFile(path.join(root, "app", "src", "main", "AndroidManifest.xml"), "<manifest><application><activity android:name=\".MainActivity\"><intent-filter><action android:name=\"android.intent.action.MAIN\" /><category android:name=\"android.intent.category.LAUNCHER\" /></intent-filter></activity></application></manifest>\n", "utf8");
     await fs.writeFile(path.join(root, "app", "src", "main", "java", "app", "levi", "generated", "MainActivity.kt"), "import androidx.compose.material3.Text\nfun Screen() { setContent { Text(\"Hi\") } }\n", "utf8");
 
     const model = await detectMobileProject(root, summary({
@@ -65,7 +65,8 @@ describe("mobile project support", () => {
       framework: "jetpack-compose",
       buildSystem: "gradle",
       appModule: "app",
-      packageIdentifier: "app.levi.generated"
+      packageIdentifier: "app.levi.generated",
+      launcherActivity: "app.levi.generated.MainActivity"
     });
     expect(model?.requiredTools).toContain("Android SDK");
     expect(universalTargetsFor(model)).toEqual(["android-device", "android-emulator"]);
@@ -211,6 +212,9 @@ describe("mobile project support", () => {
     await fs.mkdir(path.join(sdk, "platform-tools"), { recursive: true });
     await fs.mkdir(path.join(sdk, "build-tools", "36.0.0"), { recursive: true });
     await fs.mkdir(path.join(sdk, "platforms", "android-36"), { recursive: true });
+    await fs.writeFile(path.join(root, "settings.gradle.kts"), "include(\":app\")\n", "utf8");
+    await fs.writeFile(path.join(root, "app", "build.gradle.kts"), "android { namespace = \"app.levi.generated\" applicationId = \"app.levi.generated\" }\n", "utf8");
+    await fs.writeFile(path.join(root, "app", "src", "main", "AndroidManifest.xml"), "<manifest><application><activity android:name=\".MainActivity\"><intent-filter><action android:name=\"android.intent.action.MAIN\" /><category android:name=\"android.intent.category.LAUNCHER\" /></intent-filter></activity></application></manifest>\n", "utf8");
     await fs.writeFile(path.join(root, "gradlew.bat"), "@echo off\n", "utf8");
     const exec = ((command: string, args: string[], _options: unknown, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
       calls.push(`${path.basename(command)} ${args.join(" ")}`);
@@ -220,7 +224,8 @@ describe("mobile project support", () => {
       else if (args.join(" ") === "-s emulator-5554 shell getprop ro.build.version.sdk") callback(null, "36\n", "");
       else if (args.join(" ") === "-s emulator-5554 shell getprop ro.product.model") callback(null, "Pixel 8\n", "");
       else if (args.includes(":app:installDebug")) callback(null, "BUILD SUCCESSFUL\nInstalled on emulator-5554\n", "");
-      else if (args.includes("monkey")) callback(null, "Events injected: 1\n", "");
+      else if (args.join(" ") === "-s emulator-5554 shell input keyevent HOME") callback(null, "", "");
+      else if (args.includes("am") && args.includes("start")) callback(null, "Starting: Intent\nStatus: ok\n", "");
       else if (args.includes("force-stop")) callback(null, "", "");
       else if (path.basename(command).toLowerCase().startsWith("adb")) callback(null, "Android Debug Bridge version 1.0.41\n", "");
       else if (path.basename(command).toLowerCase().startsWith("gradlew")) callback(null, "Gradle 8.14.3\n", "");
@@ -245,10 +250,49 @@ describe("mobile project support", () => {
     try {
       const result = await service.startRun("android:installDebug");
       expect(result.status).toMatchObject({ running: true, target: expect.objectContaining({ id: "emulator-5554" }) });
-      expect(result.status.outputPreview).toContain("Events injected");
+      expect(result.status.outputPreview).toContain("Status: ok");
       const stopped = service.stopRun();
       expect(stopped.status.running).toBe(false);
-      expect(calls.some((call) => call.includes("shell monkey"))).toBe(true);
+      expect(calls.some((call) => call.includes("shell input keyevent HOME"))).toBe(true);
+      expect(calls.some((call) => call.includes("shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n app.levi.generated/app.levi.generated.MainActivity"))).toBe(true);
+    } finally {
+      if (previousAndroidHome === undefined) delete process.env.ANDROID_HOME;
+      else process.env.ANDROID_HOME = previousAndroidHome;
+    }
+  });
+
+  it("reports Android device disconnected when no target is available for Run App", async () => {
+    const root = await tempDir();
+    const sdk = path.join(root, "sdk");
+    await fs.mkdir(path.join(root, "app", "src", "main"), { recursive: true });
+    await fs.mkdir(path.join(sdk, "platform-tools"), { recursive: true });
+    await fs.mkdir(path.join(sdk, "build-tools", "36.0.0"), { recursive: true });
+    await fs.mkdir(path.join(sdk, "platforms", "android-36"), { recursive: true });
+    await fs.writeFile(path.join(root, "gradlew.bat"), "@echo off\n", "utf8");
+    const exec = ((command: string, args: string[], _options: unknown, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
+      if (args.join(" ") === "devices -l") callback(null, "List of devices attached\n", "");
+      else if (path.basename(command).toLowerCase().startsWith("adb")) callback(null, "Android Debug Bridge version 1.0.41\n", "");
+      else if (path.basename(command).toLowerCase().startsWith("gradlew")) callback(null, "Gradle 9.6.1\n", "");
+      else if (path.basename(command).toLowerCase().startsWith("java")) callback(null, "", "openjdk version \"21.0.1\"");
+      else callback(null, "ok\n", "");
+    }) as never;
+    const service = new ProjectWorkflowService({
+      getWorkspaceRoot: () => root,
+      openProjectAtPath: async () => null,
+      refreshWorkspace: async () => undefined,
+      getWorkspaceSummary: () => summary({
+        languages: ["Kotlin"],
+        manifestFiles: ["settings.gradle.kts", "app/build.gradle.kts", "app/src/main/AndroidManifest.xml"],
+        sourceDirectories: ["app/src/main"]
+      }),
+      terminalManager: {} as never,
+      getWindow: () => null,
+      execFile: exec
+    });
+    const previousAndroidHome = process.env.ANDROID_HOME;
+    process.env.ANDROID_HOME = sdk;
+    try {
+      await expect(service.startRun("android:installDebug")).rejects.toThrow(/Android device disconnected/i);
     } finally {
       if (previousAndroidHome === undefined) delete process.env.ANDROID_HOME;
       else process.env.ANDROID_HOME = previousAndroidHome;

@@ -38,6 +38,7 @@ export type MobileProjectModel = {
   deviceTargets: UniversalRunTargetKind[];
   emulatorTargets: UniversalRunTargetKind[];
   packageIdentifier?: string;
+  launcherActivity?: string;
   minimumPlatformVersion?: string;
   projectRoot: string;
   modules: string[];
@@ -142,7 +143,7 @@ export function detectMobileProjectFromSummary(summary: WorkspaceScanSummary): M
       requiredTools: ["JDK", "Android SDK", "ADB", "Gradle wrapper"],
       buildCommand: gradleCommand("assembleDebug"),
       testCommand: gradleCommand("testDebugUnitTest"),
-      runCommand: "installDebug + adb shell monkey",
+      runCommand: "installDebug + adb shell am start",
       deviceTargets: ["android-device"],
       emulatorTargets: ["android-emulator"],
       packageIdentifier: undefined,
@@ -419,16 +420,32 @@ async function enrichAndroidProject(root: string, model: MobileProjectModel): Pr
   const gradleContent = gradleBuild ? await fs.readFile(path.join(root, gradleBuild), "utf8").catch(() => "") : "";
   const sourceFiles = files.filter((file) => /\.(kt|java)$/i.test(file));
   const compose = await containsInFiles(root, sourceFiles, /androidx\.compose|setContent\s*\{/);
+  const packageIdentifier = manifestContent.match(/package="([^"]+)"/)?.[1] ?? gradleContent.match(/applicationId\s*=\s*"([^"]+)"/)?.[1] ?? gradleContent.match(/namespace\s*=\s*"([^"]+)"/)?.[1] ?? model.packageIdentifier;
   return {
     ...model,
     language: sourceFiles.some((file) => file.endsWith(".kt")) ? "kotlin" : model.language,
     framework: compose ? "jetpack-compose" : model.framework,
-    packageIdentifier: manifestContent.match(/package="([^"]+)"/)?.[1] ?? gradleContent.match(/applicationId\s*=\s*"([^"]+)"/)?.[1] ?? gradleContent.match(/namespace\s*=\s*"([^"]+)"/)?.[1] ?? model.packageIdentifier,
+    packageIdentifier,
+    launcherActivity: parseLauncherActivity(manifestContent, packageIdentifier) ?? model.launcherActivity,
     modules: modules.length ? modules : model.modules,
     appModule,
     confidence: Math.max(model.confidence, compose ? 0.96 : 0.9),
     evidence: unique([...model.evidence, ...(compose ? ["Jetpack Compose source imports"] : []), ...(manifest ? ["AndroidManifest.xml"] : [])])
   };
+}
+
+function parseLauncherActivity(manifestContent: string, packageIdentifier?: string): string | undefined {
+  const activityPattern = /<activity\b[\s\S]*?<\/activity>/gi;
+  for (const match of manifestContent.matchAll(activityPattern)) {
+    const block = match[0];
+    if (!/android\.intent\.action\.MAIN/.test(block) || !/android\.intent\.category\.LAUNCHER/.test(block)) continue;
+    const name = block.match(/android:name="([^"]+)"/)?.[1];
+    if (!name) continue;
+    if (name.startsWith(".") && packageIdentifier) return `${packageIdentifier}${name}`;
+    if (!name.includes(".") && packageIdentifier) return `${packageIdentifier}.${name}`;
+    return name;
+  }
+  return undefined;
 }
 
 async function detectMobileProjectFromFiles(root: string): Promise<MobileProjectModel | null> {
@@ -450,7 +467,7 @@ async function detectMobileProjectFromFiles(root: string): Promise<MobileProject
     requiredTools: ["JDK", "Android SDK", "ADB", "Gradle wrapper"],
     buildCommand: gradleCommand("assembleDebug"),
     testCommand: gradleCommand("testDebugUnitTest"),
-    runCommand: "installDebug + adb shell monkey",
+    runCommand: "installDebug + adb shell am start",
     deviceTargets: ["android-device"],
     emulatorTargets: ["android-emulator"],
     projectRoot: ".",

@@ -754,19 +754,28 @@ export class ProjectWorkflowService {
     const environment = await detectMobileEnvironment(workspaceRoot, this.options.execFile);
     const targets = environment.android.devices.targets.filter((target) => target.state === "device");
     if (!targets.length) {
-      throw new Error("No Android target is available. Launch Emulator or Connect Android Device.");
+      throw new Error("Android device disconnected. Connect Android Device or start an emulator.");
     }
     const target = targets[0];
     const gradlew = path.join(workspaceRoot, process.platform === "win32" ? "gradlew.bat" : "gradlew");
     const executable = await exists(gradlew) ? gradlew : gradleCommand;
     const summary = this.options.getWorkspaceSummary();
-    const packageId = summary ? (await detectMobileProject(workspaceRoot, summary))?.packageIdentifier ?? "app.levi.generated" : "app.levi.generated";
+    const model = summary ? await detectMobileProject(workspaceRoot, summary) : null;
+    const packageId = model?.packageIdentifier ?? "app.levi.generated";
     this.runStatus = { running: true, command, target, outputPreview: "Building debug APK for Android target...\n", startedAt: new Date().toISOString() };
     const install = await exec(this.options.execFile ?? execFileCallback, executable, [":app:installDebug"], workspaceRoot, CLONE_TIMEOUT_MS).catch((error) => {
       throw new Error(error instanceof Error ? error.message : "Android install failed.");
     });
     const adbCommand = environment.android.adb.executablePath ?? "adb";
-    const launch = await exec(this.options.execFile ?? execFileCallback, adbCommand, ["-s", target.id, "shell", "monkey", "-p", packageId, "1"], workspaceRoot, GIT_TIMEOUT_MS).catch((error) => {
+    if (model?.launcherActivity) {
+      await exec(this.options.execFile ?? execFileCallback, adbCommand, ["-s", target.id, "shell", "input", "keyevent", "HOME"], workspaceRoot, GIT_TIMEOUT_MS).catch((error) => {
+        throw new Error(error instanceof Error ? error.message : "Android foreground preparation failed.");
+      });
+    }
+    const launchArgs = model?.launcherActivity
+      ? ["-s", target.id, "shell", "am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", `${packageId}/${model.launcherActivity}`]
+      : ["-s", target.id, "shell", "monkey", "-p", packageId, "1"];
+    const launch = await exec(this.options.execFile ?? execFileCallback, adbCommand, launchArgs, workspaceRoot, GIT_TIMEOUT_MS).catch((error) => {
       throw new Error(error instanceof Error ? error.message : "Android launch failed.");
     });
     this.runStatus = {
