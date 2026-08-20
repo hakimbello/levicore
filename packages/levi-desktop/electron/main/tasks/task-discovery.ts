@@ -3,6 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { WorkspaceScanSummary } from "../../../src/types/levi-api";
 import type { TaskDefinition, TaskGroup, TaskSource } from "./task-types";
+import { detectProjectAdapterProfile } from "../project-adapters";
 
 const VSCODE_TASKS = path.join(".vscode", "tasks.json");
 const LEVI_TASKS = path.join(".levi", "tasks.json");
@@ -38,7 +39,17 @@ const ALLOWED_COMMANDS = new Set([
   "node",
   "node.exe",
   "npx",
-  "npx.cmd"
+  "npx.cmd",
+  "flutter",
+  "flutter.bat",
+  "dart",
+  "dart.exe",
+  "poetry",
+  "poetry.exe",
+  "uv",
+  "uv.exe",
+  "pipenv",
+  "pipenv.exe"
 ]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -193,7 +204,44 @@ function buildBuiltinTasks(summary: WorkspaceScanSummary, manifestPaths: Set<str
     // dotnet detection via csproj presence handled below
   }
 
+  const profile = detectProjectAdapterProfile(summary);
+  const addProfileTask = (suffix: string, label: string, group: TaskGroup, commandLine: string | undefined) => {
+    const parsed = parseCommandLine(commandLine);
+    if (!parsed) return;
+    tasks.push({
+      id: `universal:${slug(profile?.id ?? "project")}-${suffix}`,
+      label,
+      source: "builtin",
+      group,
+      command: validateCommand(parsed.command),
+      args: parsed.args,
+      problemMatchers: matcherIdsForProfile(profile?.id, group)
+    });
+  };
+  if (profile) {
+    addProfileTask("build", "Build", "build", profile.commands.build);
+    addProfileTask("test", "Test", "test", profile.commands.test);
+    addProfileTask("lint", "Lint", "lint", profile.commands.lint);
+    addProfileTask("run", profile.projectFamily === "cli" ? "Run" : "Run App", "run", profile.commands.run ?? profile.commands.dev);
+  }
+
   return tasks;
+}
+
+function parseCommandLine(commandLine: string | undefined): { command: string; args: string[] } | null {
+  const parts = commandLine?.match(/"[^"]+"|'[^']+'|\S+/g)?.map((part) => part.replace(/^["']|["']$/g, "")) ?? [];
+  if (!parts.length) return null;
+  return { command: parts[0], args: parts.slice(1) };
+}
+
+function matcherIdsForProfile(adapterId: string | undefined, group: TaskGroup): string[] {
+  if (adapterId === "go") return ["$go"];
+  if (adapterId === "rust") return ["$cargo", "$cargo-location"];
+  if (adapterId === "dotnet") return ["$dotnet"];
+  if (adapterId === "flutter") return ["$flutter"];
+  if (adapterId === "fastapi" || adapterId === "flask" || adapterId === "django" || adapterId === "python") return ["$pytest", "$python"];
+  if (group === "lint") return ["$eslint-compact", "$eslint-stylish"];
+  return group === "build" ? ["$tsc"] : [];
 }
 
 export async function discoverTasks(workspaceRoot: string, summary?: WorkspaceScanSummary): Promise<TaskDefinition[]> {

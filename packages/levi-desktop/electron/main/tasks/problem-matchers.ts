@@ -84,6 +84,26 @@ const MATCHERS: ProblemMatcherDefinition[] = [
     messageIndex: 4
   },
   {
+    id: "$dotnet",
+    owner: "dotnet",
+    pattern: /^(.+\.(?:cs|fs|vb))\((\d+),(\d+)\):\s+(error|warning)\s+\w+\d+:\s+(.+)$/,
+    fileIndex: 1,
+    lineIndex: 2,
+    columnIndex: 3,
+    severityIndex: 4,
+    messageIndex: 5
+  },
+  {
+    id: "$flutter",
+    owner: "flutter",
+    pattern: /^(.+\.(?:dart)):(\d+):(\d+):\s+(Error|Warning):\s+(.+)$/,
+    fileIndex: 1,
+    lineIndex: 2,
+    columnIndex: 3,
+    severityIndex: 4,
+    messageIndex: 5
+  },
+  {
     id: "$gcc",
     owner: "gcc",
     pattern: /^(.+):(\d+):(\d+):\s+(error|warning):\s+(.+)$/,

@@ -50,6 +50,29 @@ describe("task-discovery", () => {
     expect(tasks.some((task) => task.label === "Custom Build")).toBe(true);
     expect(tasks.some((task) => task.label === "lint")).toBe(true);
   });
+
+  it("discovers universal profile tasks for non-Node projects", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "levi-task-universal-"));
+    const tasks = await discoverTasks(root, {
+      projectName: "task-api",
+      rootPath: root,
+      languages: ["C#"],
+      frameworks: ["ASP.NET Core"],
+      packageManager: "dotnet",
+      likelyEntryPoints: ["Program.cs"],
+      sourceDirectories: [],
+      testDirectories: [],
+      scripts: {},
+      documentationFiles: [],
+      manifestFiles: ["TaskApi.csproj"],
+      includedFileCount: 1,
+      excludedFileCount: 0,
+      scanTimestamp: new Date().toISOString()
+    });
+
+    expect(tasks.find((task) => task.id === "universal:dotnet-build")).toMatchObject({ command: "dotnet", args: ["build"], problemMatchers: ["$dotnet"] });
+    expect(tasks.find((task) => task.id === "universal:dotnet-run")).toMatchObject({ label: "Run App", args: ["run"] });
+  });
 });
 
 describe("problem-matchers", () => {
@@ -73,6 +96,25 @@ describe("problem-matchers", () => {
     );
     expect(eslint[0]?.severity).toBe("error");
     expect(eslint[0]?.line).toBe(3);
+  });
+
+  it("parses .NET and Flutter diagnostics", () => {
+    const root = "C:\\Project";
+    const dotnet = parseProblemsFromOutput(
+      "Program.cs(8,17): error CS1002: ; expected",
+      ["$dotnet"],
+      root,
+      "Build"
+    );
+    expect(dotnet[0]).toMatchObject({ relativePath: "Program.cs", line: 8, column: 17, message: "; expected" });
+
+    const flutter = parseProblemsFromOutput(
+      "lib/main.dart:12:7: Error: The method 'missing' isn't defined.",
+      ["$flutter"],
+      root,
+      "Analyze"
+    );
+    expect(flutter[0]).toMatchObject({ relativePath: "lib/main.dart", line: 12, column: 7 });
   });
 });
 

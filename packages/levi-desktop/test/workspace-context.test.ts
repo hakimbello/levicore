@@ -106,6 +106,41 @@ describe("workspace context scanning and retrieval", () => {
     expect(scan.summary.likelyEntryPoints[0]).toContain("MainActivity.kt");
   });
 
+  it("detects universal language and framework metadata", async () => {
+    const root = await makeWorkspace();
+    await writeFile(root, "package.json", JSON.stringify({
+      name: "universal",
+      scripts: { dev: "vite", build: "vite build", android: "expo start --android" },
+      dependencies: { vue: "latest", vite: "latest", electron: "latest", expo: "latest", "react-native": "latest", "@tauri-apps/api": "latest" },
+      devDependencies: { astro: "latest", nuxt: "latest", svelte: "latest", "@sveltejs/kit": "latest" }
+    }, null, 2));
+    await writeFile(root, "vite.config.ts", "export default {};\n");
+    await writeFile(root, "svelte.config.js", "export default {};\n");
+    await writeFile(root, "nuxt.config.ts", "export default defineNuxtConfig({});\n");
+    await writeFile(root, "astro.config.mjs", "export default {};\n");
+    await writeFile(root, "src-tauri/Cargo.toml", "[package]\nname = \"demo\"\n");
+    await writeFile(root, "src-tauri/tauri.conf.json", "{}\n");
+    await writeFile(root, "main.py", "from fastapi import FastAPI\napp = FastAPI()\n");
+    await writeFile(root, "requirements.txt", "fastapi\n");
+    await writeFile(root, "go.mod", "module demo\n");
+    await writeFile(root, "main.go", "package main\nfunc main() {}\n");
+    await writeFile(root, "Cargo.toml", "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n");
+    await writeFile(root, "src/main.rs", "fn main() {}\n");
+    await writeFile(root, "TaskApi.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Web\"></Project>\n");
+    await writeFile(root, "Program.cs", "var builder = WebApplication.CreateBuilder(args);\n");
+    await writeFile(root, "pubspec.yaml", "name: demo\n");
+    await writeFile(root, "lib/main.dart", "void main() {}\n");
+    await writeFile(root, "Package.swift", "// swift-tools-version: 6.0\n");
+    await writeFile(root, "Sources/main.swift", "import SwiftUI\n");
+
+    const scan = await scanWorkspace(root);
+
+    expect(scan.summary.frameworks).toEqual(expect.arrayContaining(["Vue", "Vite", "Svelte", "SvelteKit", "Nuxt", "Astro", "Electron", "Tauri", "FastAPI", "Go modules", "Cargo", ".NET", "ASP.NET Core", "Flutter", "Expo", "React Native", "iOS", "Swift"]));
+    expect(scan.summary.languages).toEqual(expect.arrayContaining(["Python", "Go", "Rust", "C#", "Dart", "Swift"]));
+    expect(scan.summary.manifestFiles).toEqual(expect.arrayContaining(["requirements.txt", "go.mod", "Cargo.toml", "TaskApi.csproj", "pubspec.yaml", "Package.swift", "src-tauri/Cargo.toml", "src-tauri/tauri.conf.json"]));
+    expect(scan.summary.likelyEntryPoints).toEqual(expect.arrayContaining(["main.py", "main.go", "src/main.rs", "Program.cs", "lib/main.dart", "Sources/main.swift"]));
+  });
+
   it("prioritizes exact filenames, keywords, package scripts, and bounded excerpts", async () => {
     const root = await makeWorkspace();
     await writeFile(root, "package.json", JSON.stringify({ name: "sample", scripts: { "test:desktop": "vitest run" } }, null, 2));

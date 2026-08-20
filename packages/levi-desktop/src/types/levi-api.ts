@@ -359,8 +359,22 @@ export type ProjectType =
   | "vanilla-web"
   | "react"
   | "vite"
+  | "vue-vite"
+  | "svelte-vite"
+  | "sveltekit"
+  | "nuxt"
+  | "astro"
   | "nextjs"
   | "node"
+  | "python"
+  | "flask"
+  | "fastapi"
+  | "django"
+  | "go"
+  | "rust"
+  | "dotnet"
+  | "electron"
+  | "tauri"
   | "typescript"
   | "android-gradle"
   | "kotlin-android"
@@ -479,11 +493,20 @@ export type MobileEnvironment = {
 
 export type ProjectDetection = {
   projectType: ProjectType;
+  adapterId?: string;
+  projectFamily?: "web" | "api" | "empty" | "mobile" | "desktop" | "cli" | "library";
   framework?: string;
+  language?: string;
   packageManager?: string;
+  buildSystem?: string;
+  requiredTools?: string[];
+  installCommand?: string;
   buildCommand?: string;
   testCommand?: string;
+  lintCommand?: string;
   devCommand?: string;
+  runCommand?: string;
+  packageCommand?: string;
   entryPoint?: string;
   mobile?: MobileProjectModel;
   runTargets?: UniversalRunTargetKind[];

@@ -18,6 +18,7 @@ import {
   type MobileProjectModel,
   type UniversalRunTargetKind
 } from "./mobile-projects";
+import { detectUniversalProjectFromSummary, detectUniversalRunCommands } from "./project-adapters";
 
 const CLONE_TIMEOUT_MS = 120_000;
 const GIT_TIMEOUT_MS = 12_000;
@@ -28,8 +29,22 @@ export type ProjectType =
   | "vanilla-web"
   | "react"
   | "vite"
+  | "vue-vite"
+  | "svelte-vite"
+  | "sveltekit"
+  | "nuxt"
+  | "astro"
   | "nextjs"
   | "node"
+  | "python"
+  | "flask"
+  | "fastapi"
+  | "django"
+  | "go"
+  | "rust"
+  | "dotnet"
+  | "electron"
+  | "tauri"
   | "typescript"
   | "android-gradle"
   | "kotlin-android"
@@ -43,11 +58,20 @@ export type ProjectType =
 
 export type ProjectDetection = {
   projectType: ProjectType;
+  adapterId?: string;
+  projectFamily?: "web" | "api" | "empty" | "mobile" | "desktop" | "cli" | "library";
   framework?: string;
+  language?: string;
   packageManager?: string;
+  buildSystem?: string;
+  requiredTools?: string[];
+  installCommand?: string;
   buildCommand?: string;
   testCommand?: string;
+  lintCommand?: string;
   devCommand?: string;
+  runCommand?: string;
+  packageCommand?: string;
   entryPoint?: string;
   mobile?: MobileProjectModel;
   runTargets?: UniversalRunTargetKind[];
@@ -444,6 +468,13 @@ export function detectProjectFromSummary(summary: WorkspaceScanSummary): Project
   const scripts = summary.scripts;
   const manifests = new Set(summary.manifestFiles.map((file) => file.replace(/\\/g, "/")));
   const entryPoints = new Set(summary.likelyEntryPoints.map((file) => file.replace(/\\/g, "/")));
+  const universal = detectUniversalProjectFromSummary(summary);
+  if (universal.projectType !== "unknown") {
+    return {
+      ...universal,
+      runTargets: universal.runTargets ?? universalTargetsFor(null)
+    };
+  }
   const frameworks = new Set(summary.frameworks);
   const languages = new Set(summary.languages);
   const evidence: string[] = [];
@@ -518,6 +549,7 @@ export function detectRunCommands(summary: WorkspaceScanSummary): RunAppCommand[
     const pm = packageManagerExecutable(summary.packageManager);
     commands.push({ id: "react-native:android", label: "React Native Android", command: pm, args: summary.scripts.android ? packageManagerArgs(summary.packageManager, "android") : ["exec", "react-native", "run-android"], confidence: 0.82, longRunning: true });
   }
+  commands.push(...detectUniversalRunCommands(summary));
   const pm = packageManagerExecutable(summary.packageManager);
   const addScript = (script: string, label: string, confidence: number) => {
     if (!summary.scripts[script]) return;
