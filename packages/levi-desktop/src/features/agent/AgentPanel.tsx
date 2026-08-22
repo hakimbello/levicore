@@ -4,7 +4,7 @@ import type { AIChatAttachment, AIChatContextDiscoveryResult, AIChatContextPrevi
 import type { BrowserActionPreview, BrowserPageSnapshot, BrowserSession } from "../browser";
 import type { EditorTab } from "../../hooks/use-editor-tabs";
 import type { TaskOutputEntry, TaskProblem, WorkspaceStatus } from "../../types/levi-api";
-import type { AgentActionPreview, AgentGitPreview, AgentSession, AgentState, AgentTaskPreview, AgentTerminalPreview } from "./types";
+import type { AgentActionPreview, AgentGitPreview, AgentOperationLedgerEntry, AgentSession, AgentState, AgentTaskPreview, AgentTerminalPreview } from "./types";
 
 type AgentPanelProps = {
   runtimeState: AIRuntimeState;
@@ -755,6 +755,7 @@ function ExecutionReview({
   const terminalRuns = plan.terminalRuns ?? [];
   const gitRuns = plan.gitRuns ?? [];
   const browserRuns = plan.browserRuns ?? [];
+  const operations = (plan.recovery?.operations ?? []).slice(-5).reverse();
   const activeTaskRun = taskPreview ? taskRuns.find((run) => run.actionId === taskPreview.actionId) : undefined;
   const activeTerminalRun = terminalPreview ? terminalRuns.find((run) => run.actionId === terminalPreview.actionId) : undefined;
   const activeGitRun = gitPreview ? gitRuns.find((run) => run.actionId === gitPreview.actionId) : undefined;
@@ -796,6 +797,28 @@ function ExecutionReview({
     } catch (error) {
       onError(error instanceof Error ? error.message : "Could not undo last agent action.");
     }
+  }
+
+  async function restoreOperation(operationId: string) {
+    onError(null);
+    try {
+      const result = await window.levi.agent.restoreOperation({ sessionId, operationId });
+      onState(result.state);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Could not restore agent operation.");
+    }
+  }
+
+  function approveRestore(operation: AgentOperationLedgerEntry) {
+    const files = Array.from(new Set([
+      ...operation.filesCreated,
+      ...operation.filesModified,
+      ...operation.filesDeleted,
+      ...operation.filesRenamed
+    ]));
+    const fileList = files.length ? files.join("\n") : "No recorded file paths";
+    if (!window.confirm(`Restore this Agent operation?\n\nFiles affected:\n${fileList}\n\nFiles restored:\n${fileList}\n\nPotential conflicts will be reported before overwriting.`)) return;
+    void restoreOperation(operation.operationId);
   }
 
   async function executeTaskPreview() {
@@ -927,7 +950,7 @@ function ExecutionReview({
           <h2>Execution Queue</h2>
           <p>{queue.filter((item) => item.status === "Completed").length} completed / {queue.filter((item) => item.status === "Pending").length} remaining</p>
         </div>
-        <button type="button" onClick={() => void undoLast()} disabled={!plan.lastUndo}>Undo Last Action</button>
+        <button type="button" onClick={() => void undoLast()} disabled={!plan.lastUndo}>Undo Last Agent Change</button>
       </div>
       <div className="levi-agent-execution-queue">
         {queue.length ? queue.map((item) => (
@@ -941,6 +964,27 @@ function ExecutionReview({
           </article>
         )) : <p>No approved file actions queued yet.</p>}
       </div>
+
+      {operations.length ? (
+        <>
+          <h3>Agent Changes</h3>
+          <div className="levi-agent-execution-queue" aria-label="Agent Changes">
+            {operations.map((operation) => (
+              <article key={operation.operationId}>
+                <div>
+                  <strong>{operation.title}</strong>
+                  <span>{operation.status} / {operation.filesCreated.length + operation.filesModified.length + operation.filesDeleted.length + operation.filesRenamed.length} files changed</span>
+                  {operation.verificationResult ? <small>{operation.verificationResult}</small> : null}
+                  {operation.conflict ? <p>{operation.conflict}</p> : null}
+                </div>
+                <div>
+                  <button type="button" onClick={() => approveRestore(operation)} disabled={operation.status !== "Completed"}>Restore</button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </>
+      ) : null}
 
       {taskPreview ? (
         <div className="levi-agent-task-preview" role="group" aria-label="Task Approval Card">

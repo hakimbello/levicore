@@ -2465,6 +2465,10 @@ function registerIpc(): void {
     assertNoIpcArgs(args);
     return agentService.undo(request);
   });
+  ipcMain.handle(IPC_CHANNELS.agentRestoreOperation, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.restoreOperation(request);
+  });
   ipcMain.handle(IPC_CHANNELS.agentQueue, (_event, request, ...args) => {
     assertNoIpcArgs(args);
     return agentService.queue(request);

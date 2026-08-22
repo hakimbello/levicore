@@ -20,6 +20,7 @@ import type {
 } from "../src/features/ai-runtime";
 import type { TaskDefinition, TaskEvent, TaskOutputEntry, TaskProblem, TaskRun } from "../src/types/task-api";
 import type { WorkspaceScanSummary } from "../src/types/levi-api";
+import type { AgentSession } from "../src/features/agent";
 import { App } from "../src/app/App";
 
 const lazySurfaceWait = { timeout: 5000 };
@@ -567,6 +568,128 @@ describe("Coding Agent foundation", () => {
     expect(deleted.sessions).toHaveLength(0);
   });
 
+  it("recovers corrupt persistence, isolates project sessions, redacts secrets, and bounds operation history", async () => {
+    const { service, statePath, runtimeManager } = await createService(providerWithActions([
+      { type: "run-terminal-command", title: "Secret command", description: "Run with token.", command: nodeExecutable, args: ["--token=super-secret-value"], cwd: "." }
+    ]));
+    const root = path.dirname(statePath);
+    const planned = await service.plan({ prompt: "Run secret command", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    await service.approve({ sessionId, actionId: planned.state.sessions[0].plan!.approvals[0].id });
+
+    const raw = await fsp.readFile(statePath, "utf8");
+    expect(raw).not.toContain("super-secret-value");
+    expect(raw).toContain("[REDACTED]");
+
+    const parsed = JSON.parse(raw);
+    const session = parsed.sessions[0];
+    session.plan.recovery = {
+      schemaVersion: 1,
+      operations: Array.from({ length: 120 }, (_, index) => ({
+        operationId: `op-${index}`,
+        sessionId,
+        title: `Operation ${index}`,
+        status: "Completed",
+        userRequest: "Bound history",
+        approvedScope: [],
+        actionsAttempted: [],
+        actionsCompleted: [],
+        actionsFailed: [],
+        filesCreated: [],
+        filesModified: [],
+        filesDeleted: [],
+        filesRenamed: [],
+        commandsExecuted: [],
+        repairAttempts: 0,
+        snapshots: [],
+        startedAt: "2026-08-01T00:00:00.000Z"
+      })),
+      interruptedOperationIds: []
+    };
+    await fsp.writeFile(statePath, JSON.stringify(parsed), "utf8");
+    const bounded = new AgentService(runtimeManager, { statePath, getWorkspaceRoot: () => root });
+    const boundedState = await bounded.initialize();
+    expect(boundedState.sessions[0].plan?.recovery?.operations).toHaveLength(100);
+
+    const otherRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "levi-agent-other-"));
+    const isolated = new AgentService(runtimeManager, { statePath, getWorkspaceRoot: () => otherRoot });
+    const isolatedState = await isolated.initialize();
+    expect(isolatedState.sessions).toHaveLength(0);
+
+    await fsp.writeFile(statePath, "{not json", "utf8");
+    const corrupt = new AgentService(runtimeManager, { statePath, getWorkspaceRoot: () => root });
+    const recovered = await corrupt.initialize();
+    expect(recovered.sessions).toHaveLength(0);
+    expect((await fsp.readdir(path.dirname(statePath))).some((file) => file.includes("agent-state.json.corrupt-"))).toBe(true);
+  });
+
+  it("marks incomplete file operations interrupted after crash recovery", async () => {
+    const { statePath, runtimeManager } = await createService();
+    const root = path.dirname(statePath);
+    const sessionId = "session-crash";
+    await fsp.writeFile(statePath, JSON.stringify({
+      sessions: [{
+        id: sessionId,
+        title: "Interrupted build",
+        status: "Executing",
+        archived: false,
+        messages: [{ id: "m1", role: "user", content: "Build cancelled", createdAt: "2026-08-01T00:00:00.000Z" }],
+        projectSummary: { projectName: "Project", rootPath: root, languages: [], frameworks: [], buildSystem: [], sourceDirectories: [], entryPoints: [], openFiles: [], git: { changedFiles: 0, summary: [] }, context: { attachmentCount: 0, tokenEstimate: 0, labels: [] } },
+        attachments: [],
+        plan: {
+          id: "plan-crash",
+          objective: "Build cancelled",
+          summary: "Interrupted plan",
+          steps: [],
+          approvals: [],
+          executionQueue: [],
+          taskRuns: [],
+          terminalRuns: [],
+          gitRuns: [],
+          browserRuns: [],
+          verificationReports: [],
+          repairQueue: [],
+          repairProgress: [],
+          estimatedFiles: [],
+          progress: { totalSteps: 0, pendingActions: 0, approvedActions: 0, rejectedActions: 0, completedActions: 0 },
+          recovery: {
+            schemaVersion: 1,
+            operations: [{
+              operationId: "op-crash",
+              sessionId,
+              title: "Partial write",
+              status: "Executing",
+              userRequest: "Build cancelled",
+              approvedScope: ["src/a.ts"],
+              actionsAttempted: ["a1"],
+              actionsCompleted: [],
+              actionsFailed: [],
+              filesCreated: ["src/a.ts"],
+              filesModified: [],
+              filesDeleted: [],
+              filesRenamed: [],
+              commandsExecuted: [],
+              repairAttempts: 0,
+              snapshots: [],
+              startedAt: "2026-08-01T00:00:00.000Z"
+            }],
+            interruptedOperationIds: []
+          },
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z"
+        },
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z"
+      }],
+      activeSessionId: sessionId
+    }), "utf8");
+
+    const restored = new AgentService(runtimeManager, { statePath, getWorkspaceRoot: () => root });
+    const state = await restored.initialize();
+    expect(state.sessions[0].plan?.recovery?.operations[0]).toMatchObject({ status: "Interrupted", conflict: "Levi was interrupted during this operation." });
+    expect(state.sessions[0].plan?.recovery?.interruptedOperationIds).toContain("op-crash");
+  });
+
   it("validates IPC payload-shaped requests and rejects unsafe workspace paths", async () => {
     const { service } = await createService();
 
@@ -598,6 +721,7 @@ describe("Coding Agent foundation", () => {
     expect(channels).toContain('agentExecute: "levi:agent:execute"');
     expect(channels).toContain('agentPreview: "levi:agent:preview"');
     expect(channels).toContain('agentUndo: "levi:agent:undo"');
+    expect(channels).toContain('agentRestoreOperation: "levi:agent:restore-operation"');
     expect(channels).toContain('agentQueue: "levi:agent:queue"');
     expect(channels).toContain('agentCancel: "levi:agent:cancel"');
     expect(channels).toContain('agentTaskExecute: "levi:agent:task-execute"');
@@ -616,6 +740,7 @@ describe("Coding Agent foundation", () => {
     expect(main).toContain("const agentService = new AgentService(aiRuntimeManager");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentPlan");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentExecute");
+    expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentRestoreOperation");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentTaskExecute");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentGitExecute");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentTerminalExecute");
@@ -625,6 +750,7 @@ describe("Coding Agent foundation", () => {
     expect(preload).toContain("agent: {");
     expect(preload).toContain("plan: (request: AgentPlanRequest)");
     expect(preload).toContain("execute: (request: AgentExecuteRequest)");
+    expect(preload).toContain("restoreOperation: (request: AgentRestoreOperationRequest)");
     expect(preload).toContain("taskExecute: (request: AgentTaskExecuteRequest)");
     expect(preload).toContain("gitExecute: (request: AgentGitExecuteRequest)");
     expect(preload).toContain("terminalExecute: (request: AgentTerminalExecuteRequest)");
@@ -667,6 +793,95 @@ describe("Coding Agent foundation", () => {
     expect(await fsp.readFile(path.join(root, "src", "existing.txt"), "utf8")).toBe("after\r\n");
     await service.undo({ sessionId });
     expect(await fsp.readFile(path.join(root, "src", "existing.txt"), "utf8")).toBe("before\r\n");
+  });
+
+  it("persists recovery ledger and resumes undo after restart", async () => {
+    const { service, statePath, runtimeManager } = await createService(providerWithActions([
+      { type: "create-file", title: "Create resumable file", description: "Create a text file.", relativePath: "src/resume.txt", content: "hello\n" }
+    ]));
+    const root = path.dirname(statePath);
+    const planned = await service.plan({ prompt: "Create resumable file", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const action = planned.state.sessions[0].plan!.approvals[0];
+
+    await service.approve({ sessionId, actionId: action.id });
+    const preview = await service.preview({ sessionId, actionId: action.id });
+    const executed = await service.execute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    expect(executed.state.sessions[0].plan?.recovery?.operations[0]).toMatchObject({ status: "Completed", filesCreated: ["src/resume.txt"] });
+
+    const restored = new AgentService(runtimeManager, { statePath, getWorkspaceRoot: () => root });
+    const restoredState = await restored.initialize();
+    expect(restoredState.sessions[0].messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(restoredState.sessions[0].plan?.lastUndo).toMatchObject({ relativePath: "src/resume.txt" });
+    await restored.undo({ sessionId });
+    expect(fs.existsSync(path.join(root, "src", "resume.txt"))).toBe(false);
+  });
+
+  it("restores a selected completed operation from recovery history", async () => {
+    const { service, statePath } = await createService(providerWithActions([
+      { type: "create-file", title: "Create restorable file", description: "Create a text file.", relativePath: "src/restore.txt", content: "restore\n" }
+    ]));
+    const root = path.dirname(statePath);
+    const planned = await service.plan({ prompt: "Create restorable file", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const action = planned.state.sessions[0].plan!.approvals[0];
+
+    await service.approve({ sessionId, actionId: action.id });
+    const preview = await service.preview({ sessionId, actionId: action.id });
+    const executed = await service.execute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    const operationId = executed.state.sessions[0].plan!.recovery!.operations[0].operationId;
+
+    const restored = await service.restoreOperation({ sessionId, operationId });
+    expect(restored).toMatchObject({ sessionId, operationId, restoredPaths: ["src/restore.txt"] });
+    expect(restored.state.sessions[0].plan?.recovery?.operations[0]).toMatchObject({ status: "Undone" });
+    expect(fs.existsSync(path.join(root, "src", "restore.txt"))).toBe(false);
+  });
+
+  it("protects manual edits and created-file collisions during undo", async () => {
+    const { service, statePath } = await createService(providerWithActions([
+      { type: "create-file", title: "Create user-touched file", description: "Create a text file.", relativePath: "src/touched.txt", content: "agent\n" }
+    ]));
+    const root = path.dirname(statePath);
+    const planned = await service.plan({ prompt: "Create user touched file", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const action = planned.state.sessions[0].plan!.approvals[0];
+
+    await service.approve({ sessionId, actionId: action.id });
+    const preview = await service.preview({ sessionId, actionId: action.id });
+    await service.execute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    await fsp.writeFile(path.join(root, "src", "touched.txt"), "manual\n", "utf8");
+
+    await expect(service.undo({ sessionId })).rejects.toThrow(/changed after Levi's operation/i);
+    const status = service.status({ sessionId }) as AgentSession;
+    expect(status.plan?.recovery?.operations[0]).toMatchObject({ status: "Conflict" });
+    expect(await fsp.readFile(path.join(root, "src", "touched.txt"), "utf8")).toBe("manual\n");
+  });
+
+  it("restores delete and rename operations with file-level recovery", async () => {
+    const { service, statePath } = await createService(providerWithActions([
+      { type: "delete-file", title: "Delete stale file", description: "Remove stale file.", relativePath: "src/delete-me.txt" },
+      { type: "rename-file", title: "Rename file", description: "Move file.", relativePath: "src/from.txt", destinationRelativePath: "src/to.txt" }
+    ]));
+    const root = path.dirname(statePath);
+    await fsp.mkdir(path.join(root, "src"), { recursive: true });
+    await fsp.writeFile(path.join(root, "src", "delete-me.txt"), "delete\n", "utf8");
+    await fsp.writeFile(path.join(root, "src", "from.txt"), "rename\n", "utf8");
+    const planned = await service.plan({ prompt: "Delete and rename files", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const [deleteAction, renameAction] = planned.state.sessions[0].plan!.approvals;
+
+    await service.approve({ sessionId, actionId: deleteAction.id });
+    const deletePreview = await service.preview({ sessionId, actionId: deleteAction.id });
+    await service.execute({ sessionId, actionId: deleteAction.id, previewId: deletePreview.preview.previewId });
+    await service.undo({ sessionId });
+    expect(await fsp.readFile(path.join(root, "src", "delete-me.txt"), "utf8")).toBe("delete\n");
+
+    await service.approve({ sessionId, actionId: renameAction.id });
+    const renamePreview = await service.preview({ sessionId, actionId: renameAction.id });
+    await service.execute({ sessionId, actionId: renameAction.id, previewId: renamePreview.preview.previewId });
+    await service.undo({ sessionId });
+    expect(await fsp.readFile(path.join(root, "src", "from.txt"), "utf8")).toBe("rename\n");
+    expect(fs.existsSync(path.join(root, "src", "to.txt"))).toBe(false);
   });
 
   it("executes delete, rename file, create folder, rename folder, and stops unsupported actions", async () => {

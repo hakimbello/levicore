@@ -1757,6 +1757,7 @@ function createDefaultApi(): LeviApi {
       })),
       execute: vi.fn(async (request) => ({ sessionId: request.sessionId, actionId: request.actionId, state: agentState })),
       undo: vi.fn(async (request) => ({ sessionId: request.sessionId, actionId: "action-1", relativePath: "src/Login.tsx", state: agentState })),
+      restoreOperation: vi.fn(async (request) => ({ sessionId: request.sessionId, operationId: request.operationId, restoredPaths: ["src/Login.tsx"], state: agentState })),
       queue: vi.fn(async (request) => ({ sessionId: request.sessionId, queue: [], progress: { completed: 0, remaining: 0, estimatedFiles: 0, elapsedMs: 0 } })),
       cancel: vi.fn(async (request) => ({ sessionId: request.sessionId, actionId: request.actionId ?? "action-1", state: agentState })),
       taskPreview: vi.fn(async (request) => ({

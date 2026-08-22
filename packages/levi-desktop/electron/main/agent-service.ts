@@ -31,6 +31,7 @@ import type {
   AgentRepairPlanRequest,
   AgentRepairExecuteRequest,
   AgentRepairStatusRequest,
+  AgentRestoreOperationRequest,
   AgentRenameRequest,
   AgentSession,
   AgentState,
@@ -106,6 +107,7 @@ type AgentServiceOptions = {
 type AgentPersistence = {
   sessions: AgentSession[];
   activeSessionId?: string;
+  recoveryState?: { corruptionRecovered?: boolean };
 };
 
 export class AgentService {
@@ -114,6 +116,7 @@ export class AgentService {
   private readonly executionService: AgentExecutionService;
   private readonly disposables: Array<() => void> = [];
   private persistence: AgentPersistence = defaultPersistence();
+  private persistChain: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly runtimeManager: RuntimeManager,
@@ -156,7 +159,10 @@ export class AgentService {
 
   async initialize(): Promise<AgentState> {
     await this.load();
-    for (const session of this.persistence.sessions) this.executionService.markInterrupted(session);
+    for (const session of this.persistence.sessions) {
+      this.executionService.hydrateRecovery(session);
+      this.executionService.markInterrupted(session);
+    }
     await this.persist();
     return this.snapshot();
   }
@@ -338,6 +344,11 @@ export class AgentService {
   async undo(rawRequest: unknown) {
     const session = this.requireSession(sessionIdFromRequest<AgentUndoRequest>(rawRequest, "Agent undo request is invalid."));
     return this.executionService.undo(session, rawRequest);
+  }
+
+  async restoreOperation(rawRequest: unknown) {
+    const session = this.requireSession(sessionIdFromRequest<AgentRestoreOperationRequest>(rawRequest, "Agent restore request is invalid."));
+    return this.executionService.restoreOperation(session, rawRequest);
   }
 
   queue(rawRequest: unknown) {
@@ -530,9 +541,16 @@ export class AgentService {
   }
 
   private snapshot(): AgentState {
+    const workspaceRoot = this.options.getWorkspaceRoot?.();
+    const sessions = workspaceRoot
+      ? this.persistence.sessions.filter((session) => sessionMatchesWorkspace(session, workspaceRoot))
+      : this.persistence.sessions;
+    const activeSessionId = sessions.some((session) => session.id === this.persistence.activeSessionId)
+      ? this.persistence.activeSessionId
+      : sessions.find((session) => !session.archived)?.id ?? sessions[0]?.id;
     return {
-      sessions: [...this.persistence.sessions].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
-      activeSessionId: this.persistence.activeSessionId,
+      sessions: [...sessions].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+      activeSessionId,
       updatedAt: new Date().toISOString()
     };
   }
@@ -546,19 +564,55 @@ export class AgentService {
     try {
       const raw = await fs.readFile(this.statePath, "utf8");
       this.persistence = coercePersistence(JSON.parse(raw));
-    } catch {
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        await preserveCorruptState(this.statePath).catch(() => undefined);
+      }
       this.persistence = defaultPersistence();
+      this.persistence.recoveryState = { corruptionRecovered: (error as NodeJS.ErrnoException).code !== "ENOENT" };
     }
   }
 
   private async persist(): Promise<void> {
-    await fs.mkdir(path.dirname(this.statePath), { recursive: true });
-    await fs.writeFile(this.statePath, JSON.stringify(redactPersistence(this.persistence), null, 2), "utf8");
+    this.persistChain = this.persistChain
+      .catch(() => undefined)
+      .then(async () => {
+        await fs.mkdir(path.dirname(this.statePath), { recursive: true });
+        await writeJsonAtomic(this.statePath, redactPersistence(this.persistence));
+      });
+    await this.persistChain;
   }
 }
 
 function defaultPersistence(): AgentPersistence {
   return { sessions: [] };
+}
+
+function sessionMatchesWorkspace(session: AgentSession, workspaceRoot: string): boolean {
+  const rootPath = session.projectSummary?.rootPath;
+  if (!rootPath) return true;
+  return normalizePathForCompare(rootPath) === normalizePathForCompare(workspaceRoot);
+}
+
+function normalizePathForCompare(value: string): string {
+  return path.resolve(value).replace(/\\/g, "/").toLowerCase();
+}
+
+async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
+  const temporaryPath = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
+  await fs.writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  try {
+    await fs.rename(temporaryPath, filePath);
+  } catch (error) {
+    if (process.platform !== "win32" || ((error as NodeJS.ErrnoException).code !== "EEXIST" && (error as NodeJS.ErrnoException).code !== "EPERM")) throw error;
+    await fs.rm(filePath, { force: true });
+    await fs.rename(temporaryPath, filePath);
+  }
+}
+
+async function preserveCorruptState(filePath: string): Promise<void> {
+  const backupPath = `${filePath}.corrupt-${Date.now()}`;
+  await fs.copyFile(filePath, backupPath);
 }
 
 function validateNewSessionRequest(value: unknown): AgentNewSessionRequest {
@@ -1929,7 +1983,8 @@ function coercePersistence(value: unknown): AgentPersistence {
   const record = value as Record<string, unknown>;
   const sessions = Array.isArray(record.sessions) ? record.sessions.map(coerceSession).filter(Boolean).slice(0, MAX_SESSIONS) as AgentSession[] : [];
   const activeSessionId = typeof record.activeSessionId === "string" && sessions.some((item) => item.id === record.activeSessionId) ? record.activeSessionId : sessions[0]?.id;
-  return { sessions, activeSessionId };
+  const recoveryState = record.recoveryState && typeof record.recoveryState === "object" ? { corruptionRecovered: (record.recoveryState as { corruptionRecovered?: unknown }).corruptionRecovered === true } : undefined;
+  return { sessions, activeSessionId, recoveryState };
 }
 
 function coerceSession(value: unknown): AgentSession | null {
@@ -1984,10 +2039,28 @@ function coercePlan(value: unknown): AgentExecutionPlan | undefined {
     repairQueue: Array.isArray(record.repairQueue) ? record.repairQueue.slice(0, MAX_ACTIONS) : [],
     repairProgress: Array.isArray(record.repairProgress) ? record.repairProgress.slice(-80) : [],
     lastUndo: record.lastUndo && typeof record.lastUndo === "object" ? record.lastUndo : undefined,
+    recovery: coerceRecovery(record.recovery),
     progress: progressFromApprovals(record),
     estimatedFiles: Array.isArray(record.estimatedFiles) ? record.estimatedFiles.slice(0, 40) : [],
     createdAt: typeof record.createdAt === "string" ? record.createdAt : new Date().toISOString(),
     updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : new Date().toISOString()
+  };
+}
+
+function coerceRecovery(value: unknown): AgentExecutionPlan["recovery"] {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as NonNullable<AgentExecutionPlan["recovery"]>;
+  const operations = Array.isArray(record.operations)
+    ? record.operations.filter((operation) => operation && typeof operation === "object" && typeof operation.operationId === "string").slice(-100)
+    : [];
+  const interruptedOperationIds = Array.isArray(record.interruptedOperationIds)
+    ? record.interruptedOperationIds.filter((item): item is string => typeof item === "string").slice(-100)
+    : [];
+  return {
+    schemaVersion: 1,
+    operations,
+    interruptedOperationIds,
+    corruptionRecovered: record.corruptionRecovered === true
   };
 }
 
@@ -2010,8 +2083,24 @@ function coerceProjectSummary(value: unknown): AgentProjectSummary | undefined {
 }
 
 function redactPersistence(persistence: AgentPersistence): AgentPersistence {
-  const raw = JSON.stringify(persistence).replace(/(api[_-]?key|token|secret|password)["']?\s*[:=]\s*["'][^"']+["']/gi, "$1:REDACTED");
-  return JSON.parse(raw) as AgentPersistence;
+  return redactValue(persistence) as AgentPersistence;
+}
+
+function redactValue(value: unknown): unknown {
+  if (typeof value === "string") return redactSecretText(value);
+  if (Array.isArray(value)) return value.map(redactValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    /api[_-]?key|token|secret|password|authorization|credential/i.test(key) ? "[REDACTED]" : redactValue(item)
+  ]));
+}
+
+function redactSecretText(value: string): string {
+  return value
+    .replace(/\b(authorization\s*:\s*bearer)\s+[^\s"'`]+/gi, "$1 [REDACTED]")
+    .replace(/\b(api[_-]?key|token|secret|password|credential)(\s*[=:]\s*)[^\s"'`]+/gi, "$1$2[REDACTED]")
+    .replace(/\b(sk-[A-Za-z0-9_-]{12,})\b/g, "[REDACTED]");
 }
 
 function optionalProvider(value: unknown): AIRuntimeProviderId | undefined {

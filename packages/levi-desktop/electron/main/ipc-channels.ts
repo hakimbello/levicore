@@ -170,6 +170,7 @@ export const IPC_CHANNELS = {
   agentReject: "levi:agent:reject",
   agentExecute: "levi:agent:execute",
   agentUndo: "levi:agent:undo",
+  agentRestoreOperation: "levi:agent:restore-operation",
   agentPreview: "levi:agent:preview",
   agentQueue: "levi:agent:queue",
   agentCancel: "levi:agent:cancel",

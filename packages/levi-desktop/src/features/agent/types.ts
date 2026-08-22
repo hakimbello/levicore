@@ -140,6 +140,66 @@ export type AgentUndoMetadata = {
   timestamp: string;
 };
 
+export type AgentOperationStatus = "Executing" | "Completed" | "Failed" | "Cancelled" | "Interrupted" | "Undone" | "Conflict";
+
+export type AgentRecoveredFileKind = "missing" | "file" | "folder";
+
+export type AgentRecoveredFileSnapshot = {
+  relativePath: string;
+  destinationRelativePath?: string;
+  kind: AgentRecoveredFileKind;
+  beforeContent?: string;
+  beforeHash?: string;
+  afterContent?: string;
+  afterHash?: string;
+};
+
+export type AgentCommandLedgerEntry = {
+  executable: string;
+  args: string[];
+  status: "running" | "succeeded" | "failed" | "cancelled" | "interrupted";
+  exitCode?: number;
+  durationMs?: number;
+};
+
+export type AgentOperationLedgerEntry = {
+  operationId: string;
+  sessionId: string;
+  actionId?: string;
+  actionType?: AgentActionType;
+  title: string;
+  status: AgentOperationStatus;
+  userRequest: string;
+  approvedScope: string[];
+  actionsAttempted: string[];
+  actionsCompleted: string[];
+  actionsFailed: string[];
+  filesCreated: string[];
+  filesModified: string[];
+  filesDeleted: string[];
+  filesRenamed: Array<{ from: string; to: string }>;
+  commandsExecuted: AgentCommandLedgerEntry[];
+  verificationResult?: AgentVerificationStatus | "Blocked" | "Cancelled";
+  repairAttempts: number;
+  gitHeadBefore?: string;
+  gitHeadAfter?: string;
+  gitBranchBefore?: string;
+  gitBranchAfter?: string;
+  gitDirtyBefore?: boolean;
+  gitDirtyAfter?: boolean;
+  snapshots: AgentRecoveredFileSnapshot[];
+  conflict?: string;
+  startedAt: string;
+  completedAt?: string;
+};
+
+export type AgentRecoveryState = {
+  schemaVersion: 1;
+  operations: AgentOperationLedgerEntry[];
+  interruptedOperationIds: string[];
+  corruptionRecovered?: boolean;
+};
+
 export type AgentTaskActionStatus = "Pending" | "Approved" | "Running" | "Succeeded" | "Failed" | "Cancelled" | "Interrupted";
 
 export type AgentTaskPreview = {
@@ -480,6 +540,7 @@ export type AgentExecutionPlan = {
   repairQueue: AgentRepairQueueItem[];
   repairProgress: AgentRepairProgressEntry[];
   lastUndo?: AgentUndoMetadata;
+  recovery?: AgentRecoveryState;
   estimatedFiles: string[];
   progress: {
     totalSteps: number;
@@ -583,6 +644,11 @@ export type AgentExecuteRequest = {
 
 export type AgentUndoRequest = {
   sessionId: string;
+};
+
+export type AgentRestoreOperationRequest = {
+  sessionId: string;
+  operationId: string;
 };
 
 export type AgentQueueRequest = {
@@ -715,6 +781,13 @@ export type AgentUndoResult = {
   sessionId: string;
   actionId: string;
   relativePath: string;
+  state: AgentState;
+};
+
+export type AgentRestoreOperationResult = {
+  sessionId: string;
+  operationId: string;
+  restoredPaths: string[];
   state: AgentState;
 };
 
