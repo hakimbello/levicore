@@ -47,6 +47,8 @@ import type {
   AgentRestoreOperationRequest,
   AgentRestoreOperationResult,
   AgentRiskLevel,
+  AgentRollbackChoice,
+  AgentRollbackConflict,
   AgentSession,
   AgentState,
   AgentTaskCancelRequest,
@@ -234,6 +236,12 @@ type UndoRecord =
       timestamp: string;
     };
 
+type OperationRollbackPlan = {
+  restoredPaths: string[];
+  conflicts: AgentRollbackConflict[];
+  apply: Array<() => Promise<void>>;
+};
+
 export class AgentExecutionService {
   private readonly previews = new Map<string, AgentActionPreview>();
   private readonly taskPreviews = new Map<string, AgentTaskPreview>();
@@ -319,35 +327,41 @@ export class AgentExecutionService {
   }
 
   async undo(session: AgentSession, rawRequest: unknown): Promise<AgentUndoResult> {
-    validateUndoRequest(rawRequest);
-    const undo = this.undoBySession.get(session.id);
-    if (!undo) {
-      throw new Error("No reversible agent action is available.");
-    }
+    const request = validateUndoRequest(rawRequest);
+    const operation = latestRollbackOperation(session);
+    if (!operation) throw new Error("No reversible agent operation is available.");
+    const workspaceRoot = this.options.getWorkspaceRoot();
+    if (!workspaceRoot) throw new Error("No workspace is open.");
     try {
-      await this.undoRecord(undo);
-      markRecoveryOperation(session, undo.actionId, "Undone");
+      const restoredPaths = await this.rollbackOperation(session, operation, workspaceRoot, request.choices);
+      this.undoBySession.delete(session.id);
+      if (session.plan) {
+        session.plan.lastUndo = undefined;
+        for (const item of session.plan.executionQueue) {
+          if (operation.actionsCompleted.includes(item.actionId)) {
+            item.status = "Pending";
+            item.completedAt = undefined;
+            item.error = undefined;
+          }
+        }
+        session.plan.progress = progressFromSession(session);
+      }
+      session.status = "Ready";
+      session.updatedAt = new Date().toISOString();
+      await this.options.persistAndEmit();
+      this.options.emitExecution(session.id, operation.actionId ?? operation.operationId);
+      return {
+        sessionId: session.id,
+        actionId: operation.actionId ?? operation.operationId,
+        operationId: operation.operationId,
+        relativePath: restoredPaths[0] ?? "",
+        restoredPaths,
+        state: this.options.snapshot()
+      };
     } catch (error) {
-      markRecoveryOperation(session, undo.actionId, "Conflict", errorMessage(error));
       await this.options.persistAndEmit();
       throw error;
     }
-    this.undoBySession.delete(session.id);
-    if (session.plan) {
-      session.plan.lastUndo = undefined;
-      const item = session.plan.executionQueue.find((candidate) => candidate.actionId === undo.actionId);
-      if (item) {
-        item.status = "Pending";
-        item.completedAt = undefined;
-        item.error = undefined;
-      }
-      session.plan.progress = progressFromSession(session);
-    }
-    session.status = "Ready";
-    session.updatedAt = new Date().toISOString();
-    await this.options.persistAndEmit();
-    this.options.emitExecution(session.id, undo.actionId);
-    return { sessionId: session.id, actionId: undo.actionId, relativePath: undo.relativePath, state: this.options.snapshot() };
   }
 
   async restoreOperation(session: AgentSession, rawRequest: unknown): Promise<AgentRestoreOperationResult> {
@@ -356,19 +370,15 @@ export class AgentExecutionService {
     const workspaceRoot = this.options.getWorkspaceRoot();
     const operation = session.plan?.recovery?.operations.find((item) => item.operationId === request.operationId);
     if (!workspaceRoot || !operation) throw new Error("Agent operation was not found.");
-    const undo = undoRecordFromOperation(operation, workspaceRoot);
-    if (!undo) throw new Error("Agent operation has no restorable snapshot.");
     try {
-      await this.undoRecord(undo);
-      markRecoveryOperationById(session, operation.operationId, "Undone");
+      const restoredPaths = await this.rollbackOperation(session, operation, workspaceRoot, request.choices);
+      await this.touch(session);
+      this.options.emitExecution(session.id, operation.actionId ?? operation.operationId);
+      return { sessionId: session.id, operationId: operation.operationId, restoredPaths, state: this.options.snapshot() };
     } catch (error) {
-      markRecoveryOperationById(session, operation.operationId, "Conflict", errorMessage(error));
       await this.options.persistAndEmit();
       throw error;
     }
-    await this.touch(session);
-    this.options.emitExecution(session.id, undo.actionId);
-    return { sessionId: session.id, operationId: operation.operationId, restoredPaths: [undo.relativePath], state: this.options.snapshot() };
   }
 
   queue(session: AgentSession, rawRequest: unknown): AgentQueueResult {
@@ -414,6 +424,16 @@ export class AgentExecutionService {
         action.status = "Rejected";
         action.updatedAt = new Date().toISOString();
       }
+    }
+    const recovery = session.plan.recovery;
+    if (recovery?.activeOperationId) {
+      const operation = recovery.operations.find((item) => item.operationId === recovery.activeOperationId);
+      if (operation) {
+        operation.status = "cancelled";
+        operation.completedAt = new Date().toISOString();
+        operation.conflict = "Build cancelled.";
+      }
+      recovery.activeOperationId = undefined;
     }
     session.plan.progress = progressFromSession(session);
     session.status = session.plan.executionQueue.some((item) => item.status === "Executing") ? "Executing" : "Ready";
@@ -777,11 +797,20 @@ export class AgentExecutionService {
     if (!session.plan) throw new Error("Agent session has no execution plan.");
     const startedAt = new Date().toISOString();
     addRepairProgress(session, "Verification Started", { createdAt: startedAt });
+    const operation = latestRollbackOperation(session);
+    if (operation) operation.status = "verifying";
     const report = this.createVerificationReport(session, startedAt);
     const reports = ensureVerificationReports(session);
     reports.unshift(report);
     session.plan.verificationReports = reports.slice(0, MAX_VERIFICATION_REPORTS);
     addRepairProgress(session, "Verification Complete", { reportId: report.id, createdAt: report.completedAt });
+    if (operation) {
+      operation.verificationResult = report.status;
+      operation.status = report.status === "Failed" ? "blocked" : "completed";
+      operation.completedAt = report.completedAt;
+      operation.conflict = report.status === "Failed" ? report.summary : undefined;
+      if (session.plan.recovery?.activeOperationId === operation.operationId) session.plan.recovery.activeOperationId = undefined;
+    }
     session.status = report.status === "Failed" ? "Error" : "Ready";
     session.error = report.status === "Failed" ? report.summary : undefined;
     await this.touch(session);
@@ -830,6 +859,11 @@ export class AgentExecutionService {
     const executedActions: AgentExecutionQueueItem[] = [];
     const blockedActions: AgentApprovalAction[] = [];
     addRepairProgress(session, "Repair Executing", { reportId: report.id, attempt });
+    const activeOperation = latestRollbackOperation(session);
+    if (activeOperation) {
+      activeOperation.status = "repairing";
+      activeOperation.repairAttempts = Math.max(activeOperation.repairAttempts, attempt);
+    }
     session.status = "Executing";
     await this.touch(session);
 
@@ -868,12 +902,12 @@ export class AgentExecutionService {
           await this.touch(session);
           item = ensureQueueItem(session, planAction);
           const undo = await this.applyAction(planAction, preview);
-          await this.completeFileOperation(session, operation, "Completed", undo);
           this.undoBySession.set(session.id, undo);
           session.plan.lastUndo = undoMetadata(undo);
           item.status = "Completed";
           item.completedAt = new Date().toISOString();
           item.error = undefined;
+          await this.completeFileOperation(session, operation, "Completed", undo);
           executedActions.push(item);
           repairExecutedActions.push(item);
           this.options.emitExecution(session.id, planAction.id);
@@ -952,11 +986,19 @@ export class AgentExecutionService {
     const workspaceRoot = this.options.getWorkspaceRoot();
     const operations = session.plan?.recovery?.operations ?? [];
     if (!workspaceRoot || !session.plan || !operations.length) return;
-    const latest = [...operations].reverse().find((operation) => operation.status === "Completed" && operation.actionId && operation.actionType);
+    const latest = [...operations].reverse().find((operation) => (operation.status === "completed" || operation.status === "Completed") && operation.actionId && operation.actionType);
     const undo = latest ? undoRecordFromOperation(latest, workspaceRoot) : undefined;
     if (undo) {
       this.undoBySession.set(session.id, undo);
       session.plan.lastUndo = undoMetadata(undo);
+    } else if (latest?.snapshots[0]) {
+      session.plan.lastUndo = {
+        actionId: latest.actionId ?? latest.operationId,
+        relativePath: latest.snapshots[0].relativePath,
+        destinationRelativePath: latest.snapshots[0].destinationRelativePath,
+        actionType: latest.actionType ?? "modify-file",
+        timestamp: latest.completedAt ?? latest.startedAt
+      };
     }
   }
 
@@ -964,11 +1006,12 @@ export class AgentExecutionService {
     const recovery = session.plan?.recovery;
     if (recovery) {
       for (const operation of recovery.operations) {
-        if (operation.status === "Executing") {
-          operation.status = "Interrupted";
+        if (operation.status === "Executing" || operation.status === "running" || operation.status === "verifying" || operation.status === "repairing" || operation.status === "rolling-back") {
+          operation.status = "interrupted";
           operation.completedAt = new Date().toISOString();
-          operation.conflict = "Levi was interrupted during this operation.";
+          operation.conflict = "Levi was interrupted during a build.";
           recovery.interruptedOperationIds = uniqueStrings([...recovery.interruptedOperationIds, operation.operationId]).slice(-100);
+          if (recovery.activeOperationId === operation.operationId) recovery.activeOperationId = undefined;
         }
       }
     }
@@ -1351,22 +1394,38 @@ export class AgentExecutionService {
 
   private async beginFileOperation(session: AgentSession, action: AgentApprovalAction, preview: AgentActionPreview): Promise<AgentOperationLedgerEntry> {
     const recovery = ensureRecovery(session);
-    const gitBefore = await this.safeGitStatus();
     const snapshot = snapshotFromPreview(preview);
+    const existing = recovery.activeOperationId
+      ? recovery.operations.find((item) => item.operationId === recovery.activeOperationId && item.planId === session.plan?.id && item.status !== "rolled-back")
+      : undefined;
+    if (existing) {
+      existing.status = "running";
+      existing.actionId = existing.actionId ?? action.id;
+      existing.actionType = existing.actionType ?? action.type;
+      existing.approvedScope = uniqueStrings([...existing.approvedScope, preview.targetPath, preview.destinationPath ?? "", ...(action.affectedFiles ?? [])]).filter(Boolean);
+      existing.actionsAttempted = uniqueStrings([...existing.actionsAttempted, action.id]);
+      appendSnapshot(existing, snapshot);
+      appendOperationFileLists(existing, action, preview);
+      return existing;
+    }
+    const gitBefore = await this.safeGitStatus();
     const now = new Date().toISOString();
+    const workspaceRoot = this.options.getWorkspaceRoot() ?? undefined;
     const operation: AgentOperationLedgerEntry = {
       operationId: randomUUID(),
       sessionId: session.id,
+      planId: session.plan?.id,
+      workspaceRoot,
       actionId: action.id,
       actionType: action.type,
-      title: action.title,
-      status: "Executing",
+      title: session.plan?.objective ?? action.title,
+      status: "running",
       userRequest: session.plan?.objective ?? "",
       approvedScope: uniqueStrings([preview.targetPath, preview.destinationPath ?? "", ...(action.affectedFiles ?? [])]).filter(Boolean),
       actionsAttempted: [action.id],
       actionsCompleted: [],
       actionsFailed: [],
-      filesCreated: action.type === "create-file" ? [preview.targetPath] : [],
+      filesCreated: action.type === "create-file" || action.type === "create-folder" ? [preview.targetPath] : [],
       filesModified: action.type === "modify-file" ? [preview.targetPath] : [],
       filesDeleted: action.type === "delete-file" ? [preview.targetPath] : [],
       filesRenamed: preview.destinationPath && (action.type === "rename-file" || action.type === "rename-folder") ? [{ from: preview.targetPath, to: preview.destinationPath }] : [],
@@ -1375,10 +1434,13 @@ export class AgentExecutionService {
       gitHeadBefore: gitBefore?.headCommit,
       gitBranchBefore: gitBefore?.currentBranch,
       gitDirtyBefore: gitBefore ? gitBefore.entries.length > 0 : undefined,
+      filesBefore: [snapshot],
+      filesAfter: [],
       snapshots: [snapshot],
       startedAt: now
     };
     recovery.operations = [...recovery.operations, operation].slice(-100);
+    recovery.activeOperationId = operation.operationId;
     return operation;
   }
 
@@ -1393,18 +1455,27 @@ export class AgentExecutionService {
     const current = recovery.operations.find((item) => item.operationId === operation.operationId);
     if (!current) return;
     const gitAfter = await this.safeGitStatus();
-    current.status = status;
-    current.completedAt = new Date().toISOString();
+    const completedAt = new Date().toISOString();
+    current.status = status === "Failed" ? "blocked" : hasPendingFileActions(session, current) ? "running" : "completed";
+    current.completedAt = current.status === "completed" || current.status === "blocked" ? completedAt : undefined;
     current.gitHeadAfter = gitAfter?.headCommit;
     current.gitBranchAfter = gitAfter?.currentBranch;
     current.gitDirtyAfter = gitAfter ? gitAfter.entries.length > 0 : undefined;
-    if (status === "Completed") current.actionsCompleted = uniqueStrings([...current.actionsCompleted, ...(undo ? [undo.actionId] : [])]);
+    if (status === "Completed" && undo) {
+      current.actionsCompleted = uniqueStrings([...current.actionsCompleted, undo.actionId]);
+      current.filesAfter = current.snapshots;
+    }
     if (status === "Failed") {
       current.actionsFailed = uniqueStrings([...current.actionsFailed, operation.actionId ?? ""]);
       current.conflict = error;
     }
     if (undo) {
       current.snapshots = current.snapshots.map((snapshot) => snapshot.relativePath === undo.relativePath ? snapshotWithUndo(snapshot, undo) : snapshot);
+      current.filesBefore = current.snapshots;
+      current.filesAfter = current.snapshots;
+    }
+    if (current.status === "completed" || current.status === "blocked") {
+      recovery.activeOperationId = undefined;
     }
   }
 
@@ -1413,6 +1484,45 @@ export class AgentExecutionService {
       return await this.options.gitService?.status();
     } catch {
       return undefined;
+    }
+  }
+
+  private async rollbackOperation(
+    session: AgentSession,
+    operation: AgentOperationLedgerEntry,
+    workspaceRoot: string,
+    choices: Record<string, AgentRollbackChoice> | undefined
+  ): Promise<string[]> {
+    const recovery = ensureRecovery(session);
+    const current = recovery.operations.find((item) => item.operationId === operation.operationId);
+    if (!current) throw new Error("Agent operation was not found.");
+    current.status = "rolling-back";
+    current.rollbackConflicts = [];
+    current.conflict = undefined;
+    await this.options.persistAndEmit();
+    const plan = await buildRollbackPlan(current, workspaceRoot, choices);
+    if (plan.conflicts.length) {
+      current.status = "rollback-conflict";
+      current.rollbackConflicts = plan.conflicts;
+      current.conflict = "This file changed after Levi's operation.";
+      throw new Error("This file changed after Levi's operation.");
+    }
+    try {
+      for (const apply of plan.apply) await apply();
+      const gitAfter = await this.safeGitStatus();
+      current.status = "rolled-back";
+      current.completedAt = new Date().toISOString();
+      current.gitHeadAfter = gitAfter?.headCommit;
+      current.gitBranchAfter = gitAfter?.currentBranch;
+      current.gitDirtyAfter = gitAfter ? gitAfter.entries.length > 0 : undefined;
+      current.rollbackConflicts = [];
+      current.conflict = undefined;
+      if (recovery.activeOperationId === current.operationId) recovery.activeOperationId = undefined;
+      return plan.restoredPaths;
+    } catch (error) {
+      current.status = "rollback-failed";
+      current.conflict = errorMessage(error);
+      throw error;
     }
   }
 
@@ -1918,7 +2028,8 @@ function validateExecuteRequest(value: unknown): AgentExecuteRequest {
 
 function validateUndoRequest(value: unknown): AgentUndoRequest {
   if (!value || typeof value !== "object") throw new Error("Agent undo request is invalid.");
-  return { sessionId: validateId((value as Record<string, unknown>).sessionId, "sessionId") };
+  const record = value as Record<string, unknown>;
+  return { sessionId: validateId(record.sessionId, "sessionId"), choices: validateRollbackChoices(record.choices) };
 }
 
 function validateRestoreOperationRequest(value: unknown): AgentRestoreOperationRequest {
@@ -1926,8 +2037,21 @@ function validateRestoreOperationRequest(value: unknown): AgentRestoreOperationR
   const record = value as Record<string, unknown>;
   return {
     sessionId: validateId(record.sessionId, "sessionId"),
-    operationId: validateId(record.operationId, "operationId")
+    operationId: validateId(record.operationId, "operationId"),
+    choices: validateRollbackChoices(record.choices)
   };
+}
+
+function validateRollbackChoices(value: unknown): Record<string, AgentRollbackChoice> | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Agent rollback choices are invalid.");
+  const choices: Record<string, AgentRollbackChoice> = {};
+  for (const [rawPath, rawChoice] of Object.entries(value as Record<string, unknown>).slice(0, 100)) {
+    const relativePath = validateRelativePath(rawPath);
+    if (rawChoice !== "keep-current" && rawChoice !== "restore-snapshot") throw new Error("Agent rollback choice is invalid.");
+    choices[relativePath] = rawChoice;
+  }
+  return choices;
 }
 
 function validateQueueRequest(value: unknown): AgentQueueRequest {
@@ -2199,6 +2323,42 @@ function ensureRecovery(session: AgentSession): NonNullable<NonNullable<AgentSes
   return session.plan.recovery;
 }
 
+function appendSnapshot(operation: AgentOperationLedgerEntry, snapshot: AgentRecoveredFileSnapshot): void {
+  const key = snapshot.destinationRelativePath ? `${snapshot.relativePath}->${snapshot.destinationRelativePath}` : snapshot.relativePath;
+  const existingIndex = operation.snapshots.findIndex((item) => (item.destinationRelativePath ? `${item.relativePath}->${item.destinationRelativePath}` : item.relativePath) === key);
+  if (existingIndex >= 0) {
+    operation.snapshots[existingIndex] = {
+      ...snapshot,
+      beforeContent: operation.snapshots[existingIndex].beforeContent,
+      beforeHash: operation.snapshots[existingIndex].beforeHash,
+      kind: operation.snapshots[existingIndex].kind
+    };
+  } else {
+    operation.snapshots.push(snapshot);
+  }
+  operation.filesBefore = operation.snapshots;
+}
+
+function appendOperationFileLists(operation: AgentOperationLedgerEntry, action: AgentApprovalAction, preview: AgentActionPreview): void {
+  if (action.type === "create-file" || action.type === "create-folder") operation.filesCreated = uniqueStrings([...operation.filesCreated, preview.targetPath]);
+  if (action.type === "modify-file") operation.filesModified = uniqueStrings([...operation.filesModified, preview.targetPath]);
+  if (action.type === "delete-file") operation.filesDeleted = uniqueStrings([...operation.filesDeleted, preview.targetPath]);
+  if (preview.destinationPath && (action.type === "rename-file" || action.type === "rename-folder")) {
+    operation.filesRenamed = [...operation.filesRenamed.filter((item) => item.from !== preview.targetPath), { from: preview.targetPath, to: preview.destinationPath }];
+  }
+}
+
+function hasPendingFileActions(session: AgentSession, operation: AgentOperationLedgerEntry): boolean {
+  const queue = session.plan?.executionQueue ?? [];
+  return queue.some((item) =>
+    SUPPORTED_ACTIONS.has(item.type)
+    && item.status !== "Completed"
+    && item.status !== "Rejected"
+    && item.status !== "Cancelled"
+    && !operation.actionsFailed.includes(item.actionId)
+  );
+}
+
 function snapshotFromPreview(preview: AgentActionPreview): AgentRecoveredFileSnapshot {
   if (preview.actionType === "create-file") {
     return {
@@ -2239,6 +2399,123 @@ function snapshotWithUndo(snapshot: AgentRecoveredFileSnapshot, undo: UndoRecord
   if (undo.kind === "delete-file") return { ...snapshot, beforeContent: undo.previousContent, beforeHash: undo.previousHash };
   if (undo.kind === "rename-file") return { ...snapshot, beforeContent: undo.previousContent, beforeHash: undo.previousHash, afterHash: undo.appliedHash };
   return snapshot;
+}
+
+async function buildRollbackPlan(
+  operation: AgentOperationLedgerEntry,
+  workspaceRoot: string,
+  choices: Record<string, AgentRollbackChoice> | undefined
+): Promise<OperationRollbackPlan> {
+  const rootRealPath = await fs.realpath(workspaceRoot);
+  const apply: Array<() => Promise<void>> = [];
+  const restoredPaths: string[] = [];
+  const conflicts: AgentRollbackConflict[] = [];
+  const snapshots = coalesceRollbackSnapshots(operation.snapshots);
+  for (const snapshot of [...snapshots].reverse()) {
+    const relativePath = snapshot.relativePath;
+    const currentRelativePath = snapshot.destinationRelativePath ?? snapshot.relativePath;
+    const absolutePath = path.resolve(rootRealPath, relativePath);
+    const currentAbsolutePath = path.resolve(rootRealPath, currentRelativePath);
+    const choice = choices?.[relativePath] ?? choices?.[currentRelativePath];
+    const conflict = await rollbackConflict(snapshot, rootRealPath, currentRelativePath, currentAbsolutePath, choice);
+    if (conflict) {
+      conflicts.push(conflict);
+      continue;
+    }
+    if (choice === "keep-current") {
+      continue;
+    }
+    restoredPaths.push(relativePath);
+    apply.push(async () => {
+      if (snapshot.destinationRelativePath) {
+        await assertPathMissing(absolutePath, "Cannot undo rename because the original path now exists.");
+        await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+        await fs.rename(currentAbsolutePath, absolutePath);
+        return;
+      }
+      if (snapshot.kind === "missing") {
+        await fs.rm(currentAbsolutePath, { recursive: true, force: false });
+        return;
+      }
+      if (snapshot.beforeContent !== undefined) {
+        await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+        await writeAtomically(absolutePath, snapshot.beforeContent);
+      }
+    });
+  }
+  return { restoredPaths: uniqueStrings(restoredPaths), conflicts, apply };
+}
+
+function coalesceRollbackSnapshots(snapshots: AgentRecoveredFileSnapshot[]): AgentRecoveredFileSnapshot[] {
+  const byPath = new Map<string, AgentRecoveredFileSnapshot>();
+  for (const snapshot of snapshots) {
+    const key = snapshot.destinationRelativePath ? `${snapshot.relativePath}->${snapshot.destinationRelativePath}` : snapshot.relativePath;
+    const existing = byPath.get(key);
+    byPath.set(key, existing ? {
+      ...snapshot,
+      beforeContent: existing.beforeContent,
+      beforeHash: existing.beforeHash,
+      kind: existing.kind,
+      afterContent: snapshot.afterContent ?? existing.afterContent,
+      afterHash: snapshot.afterHash ?? existing.afterHash
+    } : snapshot);
+  }
+  return [...byPath.values()];
+}
+
+async function rollbackConflict(
+  snapshot: AgentRecoveredFileSnapshot,
+  rootRealPath: string,
+  currentRelativePath: string,
+  currentAbsolutePath: string,
+  choice: AgentRollbackChoice | undefined
+): Promise<AgentRollbackConflict | undefined> {
+  if (choice === "keep-current" || choice === "restore-snapshot") return undefined;
+  const current = await readTextIfExists(currentAbsolutePath, rootRealPath);
+  if (snapshot.destinationRelativePath) {
+    if (!current.exists) return { relativePath: currentRelativePath, message: "This file changed after Levi's operation.", snapshotContent: snapshot.beforeContent };
+    if (snapshot.afterHash && current.hash !== snapshot.afterHash) {
+      return { relativePath: currentRelativePath, message: "This file changed after Levi's operation.", currentContent: current.content, snapshotContent: snapshot.beforeContent };
+    }
+    return undefined;
+  }
+  if (snapshot.kind === "missing") {
+    if (!current.exists) return undefined;
+    if (snapshot.afterHash && current.hash !== snapshot.afterHash) {
+      return { relativePath: currentRelativePath, message: "This file changed after Levi's operation.", currentContent: current.content };
+    }
+    return undefined;
+  }
+  if (snapshot.afterHash) {
+    if (!current.exists || current.hash !== snapshot.afterHash) {
+      return { relativePath: currentRelativePath, message: "This file changed after Levi's operation.", currentContent: current.content, snapshotContent: snapshot.beforeContent };
+    }
+    return undefined;
+  }
+  if (!current.exists) return undefined;
+  return { relativePath: currentRelativePath, message: "This file changed after Levi's operation.", currentContent: current.content, snapshotContent: snapshot.beforeContent };
+}
+
+async function readTextIfExists(absolutePath: string, rootRealPath: string): Promise<{ exists: boolean; content?: string; hash?: string }> {
+  try {
+    const content = await readTextFile(absolutePath, rootRealPath);
+    return { exists: true, content, hash: hashContent(content) };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { exists: false };
+    throw error;
+  }
+}
+
+function latestRollbackOperation(session: AgentSession): AgentOperationLedgerEntry | undefined {
+  const operations = session.plan?.recovery?.operations ?? [];
+  return [...operations].reverse().find((operation) =>
+    operation.snapshots.length > 0
+    && operation.status !== "rolled-back"
+    && operation.status !== "rollback-failed"
+    && operation.status !== "cancelled"
+    && operation.status !== "Cancelled"
+    && operation.status !== "Undone"
+  );
 }
 
 function undoRecordFromOperation(operation: AgentOperationLedgerEntry, workspaceRoot: string): UndoRecord | undefined {

@@ -686,7 +686,7 @@ describe("Coding Agent foundation", () => {
 
     const restored = new AgentService(runtimeManager, { statePath, getWorkspaceRoot: () => root });
     const state = await restored.initialize();
-    expect(state.sessions[0].plan?.recovery?.operations[0]).toMatchObject({ status: "Interrupted", conflict: "Levi was interrupted during this operation." });
+    expect(state.sessions[0].plan?.recovery?.operations[0]).toMatchObject({ status: "interrupted", conflict: "Levi was interrupted during a build." });
     expect(state.sessions[0].plan?.recovery?.interruptedOperationIds).toContain("op-crash");
   });
 
@@ -807,7 +807,7 @@ describe("Coding Agent foundation", () => {
     await service.approve({ sessionId, actionId: action.id });
     const preview = await service.preview({ sessionId, actionId: action.id });
     const executed = await service.execute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
-    expect(executed.state.sessions[0].plan?.recovery?.operations[0]).toMatchObject({ status: "Completed", filesCreated: ["src/resume.txt"] });
+    expect(executed.state.sessions[0].plan?.recovery?.operations[0]).toMatchObject({ status: "completed", filesCreated: ["src/resume.txt"] });
 
     const restored = new AgentService(runtimeManager, { statePath, getWorkspaceRoot: () => root });
     const restoredState = await restored.initialize();
@@ -833,7 +833,7 @@ describe("Coding Agent foundation", () => {
 
     const restored = await service.restoreOperation({ sessionId, operationId });
     expect(restored).toMatchObject({ sessionId, operationId, restoredPaths: ["src/restore.txt"] });
-    expect(restored.state.sessions[0].plan?.recovery?.operations[0]).toMatchObject({ status: "Undone" });
+    expect(restored.state.sessions[0].plan?.recovery?.operations[0]).toMatchObject({ status: "rolled-back" });
     expect(fs.existsSync(path.join(root, "src", "restore.txt"))).toBe(false);
   });
 
@@ -853,8 +853,94 @@ describe("Coding Agent foundation", () => {
 
     await expect(service.undo({ sessionId })).rejects.toThrow(/changed after Levi's operation/i);
     const status = service.status({ sessionId }) as AgentSession;
-    expect(status.plan?.recovery?.operations[0]).toMatchObject({ status: "Conflict" });
+    expect(status.plan?.recovery?.operations[0]).toMatchObject({ status: "rollback-conflict" });
     expect(await fsp.readFile(path.join(root, "src", "touched.txt"), "utf8")).toBe("manual\n");
+  });
+
+  it("groups approved multi-file operations into one rollback boundary", async () => {
+    const { service, statePath } = await createService(providerWithActions([
+      { type: "create-file", title: "Create generated A", description: "Create a text file.", relativePath: "src/generated-a.txt", content: "a\n" },
+      { type: "create-file", title: "Create generated B", description: "Create a text file.", relativePath: "src/generated-b.txt", content: "b\n" },
+      { type: "modify-file", title: "Modify existing file", description: "Replace file content.", relativePath: "src/existing.txt", content: "after\n" }
+    ]));
+    const root = path.dirname(statePath);
+    await fsp.mkdir(path.join(root, "src"), { recursive: true });
+    await fsp.writeFile(path.join(root, "src", "existing.txt"), "before\n", "utf8");
+
+    const planned = await service.plan({ prompt: "Create multiple files", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const actions = planned.state.sessions[0].plan!.approvals;
+    for (const action of actions) {
+      await service.approve({ sessionId, actionId: action.id });
+      const preview = await service.preview({ sessionId, actionId: action.id });
+      await service.execute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    }
+
+    const operation = (service.status({ sessionId }) as AgentSession).plan!.recovery!.operations[0];
+    expect(operation).toMatchObject({
+      status: "completed",
+      filesCreated: ["src/generated-a.txt", "src/generated-b.txt"],
+      filesModified: ["src/existing.txt"]
+    });
+    expect(operation.snapshots).toHaveLength(3);
+
+    const undone = await service.undo({ sessionId });
+    expect([...(undone.restoredPaths ?? [])].sort()).toEqual(["src/existing.txt", "src/generated-a.txt", "src/generated-b.txt"]);
+    expect(fs.existsSync(path.join(root, "src", "generated-a.txt"))).toBe(false);
+    expect(fs.existsSync(path.join(root, "src", "generated-b.txt"))).toBe(false);
+    expect(await fsp.readFile(path.join(root, "src", "existing.txt"), "utf8")).toBe("before\n");
+    expect((service.status({ sessionId }) as AgentSession).plan!.recovery!.operations[0]).toMatchObject({ status: "rolled-back" });
+  });
+
+  it("resolves rollback conflicts by keeping current files or restoring Levi snapshots", async () => {
+    const { service, statePath } = await createService(providerWithActions([
+      { type: "modify-file", title: "Modify touched file", description: "Replace file content.", relativePath: "src/touched.txt", content: "agent touched\n" },
+      { type: "modify-file", title: "Modify other file", description: "Replace file content.", relativePath: "src/other.txt", content: "agent other\n" }
+    ]));
+    const root = path.dirname(statePath);
+    await fsp.mkdir(path.join(root, "src"), { recursive: true });
+    await fsp.writeFile(path.join(root, "src", "touched.txt"), "before touched\n", "utf8");
+    await fsp.writeFile(path.join(root, "src", "other.txt"), "before other\n", "utf8");
+
+    const planned = await service.plan({ prompt: "Modify files", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const actions = planned.state.sessions[0].plan!.approvals;
+    for (const action of actions) {
+      await service.approve({ sessionId, actionId: action.id });
+      const preview = await service.preview({ sessionId, actionId: action.id });
+      await service.execute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    }
+    const operationId = (service.status({ sessionId }) as AgentSession).plan!.recovery!.operations[0].operationId;
+    await fsp.writeFile(path.join(root, "src", "touched.txt"), "manual touched\n", "utf8");
+
+    await expect(service.undo({ sessionId })).rejects.toThrow(/changed after Levi's operation/i);
+    let operation = (service.status({ sessionId }) as AgentSession).plan!.recovery!.operations[0];
+    expect(operation).toMatchObject({ status: "rollback-conflict" });
+    expect(operation.rollbackConflicts).toEqual([expect.objectContaining({ relativePath: "src/touched.txt" })]);
+
+    await service.restoreOperation({ sessionId, operationId, choices: { "src/touched.txt": "keep-current" } });
+    expect(await fsp.readFile(path.join(root, "src", "touched.txt"), "utf8")).toBe("manual touched\n");
+    expect(await fsp.readFile(path.join(root, "src", "other.txt"), "utf8")).toBe("before other\n");
+
+    const second = await service.plan({ prompt: "Modify files again", runtimeId: "ollama", modelId: "model-a" });
+    const secondSessionId = second.sessionId;
+    await fsp.writeFile(path.join(root, "src", "touched.txt"), "before touched again\n", "utf8");
+    await fsp.writeFile(path.join(root, "src", "other.txt"), "before other again\n", "utf8");
+    const secondActions = second.state.sessions[0].plan!.approvals;
+    for (const action of secondActions) {
+      await service.approve({ sessionId: secondSessionId, actionId: action.id });
+      const preview = await service.preview({ sessionId: secondSessionId, actionId: action.id });
+      await service.execute({ sessionId: secondSessionId, actionId: action.id, previewId: preview.preview.previewId });
+    }
+    const secondOperationId = (service.status({ sessionId: secondSessionId }) as AgentSession).plan!.recovery!.operations[0].operationId;
+    await fsp.writeFile(path.join(root, "src", "touched.txt"), "manual overwritten\n", "utf8");
+
+    await expect(service.undo({ sessionId: secondSessionId })).rejects.toThrow(/changed after Levi's operation/i);
+    await service.restoreOperation({ sessionId: secondSessionId, operationId: secondOperationId, choices: { "src/touched.txt": "restore-snapshot" } });
+    expect(await fsp.readFile(path.join(root, "src", "touched.txt"), "utf8")).toBe("before touched again\n");
+    expect(await fsp.readFile(path.join(root, "src", "other.txt"), "utf8")).toBe("before other again\n");
+    operation = (service.status({ sessionId: secondSessionId }) as AgentSession).plan!.recovery!.operations[0];
+    expect(operation).toMatchObject({ status: "rolled-back", rollbackConflicts: [] });
   });
 
   it("restores delete and rename operations with file-level recovery", async () => {

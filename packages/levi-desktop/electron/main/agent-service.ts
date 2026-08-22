@@ -292,7 +292,7 @@ export class AgentService {
           },
           {
             role: "user",
-            content: buildPlanningPrompt(ownerObjective, projectSummary, request.attachments ?? [])
+            content: buildPlanningPrompt(ownerObjective, projectSummary, request.attachments ?? [], buildResumeOperationalContext(session, projectSummary))
           }
         ],
         options: { format: "json" }
@@ -1597,7 +1597,12 @@ render();
   ];
 }
 
-function buildPlanningPrompt(prompt: string, summary: AgentProjectSummary, attachments: AIChatAttachment[]): string {
+function buildPlanningPrompt(
+  prompt: string,
+  summary: AgentProjectSummary,
+  attachments: AIChatAttachment[],
+  resumeContext?: ReturnType<typeof buildResumeOperationalContext>
+): string {
   const existingProject = Boolean(
     summary.rootPath &&
     (summary.entryPoints.length > 0 || summary.buildSystem.length > 0 || summary.sourceDirectories.length > 0)
@@ -1611,6 +1616,7 @@ function buildPlanningPrompt(prompt: string, summary: AgentProjectSummary, attac
       existingProject,
       newApplicationSafeDefault: existingProject ? "Use a sanitized child folder for generated app files." : "Use the selected workspace root when it is suitable and empty."
     },
+    resumeContext,
     context: attachments.map((attachment) => ({
       sourceId: attachment.sourceId,
       label: attachment.label,
@@ -1621,6 +1627,52 @@ function buildPlanningPrompt(prompt: string, summary: AgentProjectSummary, attac
       preview: attachment.preview ?? attachment.content?.slice(0, 1_200)
     }))
   });
+}
+
+function buildResumeOperationalContext(session: AgentSession, summary: AgentProjectSummary) {
+  const recentOperations = (session.plan?.recovery?.operations ?? []).slice(-6).map((operation) => ({
+    operationId: operation.operationId,
+    status: operation.status,
+    userRequest: operation.userRequest,
+    filesCreated: operation.filesCreated.slice(0, 12),
+    filesModified: operation.filesModified.slice(0, 12),
+    filesDeleted: operation.filesDeleted.slice(0, 12),
+    filesRenamed: operation.filesRenamed.slice(0, 12),
+    verification: operation.verificationResult,
+    repairAttempts: operation.repairAttempts
+  }));
+  const recentMessages = session.messages.slice(-6).map((message) => ({
+    role: message.role,
+    content: message.content.slice(0, 1_000)
+  }));
+  const lastVerification = session.plan?.verificationReports?.[0];
+  return {
+    projectName: summary.projectName,
+    projectType: summary.frameworks.join(", ") || summary.languages.join(", ") || "unknown",
+    rootPath: summary.rootPath,
+    currentGitBranch: summary.git.summary.find((line) => line.startsWith("## "))?.replace(/^##\s*/, ""),
+    currentWorkspaceState: {
+      languages: summary.languages,
+      frameworks: summary.frameworks,
+      buildSystem: summary.buildSystem,
+      sourceDirectories: summary.sourceDirectories,
+      entryPoints: summary.entryPoints,
+      openFiles: summary.openFiles,
+      gitChangedFiles: summary.git.changedFiles
+    },
+    recentUserRequest: [...session.messages].reverse().find((message) => message.role === "user")?.content.slice(0, 1_000),
+    recentAgentOperations: recentOperations,
+    lastVerification: lastVerification ? {
+      status: lastVerification.status,
+      summary: lastVerification.summary,
+      gitChangedFiles: lastVerification.gitChangedFiles.slice(0, 20),
+      failures: lastVerification.failures.slice(0, 6).map((failure) => ({
+        message: failure.message,
+        affectedFiles: failure.affectedFiles.slice(0, 10)
+      }))
+    } : undefined,
+    recentConversation: recentMessages
+  };
 }
 
 function createExecutionPlan(objective: string, modelContent: string, projectSummary: AgentProjectSummary): AgentExecutionPlan {
@@ -2060,6 +2112,7 @@ function coerceRecovery(value: unknown): AgentExecutionPlan["recovery"] {
     schemaVersion: 1,
     operations,
     interruptedOperationIds,
+    activeOperationId: typeof record.activeOperationId === "string" ? record.activeOperationId : undefined,
     corruptionRecovered: record.corruptionRecovered === true
   };
 }

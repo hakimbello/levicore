@@ -140,7 +140,27 @@ export type AgentUndoMetadata = {
   timestamp: string;
 };
 
-export type AgentOperationStatus = "Executing" | "Completed" | "Failed" | "Cancelled" | "Interrupted" | "Undone" | "Conflict";
+export type AgentOperationStatus =
+  | "planned"
+  | "approved"
+  | "running"
+  | "verifying"
+  | "repairing"
+  | "completed"
+  | "blocked"
+  | "cancelled"
+  | "interrupted"
+  | "rolling-back"
+  | "rolled-back"
+  | "rollback-conflict"
+  | "rollback-failed"
+  | "Executing"
+  | "Completed"
+  | "Failed"
+  | "Cancelled"
+  | "Interrupted"
+  | "Undone"
+  | "Conflict";
 
 export type AgentRecoveredFileKind = "missing" | "file" | "folder";
 
@@ -162,9 +182,21 @@ export type AgentCommandLedgerEntry = {
   durationMs?: number;
 };
 
+export type AgentRollbackChoice = "keep-current" | "restore-snapshot";
+
+export type AgentRollbackConflict = {
+  relativePath: string;
+  message: string;
+  currentContent?: string;
+  snapshotContent?: string;
+  choice?: AgentRollbackChoice;
+};
+
 export type AgentOperationLedgerEntry = {
   operationId: string;
   sessionId: string;
+  planId?: string;
+  workspaceRoot?: string;
   actionId?: string;
   actionType?: AgentActionType;
   title: string;
@@ -187,7 +219,11 @@ export type AgentOperationLedgerEntry = {
   gitBranchAfter?: string;
   gitDirtyBefore?: boolean;
   gitDirtyAfter?: boolean;
+  filesBefore?: AgentRecoveredFileSnapshot[];
+  filesAfter?: AgentRecoveredFileSnapshot[];
   snapshots: AgentRecoveredFileSnapshot[];
+  rollbackConflicts?: AgentRollbackConflict[];
+  rollbackLimitations?: string[];
   conflict?: string;
   startedAt: string;
   completedAt?: string;
@@ -197,6 +233,7 @@ export type AgentRecoveryState = {
   schemaVersion: 1;
   operations: AgentOperationLedgerEntry[];
   interruptedOperationIds: string[];
+  activeOperationId?: string;
   corruptionRecovered?: boolean;
 };
 
@@ -644,11 +681,13 @@ export type AgentExecuteRequest = {
 
 export type AgentUndoRequest = {
   sessionId: string;
+  choices?: Record<string, AgentRollbackChoice>;
 };
 
 export type AgentRestoreOperationRequest = {
   sessionId: string;
   operationId: string;
+  choices?: Record<string, AgentRollbackChoice>;
 };
 
 export type AgentQueueRequest = {
@@ -781,6 +820,9 @@ export type AgentUndoResult = {
   sessionId: string;
   actionId: string;
   relativePath: string;
+  operationId?: string;
+  restoredPaths?: string[];
+  conflicts?: AgentRollbackConflict[];
   state: AgentState;
 };
 

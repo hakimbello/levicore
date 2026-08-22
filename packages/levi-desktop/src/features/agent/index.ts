@@ -55,6 +55,8 @@ export type {
   AgentRecoveredFileKind,
   AgentRecoveredFileSnapshot,
   AgentRecoveryState,
+  AgentRollbackChoice,
+  AgentRollbackConflict,
   AgentRepairPlanRequest,
   AgentRepairPlanResult,
   AgentRepairExecuteRequest,

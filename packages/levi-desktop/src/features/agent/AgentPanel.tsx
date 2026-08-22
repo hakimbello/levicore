@@ -4,7 +4,7 @@ import type { AIChatAttachment, AIChatContextDiscoveryResult, AIChatContextPrevi
 import type { BrowserActionPreview, BrowserPageSnapshot, BrowserSession } from "../browser";
 import type { EditorTab } from "../../hooks/use-editor-tabs";
 import type { TaskOutputEntry, TaskProblem, WorkspaceStatus } from "../../types/levi-api";
-import type { AgentActionPreview, AgentGitPreview, AgentOperationLedgerEntry, AgentSession, AgentState, AgentTaskPreview, AgentTerminalPreview } from "./types";
+import type { AgentActionPreview, AgentGitPreview, AgentOperationLedgerEntry, AgentRollbackChoice, AgentSession, AgentState, AgentTaskPreview, AgentTerminalPreview } from "./types";
 
 type AgentPanelProps = {
   runtimeState: AIRuntimeState;
@@ -402,6 +402,28 @@ function VerificationPanel({ session, onState, onError }: { session?: AgentSessi
     }
   }
 
+  async function undoFailedChanges() {
+    onError(null);
+    try {
+      const result = await window.levi.agent.undo({ sessionId });
+      onState(result.state);
+      await window.levi.workspace.refresh().catch(() => undefined);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Could not undo failed changes.");
+    }
+  }
+
+  async function openFailureFile() {
+    const file = report?.failures.flatMap((failure) => failure.affectedFiles)[0] ?? report?.gitChangedFiles[0];
+    if (!file) return;
+    onError(null);
+    try {
+      await window.levi.workspace.readPath({ relativePath: file });
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Could not open failed file.");
+    }
+  }
+
   async function updateRepair(actionId: string, approved: boolean) {
     onError(null);
     try {
@@ -442,6 +464,14 @@ function VerificationPanel({ session, onState, onError }: { session?: AgentSessi
               {report.failures.map((failure) => (
                 <p key={failure.id}>{failure.classification}: {failure.message}{failure.affectedFiles.length ? ` (${failure.affectedFiles.join(", ")})` : ""}</p>
               ))}
+            </div>
+          ) : null}
+          {report.status === "Failed" ? (
+            <div className="levi-edit-actions" aria-label="Build blocked recovery actions">
+              <button type="button" className="levi-secondary-button" onClick={() => window.alert(report.summary)}>View Failure</button>
+              <button type="button" className="levi-apply-button" onClick={() => void undoFailedChanges()}>Undo Failed Changes</button>
+              <button type="button" onClick={() => onError(null)}>Keep Changes</button>
+              <button type="button" onClick={() => void openFailureFile()} disabled={!report.failures.some((failure) => failure.affectedFiles.length) && report.gitChangedFiles.length === 0}>Open Files</button>
             </div>
           ) : null}
           {report.warnings.length ? (
@@ -795,6 +825,11 @@ function ExecutionReview({
       const result = await window.levi.agent.undo({ sessionId });
       onState(result.state);
     } catch (error) {
+      const refreshed = await window.levi.agent.status({ sessionId }).catch(() => null);
+      if (refreshed && "id" in refreshed) {
+        const listed = await window.levi.agent.list().catch(() => null);
+        if (listed) onState(listed);
+      }
       onError(error instanceof Error ? error.message : "Could not undo last agent action.");
     }
   }
@@ -805,6 +840,8 @@ function ExecutionReview({
       const result = await window.levi.agent.restoreOperation({ sessionId, operationId });
       onState(result.state);
     } catch (error) {
+      const listed = await window.levi.agent.list().catch(() => null);
+      if (listed) onState(listed);
       onError(error instanceof Error ? error.message : "Could not restore agent operation.");
     }
   }
@@ -819,6 +856,54 @@ function ExecutionReview({
     const fileList = files.length ? files.join("\n") : "No recorded file paths";
     if (!window.confirm(`Restore this Agent operation?\n\nFiles affected:\n${fileList}\n\nFiles restored:\n${fileList}\n\nPotential conflicts will be reported before overwriting.`)) return;
     void restoreOperation(operation.operationId);
+  }
+
+  async function resolveRollbackConflicts(operation: AgentOperationLedgerEntry, choice: AgentRollbackChoice) {
+    const conflicts = operation.rollbackConflicts ?? [];
+    if (!conflicts.length) return;
+    const choices = Object.fromEntries(conflicts.map((conflict) => [conflict.relativePath, choice]));
+    onError(null);
+    try {
+      const result = await window.levi.agent.restoreOperation({ sessionId, operationId: operation.operationId, choices });
+      onState(result.state);
+      await window.levi.workspace.refresh().catch(() => undefined);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "Could not resolve rollback conflicts.");
+    }
+  }
+
+  function viewRollbackDifference(operation: AgentOperationLedgerEntry) {
+    const conflict = operation.rollbackConflicts?.[0];
+    if (!conflict) return;
+    window.alert([
+      conflict.message,
+      "",
+      `File: ${conflict.relativePath}`,
+      "",
+      "Current:",
+      conflict.currentContent ?? "[missing]",
+      "",
+      "Levi Snapshot:",
+      conflict.snapshotContent ?? "[missing]"
+    ].join("\n"));
+  }
+
+  function inspectOperation(operation: AgentOperationLedgerEntry) {
+    const files = [
+      ...operation.filesCreated,
+      ...operation.filesModified,
+      ...operation.filesDeleted,
+      ...operation.filesRenamed.map((item) => `${item.from} -> ${item.to}`)
+    ];
+    window.alert([
+      operation.status === "interrupted" ? "Levi was interrupted during a build." : operation.title,
+      "",
+      `Completed actions: ${operation.actionsCompleted.length}`,
+      `Pending actions: ${Math.max(0, operation.actionsAttempted.length - operation.actionsCompleted.length - operation.actionsFailed.length)}`,
+      "",
+      "Affected paths:",
+      files.join("\n") || "No affected paths recorded"
+    ].join("\n"));
   }
 
   async function executeTaskPreview() {
@@ -976,9 +1061,29 @@ function ExecutionReview({
                   <span>{operation.status} / {operation.filesCreated.length + operation.filesModified.length + operation.filesDeleted.length + operation.filesRenamed.length} files changed</span>
                   {operation.verificationResult ? <small>{operation.verificationResult}</small> : null}
                   {operation.conflict ? <p>{operation.conflict}</p> : null}
+                  {operation.rollbackConflicts?.length ? (
+                    <div className="levi-agent-task-problems" aria-label="Rollback conflicts">
+                      {operation.rollbackConflicts.map((conflict) => <p key={conflict.relativePath}>{conflict.relativePath}: {conflict.message}</p>)}
+                    </div>
+                  ) : null}
                 </div>
                 <div>
-                  <button type="button" onClick={() => approveRestore(operation)} disabled={operation.status !== "Completed"}>Restore</button>
+                  {operation.rollbackConflicts?.length ? (
+                    <>
+                      <button type="button" onClick={() => viewRollbackDifference(operation)}>View Difference</button>
+                      <button type="button" onClick={() => void resolveRollbackConflicts(operation, "keep-current")}>Keep Current</button>
+                      <button type="button" onClick={() => void resolveRollbackConflicts(operation, "restore-snapshot")}>Restore Levi Snapshot</button>
+                      <button type="button" onClick={() => onError("Rollback cancelled.")}>Cancel</button>
+                    </>
+                  ) : null}
+                  {operation.status === "interrupted" || operation.status === "cancelled" ? (
+                    <>
+                      <button type="button" onClick={() => inspectOperation(operation)}>Inspect Changes</button>
+                      <button type="button" disabled title="Safe resume requires deterministic remaining actions without terminal commands.">Resume Where Safe</button>
+                      <button type="button" onClick={() => approveRestore(operation)}>Undo Partial Changes</button>
+                    </>
+                  ) : null}
+                  <button type="button" onClick={() => approveRestore(operation)} disabled={operation.status !== "completed" && operation.status !== "Completed" && operation.status !== "blocked" && operation.status !== "interrupted" && operation.status !== "rollback-conflict"}>Restore</button>
                 </div>
               </article>
             ))}
