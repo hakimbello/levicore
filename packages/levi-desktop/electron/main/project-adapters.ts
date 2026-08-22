@@ -1,4 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import type { ProjectDetection, ProjectType, RunAppCommand, UniversalRunTargetKind, WorkspaceScanSummary } from "../../src/types/levi-api";
 
@@ -10,6 +11,7 @@ export type UniversalCommandProfile = {
   install?: string;
   build?: string;
   test?: string;
+  check?: string;
   lint?: string;
   dev?: string;
   run?: string;
@@ -84,6 +86,7 @@ export function detectUniversalProjectFromSummary(summary: WorkspaceScanSummary)
     installCommand: profile.commands.install,
     buildCommand: profile.commands.build,
     testCommand: profile.commands.test,
+    checkCommand: profile.commands.check,
     lintCommand: profile.commands.lint,
     devCommand: profile.commands.dev,
     runCommand: profile.commands.run,
@@ -210,6 +213,7 @@ export const UNIVERSAL_PROJECT_ADAPTERS: UniversalProjectAdapter[] = [
       if (!hasManifest(summary, "Cargo.toml") && !hasLanguage(summary, "Rust")) return null;
       return profile("rust", "rust", "cli", "Rust", "Rust", "cargo", "cargo", ["rustc", "cargo"], {
         build: "cargo build",
+        check: "cargo check",
         test: "cargo test",
         lint: "cargo clippy",
         dev: "cargo run",
@@ -563,20 +567,31 @@ const UNIVERSAL_TOOLS: Array<{ id: string; name: string; command: string; args: 
 ];
 
 async function checkTool(tool: { id: string; name: string; command: string; args: string[] }, cwd: string | null, execFile: ExecFile): Promise<UniversalToolState> {
+  const command = resolveKnownToolCommand(tool.id, tool.command);
   return new Promise((resolve) => {
     try {
-      execFile(tool.command, tool.args, { cwd: cwd ?? undefined, timeout: 5_000, windowsHide: true, maxBuffer: 16_000 }, (error, stdout, stderr) => {
+      execFile(command, tool.args, { cwd: cwd ?? undefined, timeout: 5_000, windowsHide: true, maxBuffer: 16_000 }, (error, stdout, stderr) => {
         const output = `${stdout.toString()}\n${stderr.toString()}`.trim();
         if (error) {
           resolve({ ...tool, status: "missing", message: output || error.message });
         } else {
-          resolve({ ...tool, status: "ready", version: output.split(/\r?\n/)[0]?.trim() });
+          resolve({ ...tool, command, status: "ready", version: output.split(/\r?\n/)[0]?.trim() });
         }
       });
     } catch (error) {
       resolve({ ...tool, status: "missing", message: error instanceof Error ? error.message : "Tool could not be launched." });
     }
   });
+}
+
+function resolveKnownToolCommand(id: string, command: string): string {
+  if (process.platform !== "win32") return command;
+  const candidates: Record<string, string[]> = {
+    go: ["C:\\Program Files\\Go\\bin\\go.exe"],
+    rustc: [path.join(process.env.USERPROFILE ?? "", ".cargo", "bin", "rustc.exe")],
+    cargo: [path.join(process.env.USERPROFILE ?? "", ".cargo", "bin", "cargo.exe")]
+  };
+  return candidates[id]?.find((candidate) => candidate && fs.existsSync(candidate)) ?? command;
 }
 
 function toolId(tool: string): string {

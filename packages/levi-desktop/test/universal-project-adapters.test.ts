@@ -57,6 +57,7 @@ describe("universal project adapters", () => {
   ])("detects %s command profiles", (_label, fixture, projectType, testCommand, runCommand) => {
     const detection = detectUniversalProjectFromSummary(summary(fixture));
     expect(detection).toMatchObject({ projectType, testCommand, runCommand });
+    if (projectType === "rust") expect(detection.checkCommand).toBe("cargo check");
   });
 
   it.each([

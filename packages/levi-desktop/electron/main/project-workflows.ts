@@ -68,6 +68,7 @@ export type ProjectDetection = {
   installCommand?: string;
   buildCommand?: string;
   testCommand?: string;
+  checkCommand?: string;
   lintCommand?: string;
   devCommand?: string;
   runCommand?: string;

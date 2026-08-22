@@ -220,6 +220,7 @@ function buildBuiltinTasks(summary: WorkspaceScanSummary, manifestPaths: Set<str
   };
   if (profile) {
     addProfileTask("build", "Build", "build", profile.commands.build);
+    addProfileTask("check", "Check", "build", profile.commands.check);
     addProfileTask("test", "Test", "test", profile.commands.test);
     addProfileTask("lint", "Lint", "lint", profile.commands.lint);
     addProfileTask("run", profile.projectFamily === "cli" ? "Run" : "Run App", "run", profile.commands.run ?? profile.commands.dev);
