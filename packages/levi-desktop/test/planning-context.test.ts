@@ -64,7 +64,8 @@ describe("IDE-002 planning context", () => {
   it("distinguishes questions, planning requests, and explicit single-file edits", () => {
     expect(isPlanningRequest("What is this repository?")).toBe(false);
     expect(isPlanningRequest("How would you add authentication?")).toBe(true);
-    expect(isPlanningRequest("Add authentication.")).toBe(true);
+    expect(isPlanningRequest("Make a plan for adding authentication.")).toBe(true);
+    expect(isPlanningRequest("Add authentication.")).toBe(false);
     expect(isPlanningRequest("Change src/Home.tsx heading to Hello.")).toBe(false);
     expect(isSingleFileEditRequest("Change src/Home.tsx heading to Hello.")).toBe(true);
   });

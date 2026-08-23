@@ -25,6 +25,15 @@ export function useTerminalLayout(defaultCwd: string) {
   const persistTimer = useRef<number | null>(null);
 
   useEffect(() => {
+    return () => {
+      if (persistTimer.current) {
+        window.clearTimeout(persistTimer.current);
+        persistTimer.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     void window.levi.terminal.getLayout().then((saved) => {
       if (cancelled) return;
@@ -50,6 +59,7 @@ export function useTerminalLayout(defaultCwd: string) {
       window.clearTimeout(persistTimer.current);
     }
     persistTimer.current = window.setTimeout(() => {
+      persistTimer.current = null;
       void window.levi.terminal.setLayout({
         ...next,
         tabs: next.tabs.map(({ id, name, cwd }) => ({ id, name, cwd }))

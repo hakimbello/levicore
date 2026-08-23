@@ -1,10 +1,14 @@
+import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { TextDecoder } from "node:util";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { BrowserWindow } from "electron";
+import { getEffectiveDeveloperEnvironment, resolveDeveloperToolFromEnvironment, type DeveloperToolId } from "./developer-environment";
 import type {
   AgentActionPreview,
+  AgentActionType,
   AgentApprovalAction,
   AgentBrowserExecuteRequest,
   AgentBrowserExecutionResult,
@@ -14,6 +18,7 @@ import type {
   AgentBrowserStatusRequest,
   AgentBrowserStatusResult,
   AgentCancelRequest,
+  AgentCommandLedgerEntry,
   AgentDiffLine,
   AgentExecuteRequest,
   AgentExecutionQueueItem,
@@ -29,16 +34,27 @@ import type {
   AgentGitStatusRequest,
   AgentGitStatusResult,
   AgentGitVerificationSummary,
+  AgentOperationLedgerEntry,
   AgentPreviewRequest,
   AgentPreviewResult,
   AgentQueueRequest,
   AgentQueueResult,
+  AgentRecoveredFileSnapshot,
   AgentRepairPlanRequest,
   AgentRepairPlanResult,
+  AgentRepairExecuteRequest,
+  AgentRepairExecutionResult,
   AgentRepairQueueItem,
   AgentRepairStatusRequest,
   AgentRepairStatusResult,
+  AgentRestoreOperationRequest,
+  AgentRestoreOperationResult,
+  AgentResumeEligibility,
+  AgentResumeOperationRequest,
+  AgentResumeOperationResult,
   AgentRiskLevel,
+  AgentRollbackChoice,
+  AgentRollbackConflict,
   AgentSession,
   AgentState,
   AgentTaskCancelRequest,
@@ -95,9 +111,31 @@ const MAX_TERMINAL_OUTPUT_CHARS = 12_000;
 const MAX_VERIFICATION_REPORTS = 20;
 const MAX_REPAIR_ITEMS = 20;
 const MAX_REPAIR_TEXT = 2_000;
+const MAX_REPAIR_ATTEMPTS = 3;
 const MAX_TERMINAL_ARG_LENGTH = 500;
 const MAX_TERMINAL_ARGS = 80;
 const SUPPORTED_ACTIONS = new Set(["create-file", "modify-file", "delete-file", "rename-file", "create-folder", "rename-folder"]);
+const AUTOMATIC_REPAIR_ACTIONS = new Set(["create-file", "modify-file", "create-folder"]);
+const DIRECT_PROCESS_EXECUTABLES = new Set([
+  "node",
+  "node.exe",
+  "npm",
+  "npm.cmd",
+  "npx",
+  "npx.cmd",
+  "gradle",
+  "gradle.bat",
+  "gradlew.bat",
+  "gradlew",
+  "python",
+  "python.exe",
+  "dotnet",
+  "dotnet.exe",
+  "cargo",
+  "cargo.exe",
+  "go",
+  "go.exe"
+]);
 const SAFE_TERMINAL_EXECUTABLES = new Set([
   "node",
   "node.exe",
@@ -111,11 +149,15 @@ const SAFE_TERMINAL_EXECUTABLES = new Set([
   "yarn.cmd",
   "bun",
   "bun.exe",
+  "gradle",
+  "gradle.bat",
   "python",
   "python.exe",
   "python3",
   "py",
   "py.exe",
+  "gradlew.bat",
+  "gradlew",
   "dotnet",
   "dotnet.exe",
   "cargo",
@@ -124,6 +166,9 @@ const SAFE_TERMINAL_EXECUTABLES = new Set([
   "go.exe"
 ]);
 const BLOCKED_TERMINAL_EXECUTABLES = new Set(["cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe", "bash", "zsh", "sh", "git", "git.exe"]);
+const SAFE_RESUME_FILE_ACTIONS = new Set<AgentActionType>(["create-folder", "create-file", "modify-file", "rename-file", "rename-folder"]);
+const SAFE_RESUME_COMMAND_WORDS = /\b(build|test|typecheck|lint|check|install|ci|assemble|verify|restore)\b/i;
+const UNSAFE_RESUME_COMMAND_WORDS = /\b(dev|serve|start|watch|preview|publish|deploy|push|login|token|secret|credential|password|key)\b/i;
 const SHELL_OPERATOR_PATTERN = /(&&|\|\||;|>>|>|<|\||`|\$\(|\$\{|\*|\?)/;
 const ENV_INJECTION_PATTERN = /(^|[\s])([A-Za-z_][A-Za-z0-9_]*=|%[A-Za-z_][A-Za-z0-9_]*%|\$[A-Za-z_][A-Za-z0-9_]*)/;
 const POWERSHELL_INVOKE_PATTERN = /\b(invoke-expression|iex)\b/i;
@@ -167,6 +212,8 @@ type UndoRecord =
       actionId: string;
       relativePath: string;
       absolutePath: string;
+      appliedHash?: string;
+      preExisting?: boolean;
       timestamp: string;
     }
   | {
@@ -186,6 +233,9 @@ type UndoRecord =
       destinationRelativePath: string;
       absolutePath: string;
       destinationAbsolutePath: string;
+      previousContent?: string;
+      previousHash?: string;
+      appliedHash?: string;
       timestamp: string;
     }
   | {
@@ -193,13 +243,21 @@ type UndoRecord =
       actionId: string;
       relativePath: string;
       absolutePath: string;
+      preExisting?: boolean;
       timestamp: string;
     };
+
+type OperationRollbackPlan = {
+  restoredPaths: string[];
+  conflicts: AgentRollbackConflict[];
+  apply: Array<() => Promise<void>>;
+};
 
 export class AgentExecutionService {
   private readonly previews = new Map<string, AgentActionPreview>();
   private readonly taskPreviews = new Map<string, AgentTaskPreview>();
   private readonly terminalPreviews = new Map<string, AgentTerminalPreview>();
+  private readonly terminalProcesses = new Map<string, ChildProcessWithoutNullStreams>();
   private readonly gitPreviews = new Map<string, AgentGitPreview>();
   private readonly undoBySession = new Map<string, UndoRecord>();
 
@@ -243,7 +301,13 @@ export class AgentExecutionService {
     item.error = undefined;
     session.status = "Executing";
     await this.touch(session);
-    const activeItem = ensureQueue(session).find((candidate) => candidate.actionId === action.id);
+    let activeItem = ensureQueue(session).find((candidate) => candidate.actionId === action.id);
+    if (!activeItem) {
+      throw new Error("Agent execution queue item was not found.");
+    }
+    const operation = await this.beginFileOperation(session, action, preview);
+    await this.touch(session);
+    activeItem = ensureQueue(session).find((candidate) => candidate.actionId === action.id);
     if (!activeItem) {
       throw new Error("Agent execution queue item was not found.");
     }
@@ -254,6 +318,7 @@ export class AgentExecutionService {
       activeItem.status = "Completed";
       activeItem.completedAt = new Date().toISOString();
       session.status = "Ready";
+      await this.completeFileOperation(session, operation, "Completed", undo);
       session.plan!.progress = progressFromSession(session);
       await this.touch(session);
       this.options.emitExecution(session.id, action.id);
@@ -264,6 +329,7 @@ export class AgentExecutionService {
       activeItem.completedAt = new Date().toISOString();
       session.status = "Error";
       session.error = activeItem.error;
+      await this.completeFileOperation(session, operation, "Failed", undefined, activeItem.error);
       session.plan!.progress = progressFromSession(session);
       await this.touch(session);
       this.options.emitExecution(session.id, action.id);
@@ -272,28 +338,166 @@ export class AgentExecutionService {
   }
 
   async undo(session: AgentSession, rawRequest: unknown): Promise<AgentUndoResult> {
-    validateUndoRequest(rawRequest);
-    const undo = this.undoBySession.get(session.id);
-    if (!undo) {
-      throw new Error("No reversible agent action is available.");
-    }
-    await this.undoRecord(undo);
-    this.undoBySession.delete(session.id);
-    if (session.plan) {
-      session.plan.lastUndo = undefined;
-      const item = session.plan.executionQueue.find((candidate) => candidate.actionId === undo.actionId);
-      if (item) {
-        item.status = "Pending";
-        item.completedAt = undefined;
-        item.error = undefined;
+    const request = validateUndoRequest(rawRequest);
+    const operation = latestRollbackOperation(session);
+    if (!operation) throw new Error("No reversible agent operation is available.");
+    const workspaceRoot = this.options.getWorkspaceRoot();
+    if (!workspaceRoot) throw new Error("No workspace is open.");
+    try {
+      const restoredPaths = await this.rollbackOperation(session, operation, workspaceRoot, request.choices);
+      this.undoBySession.delete(session.id);
+      if (session.plan) {
+        session.plan.lastUndo = undefined;
+        for (const item of session.plan.executionQueue) {
+          if (operation.actionsCompleted.includes(item.actionId)) {
+            item.status = "Pending";
+            item.completedAt = undefined;
+            item.error = undefined;
+          }
+        }
+        session.plan.progress = progressFromSession(session);
       }
-      session.plan.progress = progressFromSession(session);
+      session.status = "Ready";
+      session.updatedAt = new Date().toISOString();
+      await this.options.persistAndEmit();
+      this.options.emitExecution(session.id, operation.actionId ?? operation.operationId);
+      return {
+        sessionId: session.id,
+        actionId: operation.actionId ?? operation.operationId,
+        operationId: operation.operationId,
+        relativePath: restoredPaths[0] ?? "",
+        restoredPaths,
+        state: this.options.snapshot()
+      };
+    } catch (error) {
+      await this.options.persistAndEmit();
+      throw error;
     }
-    session.status = "Ready";
-    session.updatedAt = new Date().toISOString();
-    await this.options.persistAndEmit();
-    this.options.emitExecution(session.id, undo.actionId);
-    return { sessionId: session.id, actionId: undo.actionId, relativePath: undo.relativePath, state: this.options.snapshot() };
+  }
+
+  async restoreOperation(session: AgentSession, rawRequest: unknown): Promise<AgentRestoreOperationResult> {
+    const request = validateRestoreOperationRequest(rawRequest);
+    if (request.sessionId !== session.id) throw new Error("Agent restore request session does not match.");
+    const workspaceRoot = this.options.getWorkspaceRoot();
+    const operation = session.plan?.recovery?.operations.find((item) => item.operationId === request.operationId);
+    if (!workspaceRoot || !operation) throw new Error("Agent operation was not found.");
+    try {
+      const restoredPaths = await this.rollbackOperation(session, operation, workspaceRoot, request.choices);
+      await this.touch(session);
+      this.options.emitExecution(session.id, operation.actionId ?? operation.operationId);
+      return { sessionId: session.id, operationId: operation.operationId, restoredPaths, state: this.options.snapshot() };
+    } catch (error) {
+      await this.options.persistAndEmit();
+      throw error;
+    }
+  }
+
+  async resumeOperation(session: AgentSession, rawRequest: unknown): Promise<AgentResumeOperationResult> {
+    const request = validateResumeOperationRequest(rawRequest);
+    if (request.sessionId !== session.id) throw new Error("Agent resume request session does not match.");
+    if (!session.plan) throw new Error("Agent session has no execution plan.");
+    const recovery = ensureRecovery(session);
+    const operation = recovery.operations.find((item) => item.operationId === request.operationId);
+    if (!operation) throw new Error("Agent operation was not found.");
+    const workspaceRoot = this.options.getWorkspaceRoot();
+    if (!workspaceRoot || (operation.workspaceRoot && path.resolve(operation.workspaceRoot) !== path.resolve(workspaceRoot))) {
+      await this.persistResumeConflict(session, operation, "Workspace no longer matches.");
+      throw new Error("Workspace no longer matches.");
+    }
+
+    operation.status = "inspecting";
+    await this.touch(session);
+    const eligibility = await this.evaluateResumeEligibility(session, operation);
+    operation.resumeEligibility = eligibility;
+    operation.resumePointer = pointerForResume(session, operation);
+    if (!eligibility.available) {
+      await this.persistResumeConflict(session, operation, eligibility.reason ?? "Resume Where Safe is unavailable.");
+      throw new Error(eligibility.reason ?? "Resume Where Safe is unavailable.");
+    }
+
+    operation.status = "resumable";
+    await this.touch(session);
+    operation.status = "resuming";
+    recovery.activeOperationId = operation.operationId;
+    session.status = "Executing";
+    session.error = undefined;
+    await this.touch(session);
+
+    const resumedActionIds: string[] = [];
+    try {
+      for (const actionId of operation.resumePointer?.remainingActionIds ?? []) {
+        if (operation.actionsCompleted.includes(actionId)) continue;
+        const action = requireAction(session, actionId);
+        operation.resumePointer = {
+          lastCompletedActionId: operation.actionsCompleted[operation.actionsCompleted.length - 1],
+          currentActionId: actionId,
+          remainingActionIds: (operation.resumePointer?.remainingActionIds ?? []).filter((id) => id !== actionId)
+        };
+        await this.touch(session);
+
+        const actionEligibility = await this.evaluateResumeAction(session, operation, action);
+        if (!actionEligibility.safe) {
+          await this.persistResumeConflict(session, operation, actionEligibility.reason);
+          throw new Error(actionEligibility.reason);
+        }
+
+        if (SAFE_RESUME_FILE_ACTIONS.has(action.type)) {
+          let item = ensureQueueItem(session, action);
+          if (item.status === "Completed") continue;
+          item.status = "Executing";
+          item.startedAt = item.startedAt ?? new Date().toISOString();
+          const preview = actionEligibility.preview ?? await this.createPreview(session.id, action);
+          const currentOperation = await this.beginFileOperation(session, action, preview);
+          await this.touch(session);
+          item = ensureQueueItem(session, action);
+          const undo = await this.applyAction(action, preview);
+          this.undoBySession.set(session.id, undo);
+          session.plan.lastUndo = undoMetadata(undo);
+          item.status = "Completed";
+          item.completedAt = new Date().toISOString();
+          item.error = undefined;
+          await this.completeFileOperation(session, currentOperation, "Completed", undo);
+          resumedActionIds.push(action.id);
+          this.options.emitExecution(session.id, action.id);
+        } else if (action.type === "run-terminal-command") {
+          const terminalPreview = actionEligibility.terminalPreview ?? await this.createTerminalPreview(session.id, action);
+          this.terminalPreviews.set(terminalPreview.previewId, terminalPreview);
+          await this.terminalExecute(session, { sessionId: session.id, actionId: action.id, previewId: terminalPreview.previewId });
+          operation.commandsExecuted = appendCommandLedger(operation.commandsExecuted, terminalPreview, "running");
+          const run = await this.waitForTerminalResume(session, action.id);
+          operation.commandsExecuted = appendCommandLedger(operation.commandsExecuted, terminalPreview, commandLedgerStatus(run));
+          if (run.status !== "Succeeded") {
+            operation.actionsFailed = uniqueStrings([...operation.actionsFailed, action.id]);
+            await this.persistResumeConflict(session, operation, run.failureReason ?? "Resumed command failed.");
+            throw new Error(run.failureReason ?? "Resumed command failed.");
+          }
+          operation.actionsCompleted = uniqueStrings([...operation.actionsCompleted, action.id]);
+          operation.resumePointer.lastCompletedActionId = action.id;
+          resumedActionIds.push(action.id);
+        }
+        operation.resumePointer = pointerForResume(session, operation);
+      }
+
+      const nextEligibility = await this.evaluateResumeEligibility(session, operation);
+      operation.resumeEligibility = nextEligibility;
+      operation.resumePointer = pointerForResume(session, operation);
+      operation.status = nextEligibility.remaining > 0 ? "running" : "verifying";
+      await this.touch(session);
+      const report = await this.verify(session, { sessionId: session.id });
+      const current = ensureRecovery(session).operations.find((item) => item.operationId === operation.operationId);
+      if (current) {
+        current.verificationResult = report.report.status;
+        current.status = report.report.status === "Failed" ? "blocked" : "completed";
+        current.completedAt = report.report.completedAt;
+        current.conflict = report.report.status === "Failed" ? report.report.summary : undefined;
+        current.resumeEligibility = await this.evaluateResumeEligibility(session, current);
+        current.resumePointer = pointerForResume(session, current);
+      }
+      return { sessionId: session.id, operationId: operation.operationId, resumedActionIds, state: report.state };
+    } catch (error) {
+      await this.persistResumeConflict(session, operation, errorMessage(error));
+      throw error;
+    }
   }
 
   queue(session: AgentSession, rawRequest: unknown): AgentQueueResult {
@@ -339,6 +543,16 @@ export class AgentExecutionService {
         action.status = "Rejected";
         action.updatedAt = new Date().toISOString();
       }
+    }
+    const recovery = session.plan.recovery;
+    if (recovery?.activeOperationId) {
+      const operation = recovery.operations.find((item) => item.operationId === recovery.activeOperationId);
+      if (operation) {
+        operation.status = "cancelled";
+        operation.completedAt = new Date().toISOString();
+        operation.conflict = "Build cancelled.";
+      }
+      recovery.activeOperationId = undefined;
     }
     session.plan.progress = progressFromSession(session);
     session.status = session.plan.executionQueue.some((item) => item.status === "Executing") ? "Executing" : "Ready";
@@ -458,9 +672,6 @@ export class AgentExecutionService {
     if (ensureTerminalRuns(session).some((run) => run.status === "Running")) {
       throw new Error("Another agent terminal command is already running.");
     }
-    if (!this.options.terminalManager) throw new Error("TerminalManager is unavailable.");
-    const window = this.options.getWindow?.();
-    if (!window || window.isDestroyed()) throw new Error("No active Levi window is available for terminal execution.");
     const preview = request.previewId ? this.requireTerminalPreview(request.previewId, session.id, action.id) : await this.createTerminalPreview(session.id, action);
     const freshPreview = await this.createTerminalPreview(session.id, action);
     if (terminalPreviewFingerprint(preview) !== terminalPreviewFingerprint(freshPreview)) {
@@ -471,6 +682,7 @@ export class AgentExecutionService {
     Object.assign(terminalRun, {
       status: "Running" as const,
       startedAt,
+      resultStatus: undefined,
       endedAt: undefined,
       exitCode: undefined,
       durationMs: undefined,
@@ -483,21 +695,36 @@ export class AgentExecutionService {
     });
     session.status = "Executing";
     await this.touch(session);
-    const terminal = this.options.terminalManager.createCommand(
-      window,
-      {
-        command: preview.executable,
-        args: preview.args,
-        cwd: preview.cwd,
-        name: `Agent: ${preview.executable}`,
-        cols: 96,
-        rows: 16
-      },
-      (exitCode) => {
-        void this.recordTerminalCompletion(session, terminalRun, exitCode);
+    if (shouldUseDirectProcessExecution(preview)) {
+      this.startDirectTerminalProcess(session, terminalRun, preview);
+    } else {
+      if (!this.options.terminalManager) throw new Error("TerminalManager is unavailable.");
+      const window = this.options.getWindow?.();
+      if (!window || window.isDestroyed()) throw new Error("No active Levi window is available for terminal execution.");
+      try {
+        const terminal = this.options.terminalManager.createCommand(
+          window,
+          {
+            command: preview.executable,
+            args: preview.args,
+            cwd: preview.cwd,
+            name: `Agent: ${preview.executable}`,
+            cols: 96,
+            rows: 16
+          },
+          (exitCode) => {
+            void this.recordTerminalCompletion(session, terminalRun, exitCode);
+          }
+        );
+        terminalRun.terminalSessionId = terminal.id;
+      } catch (error) {
+        if (!canDirectProcessExecute(preview)) {
+          await this.recordTerminalInfrastructureFailure(session, terminalRun, error);
+          return { sessionId: session.id, actionId: action.id, terminalRun, state: this.options.snapshot() };
+        }
+        this.startDirectTerminalProcess(session, terminalRun, preview);
       }
-    );
-    terminalRun.terminalSessionId = terminal.id;
+    }
     terminalRun.updatedAt = new Date().toISOString();
     await this.touch(session);
     this.options.emitTerminal?.(session.id, action.id, terminalRun);
@@ -507,10 +734,15 @@ export class AgentExecutionService {
   async terminalCancel(session: AgentSession, rawRequest: unknown): Promise<AgentTerminalExecutionResult> {
     const request = validateTerminalCancelRequest(rawRequest);
     const terminalRun = requireTerminalRun(session, request.actionId);
-    if (!terminalRun.terminalSessionId || terminalRun.status !== "Running") {
+    if (terminalRun.status !== "Running") {
       throw new Error("Agent terminal command is not running.");
     }
-    this.options.terminalManager?.kill(terminalRun.terminalSessionId);
+    const child = this.terminalProcesses.get(terminalRun.actionId);
+    if (child) {
+      child.kill();
+    } else if (terminalRun.terminalSessionId) {
+      this.options.terminalManager?.kill(terminalRun.terminalSessionId);
+    }
     await this.recordTerminalCompletion(session, terminalRun, terminalRun.exitCode ?? 1, "Cancelled");
     return { sessionId: session.id, actionId: request.actionId, terminalRun, state: this.options.snapshot() };
   }
@@ -684,11 +916,20 @@ export class AgentExecutionService {
     if (!session.plan) throw new Error("Agent session has no execution plan.");
     const startedAt = new Date().toISOString();
     addRepairProgress(session, "Verification Started", { createdAt: startedAt });
+    const operation = latestRollbackOperation(session);
+    if (operation) operation.status = "verifying";
     const report = this.createVerificationReport(session, startedAt);
     const reports = ensureVerificationReports(session);
     reports.unshift(report);
     session.plan.verificationReports = reports.slice(0, MAX_VERIFICATION_REPORTS);
     addRepairProgress(session, "Verification Complete", { reportId: report.id, createdAt: report.completedAt });
+    if (operation) {
+      operation.verificationResult = report.status;
+      operation.status = report.status === "Failed" ? "blocked" : "completed";
+      operation.completedAt = report.completedAt;
+      operation.conflict = report.status === "Failed" ? report.summary : undefined;
+      if (session.plan.recovery?.activeOperationId === operation.operationId) session.plan.recovery.activeOperationId = undefined;
+    }
     session.status = report.status === "Failed" ? "Error" : "Ready";
     session.error = report.status === "Failed" ? report.summary : undefined;
     await this.touch(session);
@@ -716,6 +957,99 @@ export class AgentExecutionService {
     await this.touch(session);
     this.options.emitRepairPlan?.(session.id, report.id, repairs);
     return { sessionId: session.id, reportId: report.id, repairs, state: this.options.snapshot() };
+  }
+
+  async repairExecute(session: AgentSession, rawRequest: unknown): Promise<AgentRepairExecutionResult> {
+    const request = validateRepairExecuteRequest(rawRequest);
+    if (request.sessionId !== session.id) throw new Error("Agent repair execute request session does not match.");
+    if (!session.plan) throw new Error("Agent session has no execution plan.");
+    const report = request.reportId
+      ? ensureVerificationReports(session).find((item) => item.id === request.reportId)
+      : ensureVerificationReports(session)[0];
+    if (!report) throw new Error("Agent verification report was not found.");
+    const attempt = clampRepairAttempt(request.attempt);
+    if (attempt > MAX_REPAIR_ATTEMPTS) throw new Error("Agent repair retry limit reached.");
+    const repairs = ensureRepairQueue(session)
+      .filter((repair) => repair.reportId === report.id)
+      .filter((repair) => !request.repairId || repair.id === request.repairId)
+      .filter((repair) => repair.status !== "Rejected" && repair.status !== "Cancelled" && repair.status !== "Completed");
+    if (!repairs.length) throw new Error("No executable repair actions are available.");
+
+    const executedActions: AgentExecutionQueueItem[] = [];
+    const blockedActions: AgentApprovalAction[] = [];
+    addRepairProgress(session, "Repair Executing", { reportId: report.id, attempt });
+    const activeOperation = latestRollbackOperation(session);
+    if (activeOperation) {
+      activeOperation.status = "repairing";
+      activeOperation.repairAttempts = Math.max(activeOperation.repairAttempts, attempt);
+    }
+    session.status = "Executing";
+    await this.touch(session);
+
+    for (const repair of repairs) {
+      const repairExecutedActions: AgentExecutionQueueItem[] = [];
+      const repairBlockedActions: AgentApprovalAction[] = [];
+      repair.attempt = attempt;
+      repair.status = "Executing";
+      repair.updatedAt = new Date().toISOString();
+      for (const action of repair.actions ?? []) {
+        const blocker = repairApprovalBlocker(action, repair, report, session);
+        if (blocker) {
+          repair.blockers = uniqueStrings([...(repair.blockers ?? []), blocker]);
+          repair.requiresFreshApproval = true;
+          blockedActions.push(action);
+          repairBlockedActions.push(action);
+          continue;
+        }
+        const planAction = attachRepairAction(session, action);
+        let item = ensureQueueItem(session, planAction);
+        let operation: AgentOperationLedgerEntry | undefined;
+        try {
+          item.status = "Executing";
+          item.startedAt = new Date().toISOString();
+          const preview = await this.createPreview(session.id, planAction);
+          if (preview.destructive || preview.riskLevel === "high") {
+            item.status = "Pending";
+            const message = "Repair action requires fresh approval because its preview is high risk.";
+            repair.blockers = uniqueStrings([...(repair.blockers ?? []), message]);
+            repair.requiresFreshApproval = true;
+            blockedActions.push(planAction);
+            repairBlockedActions.push(planAction);
+            continue;
+          }
+          operation = await this.beginFileOperation(session, planAction, preview);
+          await this.touch(session);
+          item = ensureQueueItem(session, planAction);
+          const undo = await this.applyAction(planAction, preview);
+          this.undoBySession.set(session.id, undo);
+          session.plan.lastUndo = undoMetadata(undo);
+          item.status = "Completed";
+          item.completedAt = new Date().toISOString();
+          item.error = undefined;
+          await this.completeFileOperation(session, operation, "Completed", undo);
+          executedActions.push(item);
+          repairExecutedActions.push(item);
+          this.options.emitExecution(session.id, planAction.id);
+        } catch (error) {
+          item.status = "Failed";
+          item.error = errorMessage(error);
+          item.completedAt = new Date().toISOString();
+          if (operation) await this.completeFileOperation(session, operation, "Failed", undefined, item.error);
+          repair.blockers = uniqueStrings([...(repair.blockers ?? []), item.error]);
+          blockedActions.push(planAction);
+          repairBlockedActions.push(planAction);
+        }
+      }
+      repair.status = repairBlockedActions.length && repairExecutedActions.length === 0 ? "Blocked" : "Completed";
+      repair.updatedAt = new Date().toISOString();
+      addRepairProgress(session, "Repair Complete", { reportId: report.id, repairId: repair.id, attempt });
+    }
+
+    session.status = blockedActions.length && executedActions.length === 0 ? "Error" : "Ready";
+    session.error = blockedActions.length && executedActions.length === 0 ? "Repair actions require fresh approval or failed validation." : undefined;
+    session.plan.progress = progressFromSession(session);
+    await this.touch(session);
+    return { sessionId: session.id, reportId: report.id, attempt, executedActions, blockedActions, repairs, state: this.options.snapshot() };
   }
 
   repairStatus(session: AgentSession, rawRequest: unknown): AgentRepairStatusResult {
@@ -767,7 +1101,47 @@ export class AgentExecutionService {
     }
   }
 
+  hydrateRecovery(session: AgentSession): void {
+    const workspaceRoot = this.options.getWorkspaceRoot();
+    const operations = session.plan?.recovery?.operations ?? [];
+    if (!workspaceRoot || !session.plan || !operations.length) return;
+    const latest = [...operations].reverse().find((operation) => (operation.status === "completed" || operation.status === "Completed") && operation.actionId && operation.actionType);
+    const undo = latest ? undoRecordFromOperation(latest, workspaceRoot) : undefined;
+    if (undo) {
+      this.undoBySession.set(session.id, undo);
+      session.plan.lastUndo = undoMetadata(undo);
+    } else if (latest?.snapshots[0]) {
+      session.plan.lastUndo = {
+        actionId: latest.actionId ?? latest.operationId,
+        relativePath: latest.snapshots[0].relativePath,
+        destinationRelativePath: latest.snapshots[0].destinationRelativePath,
+        actionType: latest.actionType ?? "modify-file",
+        timestamp: latest.completedAt ?? latest.startedAt
+      };
+    }
+    for (const operation of operations) {
+      if (operation.status === "interrupted" || operation.status === "resume-conflict" || operation.status === "resumable") {
+        operation.resumePointer = pointerForResume(session, operation);
+        operation.resumeEligibility = syncResumeEligibility(session, operation);
+      }
+    }
+  }
+
   markInterrupted(session: AgentSession): void {
+    const recovery = session.plan?.recovery;
+    if (recovery) {
+      for (const operation of recovery.operations) {
+        if (operation.status === "Executing" || operation.status === "running" || operation.status === "verifying" || operation.status === "repairing" || operation.status === "rolling-back") {
+          operation.status = "interrupted";
+          operation.completedAt = new Date().toISOString();
+          operation.conflict = "Levi was interrupted during a build.";
+          operation.resumePointer = pointerForResume(session, operation);
+          operation.resumeEligibility = syncResumeEligibility(session, operation);
+          recovery.interruptedOperationIds = uniqueStrings([...recovery.interruptedOperationIds, operation.operationId]).slice(-100);
+          if (recovery.activeOperationId === operation.operationId) recovery.activeOperationId = undefined;
+        }
+      }
+    }
     for (const taskRun of session.plan?.taskRuns ?? []) {
       if (taskRun.status === "Running") {
         taskRun.status = "Interrupted";
@@ -778,7 +1152,10 @@ export class AgentExecutionService {
     }
     for (const terminalRun of session.plan?.terminalRuns ?? []) {
       if (terminalRun.status === "Running") {
+        this.terminalProcesses.get(terminalRun.actionId)?.kill();
+        this.terminalProcesses.delete(terminalRun.actionId);
         terminalRun.status = "Interrupted";
+        terminalRun.resultStatus = "cancelled";
         terminalRun.endedAt = new Date().toISOString();
         terminalRun.failureReason = "Terminal command was interrupted before Levi shut down.";
         terminalRun.updatedAt = terminalRun.endedAt;
@@ -802,6 +1179,13 @@ export class AgentExecutionService {
     }
   }
 
+  dispose(): void {
+    for (const child of this.terminalProcesses.values()) {
+      child.kill();
+    }
+    this.terminalProcesses.clear();
+  }
+
   private createVerificationReport(session: AgentSession, startedAt: string): AgentVerificationReport {
     const plan = session.plan;
     if (!plan) throw new Error("Agent session has no execution plan.");
@@ -811,7 +1195,7 @@ export class AgentExecutionService {
     const queue = ensureQueue(session);
     const problems = taskRuns.flatMap((run) => run.problems ?? []).slice(0, MAX_TASK_PROBLEMS);
     const taskOutputExcerpt = boundTerminalOutput(taskRuns.flatMap((run) => run.outputPreview ?? []).map((entry) => entry.text).join(""));
-    const terminalOutputExcerpt = boundTerminalOutput(terminalRuns.map((run) => run.outputPreview).join("\n"));
+    const terminalOutputExcerpt = boundTerminalOutput(terminalRuns.filter((run) => run.resultStatus !== "infrastructure-error").map((run) => run.outputPreview).join("\n"));
     const gitChangedFiles = uniqueStrings([
       ...(this.options.getChangedFiles?.() ?? []),
       ...gitRuns.flatMap((run) => run.affectedFiles ?? [])
@@ -840,12 +1224,20 @@ export class AgentExecutionService {
     }
     for (const terminalRun of terminalRuns) {
       if (terminalRun.status === "Failed" || (typeof terminalRun.exitCode === "number" && terminalRun.exitCode !== 0)) {
+        const affectedFiles = inferAffectedFilesFromTerminalOutput(`${terminalRun.stderrPreview}\n${terminalRun.outputPreview}`);
+        const infrastructureError = terminalRun.resultStatus === "infrastructure-error";
+        const details = terminalFailureDetails(terminalRun, session, affectedFiles);
         failures.push(createVerificationFailure({
           source: "terminal",
           severity: "error",
-          message: terminalRun.failureReason ?? `${terminalRun.executable} failed${terminalRun.exitCode === undefined ? "" : ` with exit code ${terminalRun.exitCode}`}.`,
-          text: `${terminalRun.executable} ${terminalRun.args.join(" ")}\n${terminalRun.stderrPreview}\n${terminalRun.outputPreview}`,
-          affectedFiles: [],
+          message: infrastructureError
+            ? terminalRun.failureReason ?? "Terminal execution failed."
+            : terminalRun.failureReason ?? `${terminalRun.executable} failed${terminalRun.exitCode === undefined ? "" : ` with exit code ${terminalRun.exitCode}`}.`,
+          text: infrastructureError
+            ? `Terminal execution failed while launching ${terminalRun.executable}.`
+            : JSON.stringify(details),
+          affectedFiles,
+          details,
           actionId: terminalRun.actionId,
           exitCode: terminalRun.exitCode
         }));
@@ -915,16 +1307,19 @@ export class AgentExecutionService {
   }
 
   private async createRepairPlan(session: AgentSession, report: AgentVerificationReport): Promise<AgentRepairQueueItem[]> {
-    const fallback = fallbackRepairs(report);
+    const fallback = await this.createFallbackRepairPlan(session, report);
+    if (fallback.some((repair) => repair.actions.length > 0)) return fallback;
+    if (hasOnlyInfrastructureFailures(report)) return fallback;
     if (!this.options.runtimeManager || !session.modelId) return fallback;
     try {
       const response: AIRuntimeInvocationResponse = await this.options.runtimeManager.chat({
         providerId: session.runtimeId,
         model: session.modelId,
+        timeoutMs: 300_000,
         messages: [
           {
             role: "system",
-            content: "Create a read-only repair plan for Levi. Return JSON only: {\"repairs\":[{\"problem\":\"...\",\"likelyCause\":\"...\",\"affectedFiles\":[\"src/file.ts\"],\"suggestedFix\":\"...\",\"confidence\":0.75,\"estimatedRisk\":\"low\",\"classification\":\"Type errors\"}]}. Do not claim to edit files, run commands, retry tasks, or perform Git operations."
+            content: "Create structured repair actions for Levi. Return JSON only: {\"repairs\":[{\"problem\":\"...\",\"likelyCause\":\"...\",\"affectedFiles\":[\"src/file.ts\"],\"suggestedFix\":\"...\",\"confidence\":0.75,\"estimatedRisk\":\"low\",\"classification\":\"Type errors\",\"actions\":[{\"type\":\"modify-file\",\"title\":\"Fix type error\",\"description\":\"...\",\"relativePath\":\"src/file.ts\",\"edits\":[{\"kind\":\"replace\",\"find\":\"old\",\"replace\":\"new\"}]}]}]}. Actions must be concrete and limited to create-file, modify-file, or create-folder unless fresh user approval is needed. Do not use Markdown or shell commands for code repairs."
           },
           {
             role: "user",
@@ -948,6 +1343,34 @@ export class AgentExecutionService {
     }
   }
 
+  private async createFallbackRepairPlan(session: AgentSession, report: AgentVerificationReport): Promise<AgentRepairQueueItem[]> {
+    const fallback = fallbackRepairs(report);
+    if (fallback.some((repair) => repair.actions.length > 0)) return fallback;
+    const workspaceRoot = this.options.getWorkspaceRoot();
+    if (!workspaceRoot) return fallback;
+    try {
+      const rootRealPath = await fs.realpath(workspaceRoot);
+      const snippets: string[] = [];
+      for (const relativePath of uniqueStrings(report.failures.flatMap((failure) => failure.affectedFiles)).slice(0, 5)) {
+        const normalized = normalizeSlashes(relativePath);
+        if (!normalized || normalized.split("/").includes("..") || path.isAbsolute(normalized)) continue;
+        const absolutePath = path.resolve(rootRealPath, normalized);
+        if (!isInsideRoot(rootRealPath, absolutePath)) continue;
+        const content = await fs.readFile(absolutePath, "utf8").catch(() => "");
+        if (content) snippets.push(`${normalized}\n${content.slice(0, MAX_REPAIR_TEXT)}`);
+      }
+      if (!snippets.length) return fallback;
+      const enrichedReport = {
+        ...report,
+        terminalOutputExcerpt: boundTerminalOutput(`${report.terminalOutputExcerpt}\n${snippets.join("\n")}`)
+      };
+      const enrichedFallback = fallbackRepairs(enrichedReport);
+      return enrichedFallback.some((repair) => repair.actions.length > 0) ? enrichedFallback : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
   private async createPreview(sessionId: string, action: AgentApprovalAction): Promise<AgentActionPreview> {
     const target = await this.resolvePath(action.relativePath);
     const now = new Date().toISOString();
@@ -963,9 +1386,9 @@ export class AgentExecutionService {
     }
 
     if (action.type === "create-file") {
-      await assertPathMissing(target.absolutePath, "Target file already exists.");
       proposedContent = validateTextContent(action.content, "File content");
-      const result = generateLocalDiff("", proposedContent);
+      originalContent = await existingCompatibleCreateFileContent(target, proposedContent);
+      const result = generateLocalDiff(originalContent ?? "", proposedContent);
       diff = result.lines.slice(0, MAX_DIFF_LINES);
       addedLineCount = result.addedLineCount;
       removedLineCount = result.removedLineCount;
@@ -987,7 +1410,7 @@ export class AgentExecutionService {
       await assertExistingKind(target.absolutePath, "file");
       await assertPathMissing(destination.absolutePath, "Destination file already exists.");
     } else if (action.type === "create-folder") {
-      await assertPathMissing(target.absolutePath, "Target folder already exists.");
+      await assertCompatibleCreateFolderTarget(target.absolutePath);
     } else if (action.type === "rename-folder") {
       if (!destination) throw new Error("Rename folder actions require a destination path.");
       await assertExistingKind(target.absolutePath, "folder");
@@ -1003,6 +1426,7 @@ export class AgentExecutionService {
       actionType: action.type,
       targetPath: target.relativePath,
       destinationPath: destination?.relativePath,
+      alreadySatisfied: (action.type === "create-file" && originalContent !== undefined) || (action.type === "create-folder" && await pathIsDirectory(target.absolutePath)),
       summary: previewSummary(action),
       riskLevel: riskFor(action),
       destructive: action.type === "delete-file" || action.type === "rename-file" || action.type === "rename-folder",
@@ -1018,6 +1442,13 @@ export class AgentExecutionService {
   private async applyAction(action: AgentApprovalAction, preview: AgentActionPreview): Promise<UndoRecord> {
     const target = await this.resolvePath(preview.targetPath);
     if (action.type === "create-file") {
+      if (preview.alreadySatisfied) {
+        const current = await readTextFile(target.absolutePath, target.rootRealPath);
+        if (hashContent(current) !== hashContent(preview.proposedContent ?? "")) {
+          throw new Error("Target file already exists with different content.");
+        }
+        return { kind: "create-file", actionId: action.id, relativePath: target.relativePath, absolutePath: target.absolutePath, appliedHash: hashContent(current), preExisting: true, timestamp: new Date().toISOString() };
+      }
       await assertPathMissing(target.absolutePath, "Target file already exists.");
       await fs.mkdir(path.dirname(target.absolutePath), { recursive: true });
       await writeAtomically(target.absolutePath, preview.proposedContent ?? "");
@@ -1025,7 +1456,7 @@ export class AgentExecutionService {
       if (hashContent(written) !== hashContent(preview.proposedContent ?? "")) {
         throw new Error("Post-write verification failed.");
       }
-      return { kind: "create-file", actionId: action.id, relativePath: target.relativePath, absolutePath: target.absolutePath, timestamp: new Date().toISOString() };
+      return { kind: "create-file", actionId: action.id, relativePath: target.relativePath, absolutePath: target.absolutePath, appliedHash: hashContent(written), timestamp: new Date().toISOString() };
     }
     if (action.type === "modify-file") {
       const current = await readTextFile(target.absolutePath, target.rootRealPath);
@@ -1068,6 +1499,8 @@ export class AgentExecutionService {
     if (action.type === "rename-file" || action.type === "rename-folder") {
       if (!preview.destinationPath) throw new Error("Rename action has no destination path.");
       const destination = await this.resolvePath(preview.destinationPath);
+      const previousContent = action.type === "rename-file" ? await readTextFile(target.absolutePath, target.rootRealPath) : undefined;
+      const previousHash = previousContent === undefined ? undefined : hashContent(previousContent);
       await assertPathMissing(destination.absolutePath, "Destination already exists.");
       await assertExistingKind(target.absolutePath, action.type === "rename-file" ? "file" : "folder");
       await fs.mkdir(path.dirname(destination.absolutePath), { recursive: true });
@@ -1079,10 +1512,17 @@ export class AgentExecutionService {
         destinationRelativePath: destination.relativePath,
         absolutePath: target.absolutePath,
         destinationAbsolutePath: destination.absolutePath,
+        previousContent,
+        previousHash,
+        appliedHash: previousHash,
         timestamp: new Date().toISOString()
       };
     }
     if (action.type === "create-folder") {
+      if (preview.alreadySatisfied) {
+        await assertExistingKind(target.absolutePath, "folder");
+        return { kind: "create-folder", actionId: action.id, relativePath: target.relativePath, absolutePath: target.absolutePath, preExisting: true, timestamp: new Date().toISOString() };
+      }
       await assertPathMissing(target.absolutePath, "Target folder already exists.");
       await fs.mkdir(path.dirname(target.absolutePath), { recursive: true });
       await fs.mkdir(target.absolutePath);
@@ -1091,15 +1531,276 @@ export class AgentExecutionService {
     throw new Error("Agent action is not supported by the file executor.");
   }
 
+  private async beginFileOperation(session: AgentSession, action: AgentApprovalAction, preview: AgentActionPreview): Promise<AgentOperationLedgerEntry> {
+    const recovery = ensureRecovery(session);
+    const snapshot = snapshotFromPreview(preview);
+    const existing = recovery.activeOperationId
+      ? recovery.operations.find((item) => item.operationId === recovery.activeOperationId && item.planId === session.plan?.id && item.status !== "rolled-back")
+      : undefined;
+    if (existing) {
+      existing.status = "running";
+      existing.actionId = existing.actionId ?? action.id;
+      existing.actionType = existing.actionType ?? action.type;
+      existing.approvedScope = uniqueStrings([...existing.approvedScope, preview.targetPath, preview.destinationPath ?? "", ...(action.affectedFiles ?? [])]).filter(Boolean);
+      existing.actionsAttempted = uniqueStrings([...existing.actionsAttempted, action.id]);
+      appendSnapshot(existing, snapshot);
+      appendOperationFileLists(existing, action, preview);
+      return existing;
+    }
+    const gitBefore = await this.safeGitStatus();
+    const now = new Date().toISOString();
+    const workspaceRoot = this.options.getWorkspaceRoot() ?? undefined;
+    const operation: AgentOperationLedgerEntry = {
+      operationId: randomUUID(),
+      sessionId: session.id,
+      planId: session.plan?.id,
+      workspaceRoot,
+      actionId: action.id,
+      actionType: action.type,
+      title: session.plan?.objective ?? action.title,
+      status: "running",
+      userRequest: session.plan?.objective ?? "",
+      approvedScope: uniqueStrings([preview.targetPath, preview.destinationPath ?? "", ...(action.affectedFiles ?? [])]).filter(Boolean),
+      actionsAttempted: [action.id],
+      actionsCompleted: [],
+      actionsFailed: [],
+      filesCreated: (action.type === "create-file" || action.type === "create-folder") && !preview.alreadySatisfied ? [preview.targetPath] : [],
+      filesModified: action.type === "modify-file" ? [preview.targetPath] : [],
+      filesDeleted: action.type === "delete-file" ? [preview.targetPath] : [],
+      filesRenamed: preview.destinationPath && (action.type === "rename-file" || action.type === "rename-folder") ? [{ from: preview.targetPath, to: preview.destinationPath }] : [],
+      commandsExecuted: [],
+      repairAttempts: session.plan?.repairQueue?.filter((repair) => repair.status === "Executing" || repair.status === "Completed").length ?? 0,
+      gitHeadBefore: gitBefore?.headCommit,
+      gitBranchBefore: gitBefore?.currentBranch,
+      gitDirtyBefore: gitBefore ? gitBefore.entries.length > 0 : undefined,
+      filesBefore: [snapshot],
+      filesAfter: [],
+      snapshots: [snapshot],
+      startedAt: now
+    };
+    recovery.operations = [...recovery.operations, operation].slice(-100);
+    recovery.activeOperationId = operation.operationId;
+    return operation;
+  }
+
+  private async completeFileOperation(
+    session: AgentSession,
+    operation: AgentOperationLedgerEntry,
+    status: AgentOperationLedgerEntry["status"],
+    undo?: UndoRecord,
+    error?: string
+  ): Promise<void> {
+    const recovery = ensureRecovery(session);
+    const current = recovery.operations.find((item) => item.operationId === operation.operationId);
+    if (!current) return;
+    const gitAfter = await this.safeGitStatus();
+    const completedAt = new Date().toISOString();
+    current.status = status === "Failed" ? "blocked" : hasPendingFileActions(session, current) ? "running" : "completed";
+    current.completedAt = current.status === "completed" || current.status === "blocked" ? completedAt : undefined;
+    current.gitHeadAfter = gitAfter?.headCommit;
+    current.gitBranchAfter = gitAfter?.currentBranch;
+    current.gitDirtyAfter = gitAfter ? gitAfter.entries.length > 0 : undefined;
+    if (status === "Completed" && undo) {
+      current.actionsCompleted = uniqueStrings([...current.actionsCompleted, undo.actionId]);
+      current.filesAfter = current.snapshots;
+    }
+    if (status === "Failed") {
+      current.actionsFailed = uniqueStrings([...current.actionsFailed, operation.actionId ?? ""]);
+      current.conflict = error;
+    }
+    if (undo) {
+      current.snapshots = current.snapshots.map((snapshot) => snapshot.relativePath === undo.relativePath ? snapshotWithUndo(snapshot, undo) : snapshot);
+      current.filesBefore = current.snapshots;
+      current.filesAfter = current.snapshots;
+    }
+    if (current.status === "completed" || current.status === "blocked") {
+      recovery.activeOperationId = undefined;
+    }
+  }
+
+  private async evaluateResumeEligibility(session: AgentSession, operation: AgentOperationLedgerEntry): Promise<AgentResumeEligibility> {
+    const pointer = pointerForResume(session, operation);
+    const safeActionIds: string[] = [];
+    const blockedActionIds: string[] = [];
+    let reason: string | undefined;
+    for (const actionId of pointer.remainingActionIds) {
+      const action = session.plan?.approvals.find((item) => item.id === actionId);
+      if (!action) {
+        blockedActionIds.push(actionId);
+        reason = "Remaining action requires missing snapshot state.";
+        break;
+      }
+      const result = await this.evaluateResumeAction(session, operation, action);
+      if (result.safe) {
+        safeActionIds.push(actionId);
+      } else {
+        blockedActionIds.push(actionId);
+        reason = result.reason;
+        break;
+      }
+    }
+    return {
+      available: pointer.remainingActionIds.length > 0 && blockedActionIds.length === 0,
+      reason: blockedActionIds.length ? reason : pointer.remainingActionIds.length ? undefined : "No remaining actions to resume.",
+      safeActionIds,
+      blockedActionIds,
+      completed: operation.actionsCompleted.length,
+      remaining: pointer.remainingActionIds.length,
+      evaluatedAt: new Date().toISOString()
+    };
+  }
+
+  private async evaluateResumeAction(
+    session: AgentSession,
+    operation: AgentOperationLedgerEntry,
+    action: AgentApprovalAction
+  ): Promise<{ safe: true; preview?: AgentActionPreview; terminalPreview?: AgentTerminalPreview } | { safe: false; reason: string }> {
+    if (action.status !== "Approved") return { safe: false, reason: "Remaining action requires approval." };
+    if (action.type === "delete-file" || action.type === "git-operation" || action.type.startsWith("browser-")) {
+      return { safe: false, reason: "Remaining action requires fresh approval." };
+    }
+    if (SAFE_RESUME_FILE_ACTIONS.has(action.type)) {
+      try {
+        const preview = await this.createPreview(session.id, action);
+        const snapshot = snapshotForAction(operation, action.id, preview.targetPath, preview.destinationPath);
+        const staleReason = snapshot ? await this.validateSnapshotPrecondition(snapshot, preview) : undefined;
+        if (staleReason) return { safe: false, reason: staleReason };
+        return { safe: true, preview };
+      } catch (error) {
+        return { safe: false, reason: resumeReasonFromError(error) };
+      }
+    }
+    if (action.type === "run-terminal-command") {
+      try {
+        const preview = await this.createTerminalPreview(session.id, action);
+        if (!isSafeResumeTerminalPreview(preview)) return { safe: false, reason: "Remaining command requires approval." };
+        const prior = latestTerminalRun(session, action.id);
+        if (prior && prior.status !== "Interrupted" && prior.status !== "Cancelled" && prior.status !== "Failed") {
+          return { safe: false, reason: "Command already ran or is still running." };
+        }
+        return { safe: true, terminalPreview: preview };
+      } catch (error) {
+        return { safe: false, reason: resumeReasonFromError(error) };
+      }
+    }
+    return { safe: false, reason: "Remaining action requires fresh approval." };
+  }
+
+  private async validateSnapshotPrecondition(snapshot: AgentRecoveredFileSnapshot, preview: AgentActionPreview): Promise<string | undefined> {
+    if (preview.actionType === "modify-file" && snapshot.beforeHash && hashContent(preview.originalContent ?? "") !== snapshot.beforeHash) {
+      return "File changed since interruption.";
+    }
+    if (preview.actionType === "create-file" && snapshot.afterHash) {
+      const target = await this.resolvePath(preview.targetPath);
+      try {
+        const current = await readTextFile(target.absolutePath, target.rootRealPath);
+        if (hashContent(current) === snapshot.afterHash) return undefined;
+        return "File changed since interruption.";
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+        return resumeReasonFromError(error);
+      }
+    }
+    if ((preview.actionType === "rename-file" || preview.actionType === "rename-folder") && snapshot.destinationRelativePath !== preview.destinationPath) {
+      return "Rename target changed since interruption.";
+    }
+    return undefined;
+  }
+
+  private async persistResumeConflict(session: AgentSession, operation: AgentOperationLedgerEntry, reason: string): Promise<void> {
+    operation.status = "resume-conflict";
+    operation.conflict = reason;
+    operation.resumeEligibility = {
+      available: false,
+      reason,
+      safeActionIds: [],
+      blockedActionIds: operation.resumePointer?.currentActionId ? [operation.resumePointer.currentActionId] : [],
+      completed: operation.actionsCompleted.length,
+      remaining: operation.resumePointer?.remainingActionIds.length ?? 0,
+      evaluatedAt: new Date().toISOString()
+    };
+    if (session.plan?.recovery?.activeOperationId === operation.operationId) session.plan.recovery.activeOperationId = undefined;
+    session.status = "Error";
+    session.error = reason;
+    await this.touch(session);
+  }
+
+  private async waitForTerminalResume(session: AgentSession, actionId: string): Promise<AgentTerminalRunState> {
+    const started = Date.now();
+    while (Date.now() - started < 30_000) {
+      const run = latestTerminalRun(session, actionId);
+      if (run && run.status !== "Running") return run;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error("Resumed command did not finish within the bounded verification window.");
+  }
+
+  private async safeGitStatus(): Promise<GitRepositoryStatus | undefined> {
+    try {
+      return await this.options.gitService?.status();
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async rollbackOperation(
+    session: AgentSession,
+    operation: AgentOperationLedgerEntry,
+    workspaceRoot: string,
+    choices: Record<string, AgentRollbackChoice> | undefined
+  ): Promise<string[]> {
+    const recovery = ensureRecovery(session);
+    const current = recovery.operations.find((item) => item.operationId === operation.operationId);
+    if (!current) throw new Error("Agent operation was not found.");
+    current.status = "rolling-back";
+    current.rollbackConflicts = [];
+    current.conflict = undefined;
+    await this.options.persistAndEmit();
+    const plan = await buildRollbackPlan(current, workspaceRoot, choices);
+    if (plan.conflicts.length) {
+      current.status = "rollback-conflict";
+      current.rollbackConflicts = plan.conflicts;
+      current.conflict = "This file changed after Levi's operation.";
+      throw new Error("This file changed after Levi's operation.");
+    }
+    try {
+      for (const apply of plan.apply) await apply();
+      const gitAfter = await this.safeGitStatus();
+      current.status = "rolled-back";
+      current.completedAt = new Date().toISOString();
+      current.gitHeadAfter = gitAfter?.headCommit;
+      current.gitBranchAfter = gitAfter?.currentBranch;
+      current.gitDirtyAfter = gitAfter ? gitAfter.entries.length > 0 : undefined;
+      current.rollbackConflicts = [];
+      current.conflict = undefined;
+      if (recovery.activeOperationId === current.operationId) recovery.activeOperationId = undefined;
+      return plan.restoredPaths;
+    } catch (error) {
+      current.status = "rollback-failed";
+      current.conflict = errorMessage(error);
+      throw error;
+    }
+  }
+
   private async undoRecord(undo: UndoRecord): Promise<void> {
     if (undo.kind === "create-file") {
+      if (undo.preExisting) return;
+      try {
+        const current = await readTextFile(undo.absolutePath, path.dirname(undo.absolutePath));
+        if (undo.appliedHash && hashContent(current) !== undo.appliedHash) {
+          throw new Error("This file changed after Levi's operation.");
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+        throw error;
+      }
       await fs.unlink(undo.absolutePath);
       return;
     }
     if (undo.kind === "modify-file") {
       const current = await readTextFile(undo.absolutePath, path.dirname(undo.absolutePath));
       if (undo.appliedHash && hashContent(current) !== undo.appliedHash) {
-        throw new Error("Cannot undo because the file changed after the agent applied it.");
+        throw new Error("This file changed after Levi's operation.");
       }
       await writeAtomically(undo.absolutePath, undo.previousContent);
       const restored = await readTextFile(undo.absolutePath, path.dirname(undo.absolutePath));
@@ -1116,11 +1817,18 @@ export class AgentExecutionService {
     }
     if (undo.kind === "rename-file" || undo.kind === "rename-folder") {
       await assertPathMissing(undo.absolutePath, "Cannot undo rename because the original path now exists.");
+      if (undo.kind === "rename-file" && undo.appliedHash) {
+        const current = await readTextFile(undo.destinationAbsolutePath, path.dirname(undo.destinationAbsolutePath));
+        if (hashContent(current) !== undo.appliedHash) {
+          throw new Error("This file changed after Levi's operation.");
+        }
+      }
       await fs.mkdir(path.dirname(undo.absolutePath), { recursive: true });
       await fs.rename(undo.destinationAbsolutePath, undo.absolutePath);
       return;
     }
     if (undo.kind === "create-folder") {
+      if (undo.preExisting) return;
       await fs.rmdir(undo.absolutePath);
     }
   }
@@ -1324,16 +2032,74 @@ export class AgentExecutionService {
     return preview;
   }
 
+  private startDirectTerminalProcess(session: AgentSession, terminalRun: AgentTerminalRunState, preview: AgentTerminalPreview): void {
+    let completed = false;
+    try {
+      const launch = resolveDirectProcessLaunch(preview);
+      const env = getEffectiveDeveloperEnvironment();
+      const executable = resolveDeveloperExecutable(launch.executable, env);
+      const child = spawn(executable, launch.args, {
+        cwd: preview.cwd,
+        env,
+        shell: false,
+        windowsHide: true
+      });
+      this.terminalProcesses.set(terminalRun.actionId, child);
+      child.stdout.on("data", (chunk) => {
+        this.recordDirectTerminalData(session, terminalRun, String(chunk), "stdout");
+      });
+      child.stderr.on("data", (chunk) => {
+        this.recordDirectTerminalData(session, terminalRun, String(chunk), "stderr");
+      });
+      child.on("error", (error) => {
+        if (completed) return;
+        completed = true;
+        this.terminalProcesses.delete(terminalRun.actionId);
+        void this.recordTerminalInfrastructureFailure(session, terminalRun, error);
+      });
+      child.on("close", (exitCode, signal) => {
+        if (completed) return;
+        completed = true;
+        this.terminalProcesses.delete(terminalRun.actionId);
+        const code = typeof exitCode === "number" ? exitCode : signal ? 1 : 0;
+        void this.recordTerminalCompletion(session, terminalRun, code);
+      });
+    } catch (error) {
+      void this.recordTerminalInfrastructureFailure(session, terminalRun, error);
+    }
+  }
+
+  private recordDirectTerminalData(session: AgentSession, terminalRun: AgentTerminalRunState, data: string, stream: "stdout" | "stderr"): void {
+    if (terminalRun.status !== "Running") return;
+    terminalRun.outputPreview = boundTerminalOutput(`${terminalRun.outputPreview}${data}`);
+    if (stream === "stderr") {
+      terminalRun.stderrPreview = boundTerminalOutput(`${terminalRun.stderrPreview}${data}`);
+    }
+    terminalRun.updatedAt = new Date().toISOString();
+    void this.touch(session);
+    this.options.emitTerminal?.(session.id, terminalRun.actionId, terminalRun);
+  }
+
   private async recordTerminalCompletion(session: AgentSession, terminalRun: AgentTerminalRunState, exitCode: number, forcedStatus?: AgentTerminalRunState["status"]): Promise<void> {
     if (terminalRun.status !== "Running" && forcedStatus !== "Cancelled") return;
+    this.terminalProcesses.delete(terminalRun.actionId);
     terminalRun.exitCode = exitCode;
     terminalRun.endedAt = new Date().toISOString();
     terminalRun.durationMs = terminalRun.startedAt ? Math.max(0, Date.parse(terminalRun.endedAt) - Date.parse(terminalRun.startedAt)) : undefined;
     terminalRun.status = forcedStatus ?? (exitCode === 0 ? "Succeeded" : "Failed");
+    terminalRun.resultStatus = terminalRun.status === "Cancelled" ? "cancelled" : exitCode === 0 ? "completed" : "failed";
     if (terminalRun.status === "Failed") {
-      terminalRun.failureReason = `Terminal command failed with exit code ${exitCode}.`;
-      session.status = "Error";
-      session.error = terminalRun.failureReason;
+      const infrastructureMessage = terminalExitInfrastructureMessage(terminalRun);
+      if (infrastructureMessage) {
+        terminalRun.resultStatus = "infrastructure-error";
+        terminalRun.failureReason = infrastructureMessage;
+        session.status = "Error";
+        session.error = infrastructureMessage;
+      } else {
+        terminalRun.failureReason = `Terminal command failed with exit code ${exitCode}.`;
+        session.status = "Ready";
+        session.error = undefined;
+      }
     } else {
       session.status = "Ready";
       terminalRun.failureReason = terminalRun.status === "Cancelled" ? "Terminal command was cancelled." : undefined;
@@ -1345,13 +2111,32 @@ export class AgentExecutionService {
     this.options.emitTerminal?.(session.id, terminalRun.actionId, terminalRun);
   }
 
+  private async recordTerminalInfrastructureFailure(session: AgentSession, terminalRun: AgentTerminalRunState, error: unknown): Promise<void> {
+    if (terminalRun.status !== "Running") return;
+    this.terminalProcesses.delete(terminalRun.actionId);
+    const message = `Terminal execution failed: ${errorMessage(error)}`;
+    terminalRun.status = "Failed";
+    terminalRun.resultStatus = "infrastructure-error";
+    terminalRun.exitCode = undefined;
+    terminalRun.endedAt = new Date().toISOString();
+    terminalRun.durationMs = terminalRun.startedAt ? Math.max(0, Date.parse(terminalRun.endedAt) - Date.parse(terminalRun.startedAt)) : undefined;
+    terminalRun.failureReason = message;
+    terminalRun.verification = await this.createTerminalVerification(session, terminalRun);
+    terminalRun.updatedAt = terminalRun.endedAt;
+    session.status = "Error";
+    session.error = message;
+    session.plan!.progress = progressFromSession(session);
+    await this.touch(session);
+    this.options.emitTerminal?.(session.id, terminalRun.actionId, terminalRun);
+  }
+
   private async createTerminalVerification(session: AgentSession, terminalRun: AgentTerminalRunState): Promise<AgentTerminalVerificationSummary> {
     const outputExcerpt = terminalRun.outputPreview.slice(-MAX_TERMINAL_OUTPUT_CHARS);
     const warnings = linesMatching(outputExcerpt, /\b(warn|warning|deprecated)\b/i);
     const errors = linesMatching(`${terminalRun.stderrPreview}\n${outputExcerpt}`, /\b(error|failed|exception)\b/i);
     const fallback = `${terminalRun.executable} ${terminalRun.status.toLowerCase()}${terminalRun.exitCode === undefined ? "" : ` with exit code ${terminalRun.exitCode}`}.`;
     let summary = fallback;
-    if (this.options.runtimeManager && session.modelId) {
+    if (this.options.runtimeManager && session.modelId && terminalRun.resultStatus !== "infrastructure-error") {
       try {
         const response: AIRuntimeInvocationResponse = await this.options.runtimeManager.chat({
           providerId: session.runtimeId,
@@ -1503,7 +2288,39 @@ function validateExecuteRequest(value: unknown): AgentExecuteRequest {
 
 function validateUndoRequest(value: unknown): AgentUndoRequest {
   if (!value || typeof value !== "object") throw new Error("Agent undo request is invalid.");
-  return { sessionId: validateId((value as Record<string, unknown>).sessionId, "sessionId") };
+  const record = value as Record<string, unknown>;
+  return { sessionId: validateId(record.sessionId, "sessionId"), choices: validateRollbackChoices(record.choices) };
+}
+
+function validateRestoreOperationRequest(value: unknown): AgentRestoreOperationRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent restore request is invalid.");
+  const record = value as Record<string, unknown>;
+  return {
+    sessionId: validateId(record.sessionId, "sessionId"),
+    operationId: validateId(record.operationId, "operationId"),
+    choices: validateRollbackChoices(record.choices)
+  };
+}
+
+function validateResumeOperationRequest(value: unknown): AgentResumeOperationRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent resume request is invalid.");
+  const record = value as Record<string, unknown>;
+  return {
+    sessionId: validateId(record.sessionId, "sessionId"),
+    operationId: validateId(record.operationId, "operationId")
+  };
+}
+
+function validateRollbackChoices(value: unknown): Record<string, AgentRollbackChoice> | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Agent rollback choices are invalid.");
+  const choices: Record<string, AgentRollbackChoice> = {};
+  for (const [rawPath, rawChoice] of Object.entries(value as Record<string, unknown>).slice(0, 100)) {
+    const relativePath = validateRelativePath(rawPath);
+    if (rawChoice !== "keep-current" && rawChoice !== "restore-snapshot") throw new Error("Agent rollback choice is invalid.");
+    choices[relativePath] = rawChoice;
+  }
+  return choices;
 }
 
 function validateQueueRequest(value: unknown): AgentQueueRequest {
@@ -1657,6 +2474,17 @@ function validateRepairStatusRequest(value: unknown): AgentRepairStatusRequest {
   };
 }
 
+function validateRepairExecuteRequest(value: unknown): AgentRepairExecuteRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent repair execute request is invalid.");
+  const record = value as Record<string, unknown>;
+  return {
+    sessionId: validateId(record.sessionId, "sessionId"),
+    reportId: record.reportId === undefined ? undefined : validateId(record.reportId, "reportId"),
+    repairId: record.repairId === undefined ? undefined : validateId(record.repairId, "repairId"),
+    attempt: Number.isInteger(record.attempt) ? record.attempt as number : undefined
+  };
+}
+
 function validateId(value: unknown, field: string): string {
   if (typeof value !== "string" || value.length === 0 || value.length > 140 || value.includes("\0")) throw new Error(`${field} is invalid.`);
   return value;
@@ -1754,6 +2582,439 @@ function ensureQueueItem(session: AgentSession, action: AgentApprovalAction): Ag
   const item = ensureQueue(session).find((candidate) => candidate.actionId === action.id);
   if (!item) throw new Error("Agent execution queue item was not found.");
   return item;
+}
+
+function ensureRecovery(session: AgentSession): NonNullable<NonNullable<AgentSession["plan"]>["recovery"]> {
+  if (!session.plan) throw new Error("Agent session has no execution plan.");
+  session.plan.recovery = session.plan.recovery ?? { schemaVersion: 1, operations: [], interruptedOperationIds: [] };
+  session.plan.recovery.operations = session.plan.recovery.operations.slice(-100);
+  session.plan.recovery.interruptedOperationIds = session.plan.recovery.interruptedOperationIds.slice(-100);
+  return session.plan.recovery;
+}
+
+function appendSnapshot(operation: AgentOperationLedgerEntry, snapshot: AgentRecoveredFileSnapshot): void {
+  const key = snapshot.destinationRelativePath ? `${snapshot.relativePath}->${snapshot.destinationRelativePath}` : snapshot.relativePath;
+  const existingIndex = operation.snapshots.findIndex((item) => (item.destinationRelativePath ? `${item.relativePath}->${item.destinationRelativePath}` : item.relativePath) === key);
+  if (existingIndex >= 0) {
+    operation.snapshots[existingIndex] = {
+      ...snapshot,
+      beforeContent: operation.snapshots[existingIndex].beforeContent,
+      beforeHash: operation.snapshots[existingIndex].beforeHash,
+      kind: operation.snapshots[existingIndex].kind
+    };
+  } else {
+    operation.snapshots.push(snapshot);
+  }
+  operation.filesBefore = operation.snapshots;
+}
+
+function appendOperationFileLists(operation: AgentOperationLedgerEntry, action: AgentApprovalAction, preview: AgentActionPreview): void {
+  if ((action.type === "create-file" || action.type === "create-folder") && !preview.alreadySatisfied) operation.filesCreated = uniqueStrings([...operation.filesCreated, preview.targetPath]);
+  if (action.type === "modify-file") operation.filesModified = uniqueStrings([...operation.filesModified, preview.targetPath]);
+  if (action.type === "delete-file") operation.filesDeleted = uniqueStrings([...operation.filesDeleted, preview.targetPath]);
+  if (preview.destinationPath && (action.type === "rename-file" || action.type === "rename-folder")) {
+    operation.filesRenamed = [...operation.filesRenamed.filter((item) => item.from !== preview.targetPath), { from: preview.targetPath, to: preview.destinationPath }];
+  }
+}
+
+function hasPendingFileActions(session: AgentSession, operation: AgentOperationLedgerEntry): boolean {
+  const queue = session.plan?.executionQueue ?? [];
+  return queue.some((item) =>
+    SUPPORTED_ACTIONS.has(item.type)
+    && item.status !== "Completed"
+    && item.status !== "Rejected"
+    && item.status !== "Cancelled"
+    && !operation.actionsFailed.includes(item.actionId)
+  );
+}
+
+function pointerForResume(session: AgentSession, operation: AgentOperationLedgerEntry) {
+  const queue = session.plan?.executionQueue ?? [];
+  const actionIds = (session.plan?.approvals ?? [])
+    .filter((action) => action.status !== "Rejected" && action.status !== "Cancelled")
+    .filter((action) => {
+      const item = queue.find((candidate) => candidate.actionId === action.id);
+      return item?.status !== "Rejected" && item?.status !== "Cancelled";
+    })
+    .map((action) => action.id);
+  const attempted = new Set(operation.actionsAttempted);
+  const completed = new Set(operation.actionsCompleted);
+  const failed = new Set(operation.actionsFailed);
+  const operationStarted = new Set([...operation.actionsAttempted, ...operation.actionsCompleted, ...operation.actionsFailed]);
+  const startIndex = actionIds.findIndex((actionId) => operationStarted.has(actionId));
+  const remainingActionIds = actionIds
+    .slice(startIndex >= 0 ? startIndex : 0)
+    .filter((actionId) => !completed.has(actionId) && !failed.has(actionId))
+    .filter((actionId) => attempted.has(actionId) || operationStarted.size > 0);
+  return {
+    lastCompletedActionId: operation.actionsCompleted[operation.actionsCompleted.length - 1],
+    currentActionId: remainingActionIds[0],
+    remainingActionIds
+  };
+}
+
+function syncResumeEligibility(session: AgentSession, operation: AgentOperationLedgerEntry): AgentResumeEligibility {
+  const pointer = pointerForResume(session, operation);
+  const safeActionIds: string[] = [];
+  const blockedActionIds: string[] = [];
+  let reason: string | undefined;
+  for (const actionId of pointer.remainingActionIds) {
+    const action = session.plan?.approvals.find((item) => item.id === actionId);
+    if (!action) {
+      blockedActionIds.push(actionId);
+      reason = "Remaining action requires missing snapshot state.";
+      break;
+    }
+    const safe = action.status === "Approved" && (
+      SAFE_RESUME_FILE_ACTIONS.has(action.type)
+      || (action.type === "run-terminal-command" && isLikelySafeResumeTerminalAction(action))
+    );
+    if (safe) {
+      safeActionIds.push(actionId);
+    } else {
+      blockedActionIds.push(actionId);
+      reason = action.status !== "Approved" ? "Remaining action requires approval." : "Remaining action requires fresh approval.";
+      break;
+    }
+  }
+  return {
+    available: pointer.remainingActionIds.length > 0 && blockedActionIds.length === 0,
+    reason: blockedActionIds.length ? reason : pointer.remainingActionIds.length ? undefined : "No remaining actions to resume.",
+    safeActionIds,
+    blockedActionIds,
+    completed: operation.actionsCompleted.length,
+    remaining: pointer.remainingActionIds.length,
+    evaluatedAt: new Date().toISOString()
+  };
+}
+
+function isLikelySafeResumeTerminalAction(action: AgentApprovalAction): boolean {
+  try {
+    const command = validateTerminalCommand(action);
+    const text = `${command.executable} ${command.args.join(" ")}`.toLowerCase();
+    return SAFE_TERMINAL_EXECUTABLES.has(path.basename(command.executable).toLowerCase())
+      && SAFE_RESUME_COMMAND_WORDS.test(text)
+      && !UNSAFE_RESUME_COMMAND_WORDS.test(text);
+  } catch {
+    return false;
+  }
+}
+
+function snapshotForAction(operation: AgentOperationLedgerEntry, actionId: string, relativePath: string, destinationPath?: string): AgentRecoveredFileSnapshot | undefined {
+  return operation.snapshots.find((snapshot) =>
+    snapshot.relativePath === relativePath
+    || snapshot.destinationRelativePath === relativePath
+    || (destinationPath !== undefined && snapshot.destinationRelativePath === destinationPath)
+    || operation.actionId === actionId
+  );
+}
+
+function latestTerminalRun(session: AgentSession, actionId: string): AgentTerminalRunState | undefined {
+  return [...(session.plan?.terminalRuns ?? [])].reverse().find((run) => run.actionId === actionId);
+}
+
+function isSafeResumeTerminalPreview(preview: AgentTerminalPreview): boolean {
+  const command = `${preview.executable} ${preview.args.join(" ")}`.toLowerCase();
+  if (UNSAFE_RESUME_COMMAND_WORDS.test(command)) return false;
+  if (!SAFE_RESUME_COMMAND_WORDS.test(command)) return false;
+  return SAFE_TERMINAL_EXECUTABLES.has(path.basename(preview.executable).toLowerCase());
+}
+
+function appendCommandLedger(commands: AgentCommandLedgerEntry[], preview: AgentTerminalPreview, status: AgentCommandLedgerEntry["status"]): AgentCommandLedgerEntry[] {
+  const next = commands.filter((command) => command.actionId !== preview.actionId || command.commandId !== preview.commandId);
+  next.push({
+    actionId: preview.actionId,
+    commandId: preview.commandId,
+    executable: preview.executable,
+    args: [...preview.args],
+    cwd: preview.cwd,
+    status
+  });
+  return next.slice(-40);
+}
+
+function commandLedgerStatus(run: AgentTerminalRunState): AgentCommandLedgerEntry["status"] {
+  if (run.status === "Succeeded") return "succeeded";
+  if (run.status === "Cancelled") return "cancelled";
+  if (run.status === "Interrupted") return "interrupted";
+  return "failed";
+}
+
+function resumeReasonFromError(error: unknown): string {
+  const message = errorMessage(error);
+  if (/changed/i.test(message)) return "File changed since interruption.";
+  if (/approval/i.test(message)) return "Remaining action requires approval.";
+  if (/workspace|outside|escapes/i.test(message)) return "Workspace no longer matches.";
+  if (/exists|already/i.test(message)) return message;
+  return message || "Resume Where Safe is unavailable.";
+}
+
+function snapshotFromPreview(preview: AgentActionPreview): AgentRecoveredFileSnapshot {
+  if (preview.actionType === "create-file") {
+    if (preview.alreadySatisfied) {
+      return {
+        relativePath: preview.targetPath,
+        kind: "file",
+        beforeContent: preview.originalContent ?? "",
+        beforeHash: hashContent(preview.originalContent ?? ""),
+        afterContent: preview.proposedContent ?? "",
+        afterHash: hashContent(preview.proposedContent ?? "")
+      };
+    }
+    return {
+      relativePath: preview.targetPath,
+      kind: "missing",
+      createdKind: "file",
+      afterContent: preview.proposedContent ?? "",
+      afterHash: hashContent(preview.proposedContent ?? "")
+    };
+  }
+  if (preview.actionType === "modify-file") {
+    return {
+      relativePath: preview.targetPath,
+      kind: "file",
+      beforeContent: preview.originalContent ?? "",
+      beforeHash: hashContent(preview.originalContent ?? ""),
+      afterContent: preview.proposedContent ?? "",
+      afterHash: hashContent(preview.proposedContent ?? "")
+    };
+  }
+  if (preview.actionType === "delete-file") {
+    return {
+      relativePath: preview.targetPath,
+      kind: "file",
+      beforeContent: preview.originalContent ?? "",
+      beforeHash: hashContent(preview.originalContent ?? "")
+    };
+  }
+  if (preview.actionType === "create-folder" && !preview.alreadySatisfied) {
+    return {
+      relativePath: preview.targetPath,
+      kind: "missing",
+      createdKind: "folder"
+    };
+  }
+  return {
+    relativePath: preview.targetPath,
+    destinationRelativePath: preview.destinationPath,
+    kind: preview.actionType === "rename-folder" || preview.actionType === "create-folder" ? "folder" : "file"
+  };
+}
+
+function snapshotWithUndo(snapshot: AgentRecoveredFileSnapshot, undo: UndoRecord): AgentRecoveredFileSnapshot {
+  if (undo.kind === "create-file") return { ...snapshot, afterHash: undo.appliedHash };
+  if (undo.kind === "modify-file") return { ...snapshot, beforeContent: undo.previousContent, beforeHash: undo.previousHash, afterHash: undo.appliedHash };
+  if (undo.kind === "delete-file") return { ...snapshot, beforeContent: undo.previousContent, beforeHash: undo.previousHash };
+  if (undo.kind === "rename-file") return { ...snapshot, beforeContent: undo.previousContent, beforeHash: undo.previousHash, afterHash: undo.appliedHash };
+  return snapshot;
+}
+
+async function buildRollbackPlan(
+  operation: AgentOperationLedgerEntry,
+  workspaceRoot: string,
+  choices: Record<string, AgentRollbackChoice> | undefined
+): Promise<OperationRollbackPlan> {
+  const rootRealPath = await fs.realpath(workspaceRoot);
+  const apply: Array<() => Promise<void>> = [];
+  const restoredPaths: string[] = [];
+  const conflicts: AgentRollbackConflict[] = [];
+  const snapshots = coalesceRollbackSnapshots(operation.snapshots);
+  for (const snapshot of [...snapshots].reverse()) {
+    const relativePath = snapshot.relativePath;
+    const currentRelativePath = snapshot.destinationRelativePath ?? snapshot.relativePath;
+    const absolutePath = path.resolve(rootRealPath, relativePath);
+    const currentAbsolutePath = path.resolve(rootRealPath, currentRelativePath);
+    const choice = choices?.[relativePath] ?? choices?.[currentRelativePath];
+    const conflict = await rollbackConflict(snapshot, rootRealPath, currentRelativePath, currentAbsolutePath, choice);
+    if (conflict) {
+      conflicts.push(conflict);
+      continue;
+    }
+    if (choice === "keep-current") {
+      continue;
+    }
+    if (snapshot.kind === "folder" && !snapshot.destinationRelativePath && snapshot.beforeContent === undefined && snapshot.afterHash === undefined) {
+      continue;
+    }
+    if (snapshot.kind === "file" && snapshot.beforeHash && snapshot.afterHash && snapshot.beforeHash === snapshot.afterHash && snapshot.beforeContent === snapshot.afterContent) {
+      continue;
+    }
+    restoredPaths.push(relativePath);
+    apply.push(async () => {
+      if (snapshot.destinationRelativePath) {
+        await assertPathMissing(absolutePath, "Cannot undo rename because the original path now exists.");
+        await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+        await fs.rename(currentAbsolutePath, absolutePath);
+        return;
+      }
+      if (snapshot.kind === "missing") {
+        await fs.rm(currentAbsolutePath, { recursive: true, force: false });
+        return;
+      }
+      if (snapshot.beforeContent !== undefined) {
+        await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+        await writeAtomically(absolutePath, snapshot.beforeContent);
+      }
+    });
+  }
+  return { restoredPaths: uniqueStrings(restoredPaths), conflicts, apply };
+}
+
+function coalesceRollbackSnapshots(snapshots: AgentRecoveredFileSnapshot[]): AgentRecoveredFileSnapshot[] {
+  const byPath = new Map<string, AgentRecoveredFileSnapshot>();
+  for (const snapshot of snapshots) {
+    const key = snapshot.destinationRelativePath ? `${snapshot.relativePath}->${snapshot.destinationRelativePath}` : snapshot.relativePath;
+    const existing = byPath.get(key);
+    byPath.set(key, existing ? {
+      ...snapshot,
+      beforeContent: existing.beforeContent,
+      beforeHash: existing.beforeHash,
+      kind: existing.kind,
+      afterContent: snapshot.afterContent ?? existing.afterContent,
+      afterHash: snapshot.afterHash ?? existing.afterHash
+    } : snapshot);
+  }
+  return [...byPath.values()];
+}
+
+async function rollbackConflict(
+  snapshot: AgentRecoveredFileSnapshot,
+  rootRealPath: string,
+  currentRelativePath: string,
+  currentAbsolutePath: string,
+  choice: AgentRollbackChoice | undefined
+): Promise<AgentRollbackConflict | undefined> {
+  if (choice === "keep-current" || choice === "restore-snapshot") return undefined;
+  if (snapshot.destinationRelativePath && snapshot.kind === "folder") {
+    const stats = await fs.stat(currentAbsolutePath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (!stats || !stats.isDirectory()) {
+      return { relativePath: currentRelativePath, message: "This file changed after Levi's operation.", snapshotContent: snapshot.beforeContent };
+    }
+    return undefined;
+  }
+  if (snapshot.kind === "folder" && !snapshot.destinationRelativePath && snapshot.beforeContent === undefined && snapshot.afterHash === undefined) {
+    const stats = await fs.stat(currentAbsolutePath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (!stats) return undefined;
+    if (stats.isDirectory()) return undefined;
+    return { relativePath: currentRelativePath, message: "This file changed after Levi's operation." };
+  }
+  if (snapshot.kind === "missing" && snapshot.createdKind === "folder") {
+    const stats = await fs.stat(currentAbsolutePath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (!stats) return undefined;
+    if (!stats.isDirectory()) return { relativePath: currentRelativePath, message: "This file changed after Levi's operation." };
+    const entries = await fs.readdir(currentAbsolutePath);
+    if (entries.length > 0) {
+      return { relativePath: currentRelativePath, message: "This folder changed after Levi's operation." };
+    }
+    return undefined;
+  }
+  const current = await readTextIfExists(currentAbsolutePath, rootRealPath);
+  if (snapshot.destinationRelativePath) {
+    if (!current.exists) return { relativePath: currentRelativePath, message: "This file changed after Levi's operation.", snapshotContent: snapshot.beforeContent };
+    if (snapshot.afterHash && current.hash !== snapshot.afterHash) {
+      return { relativePath: currentRelativePath, message: "This file changed after Levi's operation.", currentContent: current.content, snapshotContent: snapshot.beforeContent };
+    }
+    return undefined;
+  }
+  if (snapshot.kind === "missing") {
+    if (!current.exists) return undefined;
+    if (snapshot.afterHash && current.hash !== snapshot.afterHash) {
+      return { relativePath: currentRelativePath, message: "This file changed after Levi's operation.", currentContent: current.content };
+    }
+    return undefined;
+  }
+  if (snapshot.afterHash) {
+    if (!current.exists || current.hash !== snapshot.afterHash) {
+      return { relativePath: currentRelativePath, message: "This file changed after Levi's operation.", currentContent: current.content, snapshotContent: snapshot.beforeContent };
+    }
+    return undefined;
+  }
+  if (!current.exists) return undefined;
+  return { relativePath: currentRelativePath, message: "This file changed after Levi's operation.", currentContent: current.content, snapshotContent: snapshot.beforeContent };
+}
+
+async function readTextIfExists(absolutePath: string, rootRealPath: string): Promise<{ exists: boolean; content?: string; hash?: string }> {
+  try {
+    const content = await readTextFile(absolutePath, rootRealPath);
+    return { exists: true, content, hash: hashContent(content) };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { exists: false };
+    throw error;
+  }
+}
+
+function latestRollbackOperation(session: AgentSession): AgentOperationLedgerEntry | undefined {
+  const operations = session.plan?.recovery?.operations ?? [];
+  return [...operations].reverse().find((operation) =>
+    operation.snapshots.length > 0
+    && operation.status !== "rolled-back"
+    && operation.status !== "rollback-failed"
+    && operation.status !== "cancelled"
+    && operation.status !== "Cancelled"
+    && operation.status !== "Undone"
+  );
+}
+
+function undoRecordFromOperation(operation: AgentOperationLedgerEntry, workspaceRoot: string): UndoRecord | undefined {
+  const snapshot = operation.snapshots[0];
+  if (!snapshot || !operation.actionId || !operation.actionType) return undefined;
+  const absolutePath = path.resolve(workspaceRoot, snapshot.relativePath);
+  const timestamp = operation.completedAt ?? operation.startedAt;
+  if (operation.actionType === "create-file") {
+    return { kind: "create-file", actionId: operation.actionId, relativePath: snapshot.relativePath, absolutePath, appliedHash: snapshot.afterHash, timestamp };
+  }
+  if (operation.actionType === "modify-file" && snapshot.beforeContent !== undefined && snapshot.beforeHash) {
+    return { kind: "modify-file", actionId: operation.actionId, relativePath: snapshot.relativePath, absolutePath, previousContent: snapshot.beforeContent, previousHash: snapshot.beforeHash, appliedHash: snapshot.afterHash, timestamp };
+  }
+  if (operation.actionType === "delete-file" && snapshot.beforeContent !== undefined && snapshot.beforeHash) {
+    return { kind: "delete-file", actionId: operation.actionId, relativePath: snapshot.relativePath, absolutePath, previousContent: snapshot.beforeContent, previousHash: snapshot.beforeHash, timestamp };
+  }
+  if ((operation.actionType === "rename-file" || operation.actionType === "rename-folder") && snapshot.destinationRelativePath) {
+    return {
+      kind: operation.actionType,
+      actionId: operation.actionId,
+      relativePath: snapshot.relativePath,
+      destinationRelativePath: snapshot.destinationRelativePath,
+      absolutePath,
+      destinationAbsolutePath: path.resolve(workspaceRoot, snapshot.destinationRelativePath),
+      previousContent: snapshot.beforeContent,
+      previousHash: snapshot.beforeHash,
+      appliedHash: snapshot.afterHash,
+      timestamp
+    };
+  }
+  if (operation.actionType === "create-folder") {
+    return { kind: "create-folder", actionId: operation.actionId, relativePath: snapshot.relativePath, absolutePath, timestamp };
+  }
+  return undefined;
+}
+
+function markRecoveryOperation(session: AgentSession, actionId: string, status: AgentOperationLedgerEntry["status"], conflict?: string): void {
+  const operations = session.plan?.recovery?.operations ?? [];
+  const operation = [...operations].reverse().find((item) => item.actionId === actionId);
+  if (!operation) return;
+  applyRecoveryOperationStatus(operation, status, conflict);
+}
+
+function markRecoveryOperationById(session: AgentSession, operationId: string, status: AgentOperationLedgerEntry["status"], conflict?: string): void {
+  const operation = session.plan?.recovery?.operations.find((item) => item.operationId === operationId);
+  if (!operation) return;
+  applyRecoveryOperationStatus(operation, status, conflict);
+}
+
+function applyRecoveryOperationStatus(operation: AgentOperationLedgerEntry, status: AgentOperationLedgerEntry["status"], conflict?: string): void {
+  operation.status = status;
+  operation.completedAt = new Date().toISOString();
+  operation.conflict = conflict;
 }
 
 function ensureTaskRuns(session: AgentSession): AgentTaskRunState[] {
@@ -1873,16 +3134,88 @@ function ensureRepairProgress(session: AgentSession): NonNullable<AgentSession["
 function addRepairProgress(
   session: AgentSession,
   stage: NonNullable<AgentSession["plan"]>["repairProgress"][number]["stage"],
-  options: { reportId?: string; repairId?: string; createdAt?: string } = {}
+  options: { reportId?: string; repairId?: string; attempt?: number; createdAt?: string } = {}
 ): void {
   ensureRepairProgress(session).push({
     id: randomUUID(),
     stage,
     reportId: options.reportId,
     repairId: options.repairId,
+    attempt: options.attempt,
     createdAt: options.createdAt ?? new Date().toISOString()
   });
   session.plan!.repairProgress = session.plan!.repairProgress.slice(-80);
+}
+
+function clampRepairAttempt(value: unknown): number {
+  if (!Number.isInteger(value)) return 1;
+  return Math.max(1, Math.min(MAX_REPAIR_ATTEMPTS + 1, value as number));
+}
+
+function attachRepairAction(session: AgentSession, action: AgentApprovalAction): AgentApprovalAction {
+  const existing = session.plan!.approvals.find((item) => item.id === action.id);
+  if (existing) {
+    existing.status = "Approved";
+    existing.updatedAt = new Date().toISOString();
+    return existing;
+  }
+  const now = new Date().toISOString();
+  const planAction: AgentApprovalAction = {
+    ...action,
+    id: action.id || randomUUID(),
+    status: "Approved",
+    createdAt: action.createdAt || now,
+    updatedAt: now
+  };
+  session.plan!.approvals.push(planAction);
+  return planAction;
+}
+
+function repairApprovalBlocker(
+  action: AgentApprovalAction,
+  repair: AgentRepairQueueItem,
+  report: AgentVerificationReport,
+  session: AgentSession
+): string | null {
+  if (!AUTOMATIC_REPAIR_ACTIONS.has(action.type)) {
+    return "Repair action requires fresh approval because it is not an automatic file repair.";
+  }
+  const targets = [action.relativePath, action.destinationRelativePath, ...(action.affectedFiles ?? [])].filter((value): value is string => Boolean(value));
+  if (targets.length === 0 && action.type !== "create-folder") {
+    return "Repair action has no concrete workspace target.";
+  }
+  if (targets.some((target) => path.isAbsolute(target) || target.includes("\0") || normalizeSlashes(target).split("/").includes(".."))) {
+    return "Repair action targets an unsafe path.";
+  }
+  if (action.type === "delete-file" || action.type === "git-operation" || action.type.startsWith("browser-")) {
+    return "Repair action requires fresh approval because it is destructive or external.";
+  }
+  if (!isRepairRelatedToBuild(targets, repair, report, session)) {
+    return "Repair action is materially outside the approved build scope.";
+  }
+  return null;
+}
+
+function isRepairRelatedToBuild(
+  targets: string[],
+  repair: AgentRepairQueueItem,
+  report: AgentVerificationReport,
+  session: AgentSession
+): boolean {
+  const evidence = uniqueStrings([
+    ...repair.affectedFiles,
+    ...report.failures.flatMap((failure) => failure.affectedFiles),
+    ...report.problems.map((problem) => problem.relativePath),
+    ...session.plan!.estimatedFiles,
+    ...(session.plan!.approvals
+      .flatMap((action) => [action.relativePath, action.destinationRelativePath, ...(action.affectedFiles ?? [])])
+      .filter((value): value is string => Boolean(value)))
+  ]).map((value) => normalizeSlashes(value));
+  if (evidence.length === 0) return false;
+  return targets.every((target) => {
+    const normalized = normalizeSlashes(target);
+    return evidence.some((item) => normalized === item || normalized.startsWith(`${path.posix.dirname(item)}/`) || item.startsWith(`${path.posix.dirname(normalized)}/`));
+  });
 }
 
 function ensureTaskRun(session: AgentSession, action: AgentApprovalAction, preview: AgentTaskPreview): AgentTaskRunState {
@@ -1970,6 +3303,7 @@ function createVerificationFailure(options: {
   message: string;
   text: string;
   affectedFiles: string[];
+  details?: Record<string, unknown>;
   actionId?: string;
   exitCode?: number;
 }): AgentVerificationFailure {
@@ -1979,6 +3313,7 @@ function createVerificationFailure(options: {
     source: options.source,
     message: truncateText(options.message, 600),
     affectedFiles: uniqueStrings(options.affectedFiles.filter(Boolean)).slice(0, 20),
+    details: options.details,
     actionId: options.actionId,
     exitCode: options.exitCode,
     severity: options.severity
@@ -2000,20 +3335,67 @@ function classifyFailure(value: string): AgentFailureClassification {
 function fallbackRepairs(report: AgentVerificationReport): AgentRepairQueueItem[] {
   const now = new Date().toISOString();
   const failures = report.failures.filter((failure) => failure.severity === "error").slice(0, 5);
-  return failures.map((failure) => ({
-    id: randomUUID(),
-    reportId: report.id,
-    problem: failure.message,
-    likelyCause: likelyCauseFor(failure.classification),
-    affectedFiles: failure.affectedFiles,
-    suggestedFix: suggestedFixFor(failure.classification),
-    confidence: failure.classification === "Unknown" ? 0.35 : 0.6,
-    estimatedRisk: failure.affectedFiles.length > 1 ? "medium" : "low",
-    classification: failure.classification,
-    status: "Pending",
-    createdAt: now,
-    updatedAt: now
-  }));
+  return failures.map((failure) => {
+    const actions = deterministicFallbackRepairActions(failure, report, now);
+    return {
+      id: randomUUID(),
+      reportId: report.id,
+      attempt: 1,
+      problem: failure.message,
+      likelyCause: likelyCauseFor(failure.classification),
+      affectedFiles: failure.affectedFiles,
+      suggestedFix: actions.length ? "Apply the structured syntax repair inferred from verification output." : suggestedFixFor(failure.classification),
+      actions,
+      requiresFreshApproval: actions.length === 0,
+      blockers: actions.length ? [] : ["No structured repair action was generated."],
+      confidence: actions.length ? 0.72 : failure.classification === "Unknown" ? 0.35 : 0.6,
+      estimatedRisk: failure.affectedFiles.length > 1 ? "medium" : "low",
+      classification: failure.classification,
+      status: "Pending" as const,
+      createdAt: now,
+      updatedAt: now
+    };
+  });
+}
+
+function deterministicFallbackRepairActions(failure: AgentVerificationFailure, report: AgentVerificationReport, now: string): AgentApprovalAction[] {
+  const target = failure.affectedFiles.find((file) => file && !path.isAbsolute(file) && !normalizeSlashes(file).split("/").includes(".."));
+  if (!target) return [];
+  const text = `${failure.message}\n${report.terminalOutputExcerpt}`.replace(/\r\n/g, "\n");
+  if (/org\.jetbrains\.kotlin\.android/i.test(text) && /no longer required for Kotlin support since AGP 9\.0/i.test(text)) {
+    return [
+      {
+        id: randomUUID(),
+        type: "modify-file",
+        title: "Remove obsolete Kotlin Android plugin",
+        description: "Remove the Kotlin Android plugin line rejected by AGP 9.0 and keep Kotlin support provided by the Android Gradle plugin.",
+        status: "Pending",
+        relativePath: normalizeSlashes(target),
+        edits: [{ kind: "replace", find: "  id(\"org.jetbrains.kotlin.android\")\n", replace: "" }],
+        affectedFiles: [normalizeSlashes(target)],
+        createdAt: now,
+        updatedAt: now
+      }
+    ];
+  }
+  const assignment = text.match(/\b(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*;/);
+  if (!assignment) return [];
+  const original = assignment[0];
+  const replacement = `${assignment[1]} ${assignment[2]} = 0;`;
+  return [
+    {
+      id: randomUUID(),
+      type: "modify-file",
+      title: "Repair invalid assignment",
+      description: "Replace the missing assignment value reported by verification.",
+      status: "Pending",
+      relativePath: normalizeSlashes(target),
+      edits: [{ kind: "replace", find: original, replace: replacement }],
+      affectedFiles: [normalizeSlashes(target)],
+      createdAt: now,
+      updatedAt: now
+    }
+  ];
 }
 
 function parseRepairPlan(content: string, report: AgentVerificationReport): AgentRepairQueueItem[] {
@@ -2028,13 +3410,18 @@ function parseRepairPlan(content: string, report: AgentVerificationReport): Agen
   return values.slice(0, MAX_REPAIR_ITEMS).map((value) => {
     const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
     const classification = parseFailureClassification(record.classification);
+    const actions = parseRepairActions(record.actions, now);
     return {
       id: randomUUID(),
       reportId: report.id,
+      attempt: 1,
       problem: sanitizeRepairText(record.problem, "Verification failure needs repair planning."),
       likelyCause: sanitizeRepairText(record.likelyCause, likelyCauseFor(classification)),
       affectedFiles: parseAffectedFiles(record.affectedFiles),
       suggestedFix: sanitizeRepairText(record.suggestedFix, suggestedFixFor(classification)),
+      actions,
+      requiresFreshApproval: actions.some((action) => !AUTOMATIC_REPAIR_ACTIONS.has(action.type)),
+      blockers: actions.length ? [] : ["No structured repair action was generated."],
       confidence: clampConfidence(record.confidence),
       estimatedRisk: parseRisk(record.estimatedRisk),
       classification,
@@ -2043,6 +3430,69 @@ function parseRepairPlan(content: string, report: AgentVerificationReport): Agen
       updatedAt: now
     };
   }).filter((item) => item.problem && item.suggestedFix);
+}
+
+function parseRepairActions(value: unknown, now: string): AgentApprovalAction[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => parseRepairAction(item, now)).filter(Boolean).slice(0, 8) as AgentApprovalAction[];
+}
+
+function parseRepairAction(value: unknown, now: string): AgentApprovalAction | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const type = typeof record.type === "string" ? record.type : "";
+  if (
+    type !== "create-file" &&
+    type !== "modify-file" &&
+    type !== "create-folder" &&
+    type !== "delete-file" &&
+    type !== "run-terminal-command" &&
+    type !== "run-task" &&
+    type !== "git-operation"
+  ) return null;
+  return {
+    id: randomUUID(),
+    type,
+    title: typeof record.title === "string" && record.title.trim() ? record.title.trim().slice(0, 120) : "Repair action",
+    description: typeof record.description === "string" ? record.description.trim().slice(0, 1_000) : "",
+    status: "Pending",
+    relativePath: parseRepairRelativePath(record.relativePath),
+    destinationRelativePath: parseRepairRelativePath(record.destinationRelativePath),
+    content: typeof record.content === "string" ? record.content.slice(0, MAX_CONTENT_CHARS) : undefined,
+    edits: Array.isArray(record.edits) ? record.edits.map(parseRepairFileEdit).filter(Boolean).slice(0, 40) as AgentFileEdit[] : undefined,
+    taskId: typeof record.taskId === "string" ? record.taskId.slice(0, 120) : undefined,
+    taskName: typeof record.taskName === "string" ? record.taskName.slice(0, 120) : undefined,
+    command: typeof record.command === "string" ? record.command.slice(0, 500) : undefined,
+    args: Array.isArray(record.args) ? record.args.filter((item): item is string => typeof item === "string").map((item) => item.slice(0, 500)).slice(0, 80) : undefined,
+    cwd: parseRepairRelativePath(record.cwd),
+    gitOperation: typeof record.gitOperation === "string" ? record.gitOperation.slice(0, 120) : undefined,
+    affectedFiles: Array.isArray(record.affectedFiles) ? parseAffectedFiles(record.affectedFiles) : undefined,
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+function parseRepairRelativePath(value: unknown): string | undefined {
+  if (typeof value !== "string" || path.isAbsolute(value) || value.includes("\0")) return undefined;
+  const normalized = normalizeSlashes(value).replace(/^\.\//, "");
+  if (!normalized || normalized.split("/").includes("..")) return undefined;
+  return normalized.slice(0, 500);
+}
+
+function parseRepairFileEdit(value: unknown): AgentFileEdit | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const kind = record.kind;
+  if (kind !== "insert" && kind !== "replace" && kind !== "append" && kind !== "delete-range" && kind !== "whole-file") return null;
+  return {
+    kind,
+    content: typeof record.content === "string" ? record.content.slice(0, MAX_CONTENT_CHARS) : undefined,
+    line: Number.isInteger(record.line) ? record.line as number : undefined,
+    startLine: Number.isInteger(record.startLine) ? record.startLine as number : undefined,
+    endLine: Number.isInteger(record.endLine) ? record.endLine as number : undefined,
+    find: typeof record.find === "string" ? record.find.slice(0, MAX_CONTENT_CHARS) : undefined,
+    replace: typeof record.replace === "string" ? record.replace.slice(0, MAX_CONTENT_CHARS) : undefined
+  };
 }
 
 function parseFailureClassification(value: unknown): AgentFailureClassification {
@@ -2229,6 +3679,95 @@ function terminalPreviewFingerprint(preview: AgentTerminalPreview): string {
   return JSON.stringify({ executable: preview.executable, args: preview.args, cwd: preview.cwd, commandId: preview.commandId });
 }
 
+function canDirectProcessExecute(preview: AgentTerminalPreview): boolean {
+  return DIRECT_PROCESS_EXECUTABLES.has(path.basename(preview.executable).toLowerCase());
+}
+
+function shouldUseDirectProcessExecution(preview: AgentTerminalPreview): boolean {
+  return canDirectProcessExecute(preview);
+}
+
+function resolveDirectProcessLaunch(preview: AgentTerminalPreview): { executable: string; args: string[] } {
+  const base = path.basename(preview.executable).toLowerCase();
+  if (base === "npm" || base === "npm.cmd") {
+    return { executable: process.execPath, args: [resolveNodePackageCli("npm"), ...preview.args] };
+  }
+  if (base === "npx" || base === "npx.cmd") {
+    return { executable: process.execPath, args: [resolveNodePackageCli("npx"), ...preview.args] };
+  }
+  if (process.platform === "win32" && (base === "gradlew.bat" || base === "gradle.bat")) {
+    return { executable: process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe", args: ["/d", "/s", "/c", preview.executable, ...preview.args] };
+  }
+  return { executable: preview.executable, args: preview.args };
+}
+
+function resolveDeveloperExecutable(executable: string, env: NodeJS.ProcessEnv): string {
+  const id = developerToolIdForExecutable(executable);
+  if (!id) return executable;
+  return resolveDeveloperToolFromEnvironment(id, executable, env).resolvedPath ?? executable;
+}
+
+function developerToolIdForExecutable(executable: string): DeveloperToolId | undefined {
+  const base = path.basename(executable).toLowerCase().replace(/\.(exe|cmd|bat)$/i, "");
+  if (base === "go") return "go";
+  if (base === "rustc") return "rustc";
+  if (base === "cargo") return "cargo";
+  if (base === "java") return "java";
+  if (base === "adb") return "adb";
+  if (base === "node") return "node";
+  if (base === "npm" || base === "npx" || base === "pnpm" || base === "yarn") return "npm";
+  if (base === "python" || base === "py") return "python";
+  if (base === "dotnet") return "dotnet";
+  if (base === "flutter" || base === "dart") return "flutter";
+  if (base === "git") return "git";
+  return undefined;
+}
+
+function terminalExitInfrastructureMessage(run: AgentTerminalRunState): string | undefined {
+  const base = path.basename(run.executable).toLowerCase();
+  const text = `${run.stderrPreview}\n${run.outputPreview}`.toLowerCase();
+  const bridgeMissing = /not recognized as an internal or external command|cannot find the path specified|no such file or directory|command not found/.test(text);
+  if (bridgeMissing && /^(gradlew\.bat|gradle\.bat|gradlew|gradle|node|node\.exe|npm|npm\.cmd|npx|npx\.cmd|python|python\.exe|dotnet|dotnet\.exe|cargo|cargo\.exe|go|go\.exe)$/.test(base)) {
+    return `Terminal execution failed: ${run.executable} could not be launched.`;
+  }
+  return undefined;
+}
+
+function resolveNodePackageCli(command: "npm" | "npx"): string {
+  const cliFile = command === "npm" ? "npm-cli.js" : "npx-cli.js";
+  const npmExecPath = process.env.npm_execpath && path.basename(process.env.npm_execpath).toLowerCase() === cliFile ? process.env.npm_execpath : undefined;
+  const candidates = [
+    npmExecPath,
+    process.env.npm_execpath ? path.join(path.dirname(process.env.npm_execpath), cliFile) : undefined,
+    path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", cliFile),
+    ...findPathExecutables(command === "npm" ? ["npm.cmd", "npm"] : ["npx.cmd", "npx"]).flatMap((executable) => [
+      path.join(path.dirname(executable), "node_modules", "npm", "bin", cliFile),
+      path.join(path.dirname(path.dirname(executable)), "node_modules", "npm", "bin", cliFile)
+    ])
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  const match = candidates.find((candidate) => existsSync(candidate));
+  if (!match) {
+    throw new Error(`${command} CLI could not be resolved without a shell.`);
+  }
+  return match;
+}
+
+function findPathExecutables(names: string[]): string[] {
+  const extensions = process.platform === "win32" ? ["", ".cmd", ".exe", ".bat"] : [""];
+  const paths = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
+  const matches: string[] = [];
+  for (const directory of paths) {
+    for (const name of names) {
+      const hasExtension = Boolean(path.extname(name));
+      const candidates = hasExtension ? [path.join(directory, name)] : extensions.map((extension) => path.join(directory, `${name}${extension}`));
+      for (const candidate of candidates) {
+        if (existsSync(candidate)) matches.push(candidate);
+      }
+    }
+  }
+  return matches;
+}
+
 function boundTerminalOutput(value: string): string {
   return value.length > MAX_TERMINAL_OUTPUT_CHARS ? value.slice(value.length - MAX_TERMINAL_OUTPUT_CHARS) : value;
 }
@@ -2241,6 +3780,55 @@ function linesMatching(value: string, pattern: RegExp): string[] {
   return value.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && pattern.test(line)).slice(-20);
 }
 
+function inferAffectedFilesFromTerminalOutput(output: string): string[] {
+  const files = new Set<string>();
+  const normalized = output.replace(/\r\n/g, "\n");
+  for (const match of normalized.matchAll(/Build file '([^']+?build\.gradle(?:\.kts)?)'/g)) {
+    const buildFile = relativeGradleBuildPath(match[1]);
+    if (buildFile) files.add(buildFile);
+  }
+  const patterns = [
+    /(?:^|\s)([A-Za-z0-9_.\-\/\\]+?\.(?:tsx?|jsx?|css|scss|json|html|vue|svelte|cs|go|rs|py|java|kt|gradle\.kts|gradle))(?:[:(]\d+)?/g,
+    /(?:^|\n)\s*(?:at\s+)?([A-Za-z0-9_.\-\/\\]+?\.(?:tsx?|jsx?|css|scss|json|html|vue|svelte|cs|go|rs|py|java|kt|gradle\.kts|gradle))\b/g
+  ];
+  for (const pattern of patterns) {
+    for (const match of normalized.matchAll(pattern)) {
+      const value = normalizeSlashes(match[1]).replace(/^\.\//, "");
+      if (!value || path.isAbsolute(value) || value.split("/").includes("..")) continue;
+      files.add(value);
+      if (files.size >= 10) break;
+    }
+  }
+  return [...files];
+}
+
+function relativeGradleBuildPath(value: string): string | undefined {
+  const normalized = normalizeSlashes(value);
+  const moduleBuild = normalized.match(/(?:^|\/)([^/]+\/build\.gradle(?:\.kts)?)$/i)?.[1];
+  if (moduleBuild) return moduleBuild;
+  const rootBuild = normalized.match(/(?:^|\/)(build\.gradle(?:\.kts)?)$/i)?.[1];
+  return rootBuild;
+}
+
+function terminalFailureDetails(terminalRun: AgentTerminalRunState, session: AgentSession, affectedFiles: string[]): Record<string, unknown> {
+  return {
+    command: terminalRun.executable,
+    args: terminalRun.args,
+    cwd: terminalRun.cwd,
+    exitCode: terminalRun.exitCode,
+    resultStatus: terminalRun.resultStatus ?? "failed",
+    projectType: session.plan?.starterLabel ?? session.plan?.planningMode ?? "unknown",
+    relevantFiles: affectedFiles,
+    stderr: terminalRun.stderrPreview,
+    stdout: terminalRun.outputPreview
+  };
+}
+
+function hasOnlyInfrastructureFailures(report: AgentVerificationReport): boolean {
+  const errors = report.failures.filter((failure) => failure.severity === "error");
+  return errors.length > 0 && errors.every((failure) => failure.source === "terminal" && /^Terminal execution failed\b/i.test(failure.message));
+}
+
 function normalizeGitOperation(value: unknown): GitOperation {
   if (
     value === "status" ||
@@ -2248,6 +3836,8 @@ function normalizeGitOperation(value: unknown): GitOperation {
     value === "unstage-file" ||
     value === "stage-all" ||
     value === "commit" ||
+    value === "pull" ||
+    value === "push" ||
     value === "create-branch" ||
     value === "switch-branch" ||
     value === "restore-file" ||
@@ -2336,6 +3926,41 @@ async function readTextFile(absolutePath: string, rootRealPath: string): Promise
     return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
   } catch {
     throw new Error("Agent file target is not valid UTF-8.");
+  }
+}
+
+async function existingCompatibleCreateFileContent(target: ResolvedWorkspacePath, proposedContent: string): Promise<string | undefined> {
+  try {
+    const stats = await fs.lstat(target.absolutePath);
+    if (!stats.isFile()) throw new Error("Target file path already exists as a folder.");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  const current = await readTextFile(target.absolutePath, target.rootRealPath);
+  if (hashContent(current) !== hashContent(proposedContent)) {
+    throw new Error("Target file already exists with different content.");
+  }
+  return current;
+}
+
+async function assertCompatibleCreateFolderTarget(absolutePath: string): Promise<void> {
+  try {
+    const stats = await fs.lstat(absolutePath);
+    if (stats.isDirectory()) return;
+    throw new Error("Target folder path already exists as a file.");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+}
+
+async function pathIsDirectory(absolutePath: string): Promise<boolean> {
+  try {
+    return (await fs.lstat(absolutePath)).isDirectory();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
   }
 }
 

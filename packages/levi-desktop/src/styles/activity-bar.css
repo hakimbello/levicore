@@ -2,6 +2,10 @@
   grid-template-columns: 52px var(--levi-layout-sidebarWidth) minmax(0, 1fr);
 }
 
+.levi-shell-no-context {
+  grid-template-columns: 52px minmax(0, 1fr);
+}
+
 .levi-activity-bar {
   display: flex;
   min-height: 100vh;

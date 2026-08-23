@@ -66,6 +66,9 @@ export function AIChatPanel({ runtimeState, activeTab, tabs = [], selectedCode, 
   const [contextError, setContextError] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [controlsOpen, setControlsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [contextOpen, setContextOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const selectedRuntime = runtimeState.providers.find((provider) => provider.id === (runtimeId || runtimeState.selectedRuntimeId));
@@ -319,64 +322,14 @@ export function AIChatPanel({ runtimeState, activeTab, tabs = [], selectedCode, 
     <aside className={dockClass} aria-label="AI Chat" onDragOver={(event) => event.preventDefault()} onDrop={handleDrop}>
       <header className="levi-ai-chat-header">
         <div>
-          <p className="levi-eyebrow">AI Chat</p>
-          <h2>{activeConversation?.title ?? "Levi Chat"}</h2>
+          <h2>AI Chat</h2>
+          <p>{activeConversation?.title ?? "New workspace chat"}</p>
         </div>
         <button type="button" className="levi-button levi-button-secondary" aria-label="New AI Chat" onClick={() => void createChat()}>
           <Icon name="plus" />
           <span>New Chat</span>
         </button>
       </header>
-
-      <div className="levi-ai-chat-controls">
-        <select aria-label="Dock position" value={state.panel.dockPosition} onChange={(event) => void setDockPosition(event.target.value as AIChatDockPosition)}>
-          <option value="right">Dock Right</option>
-          <option value="left">Dock Left</option>
-          <option value="bottom">Bottom</option>
-          <option value="floating">Floating</option>
-        </select>
-        <select aria-label="Runtime" value={runtimeId} onChange={(event) => setRuntimeId(event.target.value as AIRuntimeProviderId)}>
-          <option value="">Automatic Runtime</option>
-          {runtimeState.providers.map((provider) => (
-            <option key={provider.id} value={provider.id}>{provider.name}</option>
-          ))}
-        </select>
-        <select aria-label="Model" value={modelId} onChange={(event) => setModelId(event.target.value)}>
-          {availableModels.length === 0 ? <option value="">No models detected</option> : null}
-          {availableModels.map((model) => (
-            <option key={model.id} value={model.id}>{model.displayName}</option>
-          ))}
-        </select>
-        <div className="levi-ai-chat-model-meta">
-          <span>{selectedModel?.contextWindow ? `${selectedModel.contextWindow} ctx` : "Context unknown"}</span>
-          <span>Tools {selectedModel?.toolSupport ? "Yes" : "No"}</span>
-          <span>Vision {selectedModel?.visionSupport ? "Yes" : "No"}</span>
-          <span>{budget.remainingTokens !== undefined ? `${Math.max(0, budget.remainingTokens)} tokens left` : `${budget.totalTokens} estimated tokens`}</span>
-        </div>
-      </div>
-
-      <section className="levi-ai-chat-history" aria-label="Conversation History">
-        <input aria-label="Search Chats" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search chats" />
-        <div className="levi-ai-chat-filters">
-          <label><input type="checkbox" checked={pinnedOnly} onChange={(event) => setPinnedOnly(event.target.checked)} /> Pinned</label>
-          <label><input type="checkbox" checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} /> Archived</label>
-        </div>
-        {filteredConversations.map((conversation) => (
-          <div key={conversation.id} className={conversation.id === state.activeConversationId ? "levi-ai-chat-history-item levi-ai-chat-history-item-active" : "levi-ai-chat-history-item"}>
-            {renamingId === conversation.id ? (
-              <input aria-label="Rename Chat" value={renameDraft} onChange={(event) => setRenameDraft(event.target.value)} />
-            ) : (
-              <button type="button" onClick={() => setState({ ...state, activeConversationId: conversation.id })}>{conversation.pinned ? "Pinned " : ""}{conversation.title}</button>
-            )}
-            <button type="button" aria-label={`Pin ${conversation.title}`} onClick={() => void window.levi.chat.pin({ conversationId: conversation.id }).then(setState)}>Pin</button>
-            <button type="button" aria-label={`Rename ${conversation.title}`} onClick={() => void renameConversation(conversation)}>Rename</button>
-            <button type="button" aria-label={`Export ${conversation.title}`} onClick={() => void exportConversation(conversation.id)}>Export</button>
-            <button type="button" aria-label={`Export JSON ${conversation.title}`} onClick={() => void exportConversationJson(conversation.id)}>JSON</button>
-            <button type="button" aria-label={`Archive ${conversation.title}`} onClick={() => void window.levi.chat.archive({ conversationId: conversation.id, archived: !conversation.archived }).then(setState)}>{conversation.archived ? "Unarchive" : "Archive"}</button>
-            <button type="button" aria-label={`Delete ${conversation.title}`} onClick={() => { if (window.confirm(`Delete ${conversation.title}?`)) void window.levi.chat.delete({ conversationId: conversation.id }).then(setState); }}>Delete</button>
-          </div>
-        ))}
-      </section>
 
       <section className="levi-ai-chat-messages" aria-label="Chat Messages">
         {activeConversation?.messages.length ? activeConversation.messages.map((message) => (
@@ -410,6 +363,66 @@ export function AIChatPanel({ runtimeState, activeTab, tabs = [], selectedCode, 
       </section>
 
       <section className="levi-ai-chat-composer" aria-label="Prompt Composer">
+        <div className="levi-ai-chat-compact-tools">
+          <details className="levi-ai-chat-disclosure" open={controlsOpen} onToggle={(event) => setControlsOpen(event.currentTarget.open)}>
+            <summary>Chat controls</summary>
+            {controlsOpen ? (
+              <div className="levi-ai-chat-controls">
+                <select aria-label="Dock position" value={state.panel.dockPosition} onChange={(event) => void setDockPosition(event.target.value as AIChatDockPosition)}>
+                  <option value="right">Dock Right</option>
+                  <option value="left">Dock Left</option>
+                  <option value="bottom">Bottom</option>
+                  <option value="floating">Floating</option>
+                </select>
+                <select aria-label="Runtime" value={runtimeId} onChange={(event) => setRuntimeId(event.target.value as AIRuntimeProviderId)}>
+                  <option value="">Automatic Runtime</option>
+                  {runtimeState.providers.map((provider) => (
+                    <option key={provider.id} value={provider.id}>{provider.name}</option>
+                  ))}
+                </select>
+                <select aria-label="Model" value={modelId} onChange={(event) => setModelId(event.target.value)}>
+                  {availableModels.length === 0 ? <option value="">No models detected</option> : null}
+                  {availableModels.map((model) => (
+                    <option key={model.id} value={model.id}>{model.displayName}</option>
+                  ))}
+                </select>
+                <div className="levi-ai-chat-model-meta">
+                  <span>{selectedModel?.contextWindow ? `${selectedModel.contextWindow} ctx` : "Context unknown"}</span>
+                  <span>Tools {selectedModel?.toolSupport ? "Yes" : "No"}</span>
+                  <span>Vision {selectedModel?.visionSupport ? "Yes" : "No"}</span>
+                  <span>{budget.remainingTokens !== undefined ? `${Math.max(0, budget.remainingTokens)} tokens left` : `${budget.totalTokens} estimated tokens`}</span>
+                </div>
+              </div>
+            ) : null}
+          </details>
+          <details className="levi-ai-chat-disclosure" open={historyOpen} onToggle={(event) => setHistoryOpen(event.currentTarget.open)}>
+            <summary>History</summary>
+            {historyOpen ? (
+              <section className="levi-ai-chat-history" aria-label="Conversation History">
+                <input aria-label="Search Chats" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search chats" />
+                <div className="levi-ai-chat-filters">
+                  <label><input type="checkbox" checked={pinnedOnly} onChange={(event) => setPinnedOnly(event.target.checked)} /> Pinned</label>
+                  <label><input type="checkbox" checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} /> Archived</label>
+                </div>
+                {filteredConversations.map((conversation) => (
+                  <div key={conversation.id} className={conversation.id === state.activeConversationId ? "levi-ai-chat-history-item levi-ai-chat-history-item-active" : "levi-ai-chat-history-item"}>
+                    {renamingId === conversation.id ? (
+                      <input aria-label="Rename Chat" value={renameDraft} onChange={(event) => setRenameDraft(event.target.value)} />
+                    ) : (
+                      <button type="button" onClick={() => setState({ ...state, activeConversationId: conversation.id })}>{conversation.pinned ? "Pinned " : ""}{conversation.title}</button>
+                    )}
+                    <button type="button" aria-label={`Pin ${conversation.title}`} onClick={() => void window.levi.chat.pin({ conversationId: conversation.id }).then(setState)}>Pin</button>
+                    <button type="button" aria-label={`Rename ${conversation.title}`} onClick={() => void renameConversation(conversation)}>Rename</button>
+                    <button type="button" aria-label={`Export ${conversation.title}`} onClick={() => void exportConversation(conversation.id)}>Export</button>
+                    <button type="button" aria-label={`Export JSON ${conversation.title}`} onClick={() => void exportConversationJson(conversation.id)}>JSON</button>
+                    <button type="button" aria-label={`Archive ${conversation.title}`} onClick={() => void window.levi.chat.archive({ conversationId: conversation.id, archived: !conversation.archived }).then(setState)}>{conversation.archived ? "Unarchive" : "Archive"}</button>
+                    <button type="button" aria-label={`Delete ${conversation.title}`} onClick={() => { if (window.confirm(`Delete ${conversation.title}?`)) void window.levi.chat.delete({ conversationId: conversation.id }).then(setState); }}>Delete</button>
+                  </div>
+                ))}
+              </section>
+            ) : null}
+          </details>
+        </div>
         {attachments.length ? (
           <div className="levi-ai-chat-attachments" aria-label="Attached context before sending">
             {attachments.map((attachment) => (
@@ -420,26 +433,33 @@ export function AIChatPanel({ runtimeState, activeTab, tabs = [], selectedCode, 
             ))}
           </div>
         ) : null}
-        <div className="levi-ai-chat-attachment-actions">
-          <button type="button" onClick={() => void attachCurrentFile()} disabled={!activeTab}>Current file</button>
-          <button type="button" onClick={() => void attachSelectedCode()} disabled={!selectedCode}>Selected code</button>
-          <button type="button" onClick={() => void attachOpenTabs()} disabled={!tabs.length}>Open tabs</button>
-          <button type="button" onClick={() => void attachWorkspaceSummary()} disabled={!workspaceStatus?.summary}>Workspace summary</button>
-          <button type="button" onClick={() => void attachProjectRules()}>Project Rules</button>
-          <button type="button" onClick={() => void attachProblems()}>Problems</button>
-          <button type="button" onClick={() => void attachTaskOutput()}>Task output</button>
-          <button type="button" onClick={() => void attachTaskOutput("git-diff")}>Git changes</button>
-          <button type="button" onClick={() => void attachClipboard()}>Clipboard</button>
-          <button type="button" onClick={() => setAttachments((current) => [...current, { id: createAttachmentId(), type: "image-placeholder", label: "Image placeholder" }])}>Image</button>
-        </div>
-        <div className="levi-ai-chat-context-picker" aria-label="Workspace Explorer">
-          <input aria-label="Search workspace paths" value={pathQuery} onChange={(event) => setPathQuery(event.target.value)} placeholder="Search workspace paths" />
-          {filteredPaths.map((item) => (
-            <button key={`${item.kind}:${item.relativePath}`} type="button" onClick={() => void attachWorkspacePath(item)}>
-              {item.kind === "folder" ? "Folder" : "File"} {item.relativePath}
-            </button>
-          ))}
-        </div>
+        <details className="levi-ai-chat-context-disclosure" open={contextOpen} onToggle={(event) => setContextOpen(event.currentTarget.open)}>
+          <summary>Add context</summary>
+          {contextOpen ? (
+            <>
+              <div className="levi-ai-chat-attachment-actions">
+                <button type="button" onClick={() => void attachCurrentFile()} disabled={!activeTab}>Current file</button>
+                <button type="button" onClick={() => void attachSelectedCode()} disabled={!selectedCode}>Selected code</button>
+                <button type="button" onClick={() => void attachOpenTabs()} disabled={!tabs.length}>Open tabs</button>
+                <button type="button" onClick={() => void attachWorkspaceSummary()} disabled={!workspaceStatus?.summary}>Workspace summary</button>
+                <button type="button" onClick={() => void attachProjectRules()}>Project Rules</button>
+                <button type="button" onClick={() => void attachProblems()}>Problems</button>
+                <button type="button" onClick={() => void attachTaskOutput()}>Task output</button>
+                <button type="button" onClick={() => void attachTaskOutput("git-diff")}>Git changes</button>
+                <button type="button" onClick={() => void attachClipboard()}>Clipboard</button>
+                <button type="button" onClick={() => setAttachments((current) => [...current, { id: createAttachmentId(), type: "image-placeholder", label: "Image placeholder" }])}>Image</button>
+              </div>
+              <div className="levi-ai-chat-context-picker" aria-label="Workspace Explorer">
+                <input aria-label="Search workspace paths" value={pathQuery} onChange={(event) => setPathQuery(event.target.value)} placeholder="Search workspace paths" />
+                {filteredPaths.map((item) => (
+                  <button key={`${item.kind}:${item.relativePath}`} type="button" onClick={() => void attachWorkspacePath(item)}>
+                    {item.kind === "folder" ? "Folder" : "File"} {item.relativePath}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : null}
+        </details>
         {contextError ? <div className="levi-ai-chat-error" role="alert">{contextError}</div> : null}
         {budget.exceedsBudget ? <div className="levi-ai-chat-error" role="alert">Context exceeds this model. Remove: {budget.oversizedAttachments.join(", ") || "attachments"}.</div> : null}
         <textarea
