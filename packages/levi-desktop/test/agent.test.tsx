@@ -3,6 +3,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -19,6 +20,8 @@ import type {
   AIRuntimeRequest
 } from "../src/features/ai-runtime";
 import type { TaskDefinition, TaskEvent, TaskOutputEntry, TaskProblem, TaskRun } from "../src/types/task-api";
+import type { WorkspaceScanSummary } from "../src/types/levi-api";
+import type { AgentSession, AgentTerminalRunState } from "../src/features/agent";
 import { App } from "../src/app/App";
 
 const lazySurfaceWait = { timeout: 5000 };
@@ -303,6 +306,12 @@ function createFakeTerminalManager() {
   return service;
 }
 
+const nodeExecutable = process.platform === "win32" ? "node.exe" : "node";
+
+function contentHash(content: string): string {
+  return createHash("sha256").update(content, "utf8").digest("hex");
+}
+
 function createFakeBrowserService() {
   const session = {
     id: "browser-1",
@@ -343,7 +352,7 @@ function createFakeBrowserService() {
   };
 }
 
-async function createService(runtimeProvider = provider(), options: { taskService?: ReturnType<typeof createFakeTaskService>; gitService?: ReturnType<typeof createFakeGitService>; terminalManager?: ReturnType<typeof createFakeTerminalManager>; browserService?: ReturnType<typeof createFakeBrowserService>; getWindow?: () => ReturnType<typeof fakeWindow>; getChangedFiles?: () => string[] } = {}) {
+async function createService(runtimeProvider = provider(), options: { taskService?: ReturnType<typeof createFakeTaskService>; gitService?: ReturnType<typeof createFakeGitService>; terminalManager?: ReturnType<typeof createFakeTerminalManager>; browserService?: ReturnType<typeof createFakeBrowserService>; getWindow?: () => ReturnType<typeof fakeWindow>; getChangedFiles?: () => string[]; workspaceSummary?: WorkspaceScanSummary } = {}) {
   const statePath = path.join(await fsp.mkdtemp(path.join(os.tmpdir(), "levi-agent-")), "agent-state.json");
   const registry = new AIRuntimeProviderRegistry();
   registry.register(runtimeProvider.id, () => runtimeProvider);
@@ -354,7 +363,7 @@ async function createService(runtimeProvider = provider(), options: { taskServic
     getWorkspaceRoot: () => path.dirname(statePath),
     getWorkspaceStatus: () => ({
       state: "ready",
-      summary: {
+      summary: options.workspaceSummary ?? {
         projectName: "Project",
         rootPath: path.dirname(statePath),
         languages: ["TypeScript"],
@@ -401,6 +410,109 @@ describe("Coding Agent foundation", () => {
     expect(session.plan?.approvals).toHaveLength(2);
     expect(session.projectSummary).toMatchObject({ projectName: "Project", openFiles: ["src/main.tsx"], context: { attachmentCount: 1 } });
     expect(session.plan?.progress.completedActions).toBe(0);
+  });
+
+  it("uses deterministic React + Vite bootstrap for new fitness apps without model planning", async () => {
+    const runtimeProvider = provider();
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "levi-agent-new-app-"));
+    const { service } = await createService(runtimeProvider, {
+      workspaceSummary: {
+        projectName: "Empty",
+        rootPath: root,
+        languages: [],
+        frameworks: [],
+        packageManager: undefined,
+        likelyEntryPoints: [],
+        sourceDirectories: [],
+        testDirectories: [],
+        scripts: {},
+        documentationFiles: [],
+        manifestFiles: [],
+        includedFileCount: 0,
+        excludedFileCount: 0,
+        scanTimestamp: "2026-08-01T00:00:00.000Z"
+      }
+    });
+
+    const result = await service.plan({
+      prompt: "Build me a simple fitness tracking web app with a dashboard, workout list, add-workout form, and local data persistence.",
+      runtimeId: "ollama",
+      modelId: "model-a"
+    });
+
+    const plan = result.state.sessions[0].plan!;
+    expect(runtimeProvider.chat).not.toHaveBeenCalled();
+    expect(plan.planningMode).toBe("deterministic-bootstrap");
+    expect(plan.starterId).toBe("react-vite");
+    expect(plan.projectSlug).toBe("fitness-tracker");
+    expect(plan.approvals.some((action) => action.type === "create-file" && action.relativePath === "package.json")).toBe(true);
+    expect(plan.approvals.some((action) => action.type === "run-terminal-command" && action.command?.includes("npm"))).toBe(true);
+    expect(plan.approvals.some((action) => action.type === "modify-file" && action.relativePath === "src/App.tsx" && action.content?.includes("localStorage"))).toBe(true);
+    expect(plan.milestones).toContain("Verify completed app");
+  });
+
+  it("places deterministic new apps in a child folder when the workspace is non-empty", async () => {
+    const runtimeProvider = provider();
+    const { service } = await createService(runtimeProvider);
+
+    const result = await service.plan({
+      prompt: "Build me a calculator app",
+      runtimeId: "ollama",
+      modelId: "model-a"
+    });
+
+    const plan = result.state.sessions[0].plan!;
+    expect(runtimeProvider.chat).not.toHaveBeenCalled();
+    expect(plan.starterId).toBe("vanilla-web");
+    expect(plan.approvals.map((action) => action.relativePath).filter(Boolean)).toContain("calculator/index.html");
+    expect(plan.approvals.some((action) => action.type === "run-terminal-command" && action.cwd === "calculator")).toBe(true);
+  });
+
+  it("updates an existing Android starter in place for Android build prompts", async () => {
+    const runtimeProvider = provider();
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "levi-agent-android-app-"));
+    const { service } = await createService(runtimeProvider, {
+      workspaceSummary: {
+        projectName: "TruckerFitness",
+        rootPath: root,
+        languages: ["Kotlin"],
+        frameworks: ["Jetpack Compose"],
+        packageManager: undefined,
+        likelyEntryPoints: ["app/src/main/java/app/levi/generated/MainActivity.kt"],
+        sourceDirectories: ["app/src/main"],
+        testDirectories: [],
+        scripts: {},
+        documentationFiles: [],
+        manifestFiles: ["settings.gradle.kts", "build.gradle.kts", "gradlew.bat", "app/build.gradle.kts", "app/src/main/AndroidManifest.xml"],
+        includedFileCount: 8,
+        excludedFileCount: 0,
+        scanTimestamp: "2026-08-19T00:00:00.000Z"
+      }
+    });
+
+    const result = await service.plan({
+      prompt: "Build me an Android fitness app for truck drivers using Kotlin and Jetpack Compose.",
+      runtimeId: "ollama",
+      modelId: "model-a"
+    });
+
+    const plan = result.state.sessions[0].plan!;
+    expect(runtimeProvider.chat).not.toHaveBeenCalled();
+    expect(plan.starterId).toBe("android-compose");
+    expect(plan.approvals.some((action) => action.type === "create-file" && action.relativePath?.startsWith("trucker-fitness/"))).toBe(false);
+    expect(plan.approvals.some((action) => action.type === "modify-file" && action.relativePath === "app/src/main/java/app/levi/generated/MainActivity.kt" && action.content?.includes("Trucker Fitness"))).toBe(true);
+    expect(plan.approvals.some((action) => action.type === "run-terminal-command" && action.command === (process.platform === "win32" ? "gradlew.bat" : "./gradlew") && action.cwd === ".")).toBe(true);
+  });
+
+  it("recovers structured plans from fenced JSON with trailing commas", async () => {
+    const malformed = "```json\n{\"summary\":\"Recovered plan\",\"steps\":[{\"title\":\"Edit\",\"description\":\"\",\"estimatedFiles\":[\"src/App.tsx\",],\"actions\":[{\"type\":\"modify-file\",\"title\":\"Edit app\",\"description\":\"\",\"relativePath\":\"src/App.tsx\",},],},],}\n```";
+    const { service } = await createService(provider(malformed));
+
+    const result = await service.plan({ prompt: "Update the existing dashboard copy", runtimeId: "ollama", modelId: "model-a" });
+
+    const plan = result.state.sessions[0].plan!;
+    expect(plan.summary).toBe("Recovered plan");
+    expect(plan.approvals[0]).toMatchObject({ type: "modify-file", relativePath: "src/App.tsx" });
   });
 
   it("previews and executes approved browser actions through BrowserService only", async () => {
@@ -461,6 +573,292 @@ describe("Coding Agent foundation", () => {
     expect(deleted.sessions).toHaveLength(0);
   });
 
+  it("recovers corrupt persistence, isolates project sessions, redacts secrets, and bounds operation history", async () => {
+    const { service, statePath, runtimeManager } = await createService(providerWithActions([
+      { type: "run-terminal-command", title: "Secret command", description: "Run with token.", command: nodeExecutable, args: ["--token=super-secret-value"], cwd: "." }
+    ]));
+    const root = path.dirname(statePath);
+    const planned = await service.plan({ prompt: "Run secret command", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    await service.approve({ sessionId, actionId: planned.state.sessions[0].plan!.approvals[0].id });
+
+    const raw = await fsp.readFile(statePath, "utf8");
+    expect(raw).not.toContain("super-secret-value");
+    expect(raw).toContain("[REDACTED]");
+
+    const parsed = JSON.parse(raw);
+    const session = parsed.sessions[0];
+    session.plan.recovery = {
+      schemaVersion: 1,
+      operations: Array.from({ length: 120 }, (_, index) => ({
+        operationId: `op-${index}`,
+        sessionId,
+        title: `Operation ${index}`,
+        status: "Completed",
+        userRequest: "Bound history",
+        approvedScope: [],
+        actionsAttempted: [],
+        actionsCompleted: [],
+        actionsFailed: [],
+        filesCreated: [],
+        filesModified: [],
+        filesDeleted: [],
+        filesRenamed: [],
+        commandsExecuted: [],
+        repairAttempts: 0,
+        snapshots: [],
+        startedAt: "2026-08-01T00:00:00.000Z"
+      })),
+      interruptedOperationIds: []
+    };
+    await fsp.writeFile(statePath, JSON.stringify(parsed), "utf8");
+    const bounded = new AgentService(runtimeManager, { statePath, getWorkspaceRoot: () => root });
+    const boundedState = await bounded.initialize();
+    expect(boundedState.sessions[0].plan?.recovery?.operations).toHaveLength(100);
+
+    const otherRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "levi-agent-other-"));
+    const isolated = new AgentService(runtimeManager, { statePath, getWorkspaceRoot: () => otherRoot });
+    const isolatedState = await isolated.initialize();
+    expect(isolatedState.sessions).toHaveLength(0);
+
+    await fsp.writeFile(statePath, "{not json", "utf8");
+    const corrupt = new AgentService(runtimeManager, { statePath, getWorkspaceRoot: () => root });
+    const recovered = await corrupt.initialize();
+    expect(recovered.sessions).toHaveLength(0);
+    expect((await fsp.readdir(path.dirname(statePath))).some((file) => file.includes("agent-state.json.corrupt-"))).toBe(true);
+  });
+
+  it("marks incomplete file operations interrupted after crash recovery", async () => {
+    const { statePath, runtimeManager } = await createService();
+    const root = path.dirname(statePath);
+    const sessionId = "session-crash";
+    await fsp.writeFile(statePath, JSON.stringify({
+      sessions: [{
+        id: sessionId,
+        title: "Interrupted build",
+        status: "Executing",
+        archived: false,
+        messages: [{ id: "m1", role: "user", content: "Build cancelled", createdAt: "2026-08-01T00:00:00.000Z" }],
+        projectSummary: { projectName: "Project", rootPath: root, languages: [], frameworks: [], buildSystem: [], sourceDirectories: [], entryPoints: [], openFiles: [], git: { changedFiles: 0, summary: [] }, context: { attachmentCount: 0, tokenEstimate: 0, labels: [] } },
+        attachments: [],
+        plan: {
+          id: "plan-crash",
+          objective: "Build cancelled",
+          summary: "Interrupted plan",
+          steps: [],
+          approvals: [],
+          executionQueue: [],
+          taskRuns: [],
+          terminalRuns: [],
+          gitRuns: [],
+          browserRuns: [],
+          verificationReports: [],
+          repairQueue: [],
+          repairProgress: [],
+          estimatedFiles: [],
+          progress: { totalSteps: 0, pendingActions: 0, approvedActions: 0, rejectedActions: 0, completedActions: 0 },
+          recovery: {
+            schemaVersion: 1,
+            operations: [{
+              operationId: "op-crash",
+              sessionId,
+              title: "Partial write",
+              status: "Executing",
+              userRequest: "Build cancelled",
+              approvedScope: ["src/a.ts"],
+              actionsAttempted: ["a1"],
+              actionsCompleted: [],
+              actionsFailed: [],
+              filesCreated: ["src/a.ts"],
+              filesModified: [],
+              filesDeleted: [],
+              filesRenamed: [],
+              commandsExecuted: [],
+              repairAttempts: 0,
+              snapshots: [],
+              startedAt: "2026-08-01T00:00:00.000Z"
+            }],
+            interruptedOperationIds: []
+          },
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z"
+        },
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z"
+      }],
+      activeSessionId: sessionId
+    }), "utf8");
+
+    const restored = new AgentService(runtimeManager, { statePath, getWorkspaceRoot: () => root });
+    const state = await restored.initialize();
+    expect(state.sessions[0].plan?.recovery?.operations[0]).toMatchObject({ status: "interrupted", conflict: "Levi was interrupted during a build." });
+    expect(state.sessions[0].plan?.recovery?.interruptedOperationIds).toContain("op-crash");
+  });
+
+  it("resumes safe interrupted file actions once from the persisted pointer", async () => {
+    const { service, statePath, runtimeManager } = await createService(providerWithActions([
+      { type: "create-file", title: "Create first file", description: "Create a text file.", relativePath: "src/first.txt", content: "first\n" },
+      { type: "create-file", title: "Create second file", description: "Create a text file.", relativePath: "src/second.txt", content: "second\n" }
+    ]));
+    const root = path.dirname(statePath);
+    const planned = await service.plan({ prompt: "Create files", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const actions = planned.state.sessions[0].plan!.approvals;
+    for (const action of actions) await service.approve({ sessionId, actionId: action.id });
+    const preview = await service.preview({ sessionId, actionId: actions[0].id });
+    await service.execute({ sessionId, actionId: actions[0].id, previewId: preview.preview.previewId });
+
+    const restored = new AgentService(runtimeManager, { statePath, getWorkspaceRoot: () => root });
+    const interrupted = await restored.initialize();
+    const operation = interrupted.sessions[0].plan!.recovery!.operations[0];
+    expect(operation).toMatchObject({
+      status: "interrupted",
+      resumeEligibility: expect.objectContaining({ available: true, completed: 1, remaining: 1 }),
+      resumePointer: expect.objectContaining({ currentActionId: actions[1].id })
+    });
+
+    const resumed = await restored.resumeOperation({ sessionId, operationId: operation.operationId });
+    const resumedOperation = resumed.state.sessions[0].plan!.recovery!.operations[0];
+    expect(resumed.resumedActionIds).toEqual([actions[1].id]);
+    expect(resumedOperation.actionsCompleted).toEqual([actions[0].id, actions[1].id]);
+    expect(resumedOperation.filesCreated).toEqual(["src/first.txt", "src/second.txt"]);
+    expect(await fsp.readFile(path.join(root, "src", "first.txt"), "utf8")).toBe("first\n");
+    expect(await fsp.readFile(path.join(root, "src", "second.txt"), "utf8")).toBe("second\n");
+
+    await expect(restored.resumeOperation({ sessionId, operationId: operation.operationId })).rejects.toThrow(/No remaining actions/i);
+  });
+
+  it("blocks unsafe or stale resume actions and records resume conflicts", async () => {
+    const { service, statePath, runtimeManager } = await createService(providerWithActions([
+      { type: "create-file", title: "Create safe file", description: "Create a text file.", relativePath: "src/safe.txt", content: "safe\n" },
+      { type: "delete-file", title: "Delete unsafe file", description: "Delete a file.", relativePath: "src/delete-me.txt" },
+      { type: "modify-file", title: "Modify stale file", description: "Replace content.", relativePath: "src/stale.txt", content: "after\n" }
+    ]));
+    const root = path.dirname(statePath);
+    await fsp.mkdir(path.join(root, "src"), { recursive: true });
+    await fsp.writeFile(path.join(root, "src", "delete-me.txt"), "delete\n", "utf8");
+    await fsp.writeFile(path.join(root, "src", "stale.txt"), "before\n", "utf8");
+    const planned = await service.plan({ prompt: "Unsafe resume", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const actions = planned.state.sessions[0].plan!.approvals;
+    for (const action of actions) await service.approve({ sessionId, actionId: action.id });
+    const preview = await service.preview({ sessionId, actionId: actions[0].id });
+    await service.execute({ sessionId, actionId: actions[0].id, previewId: preview.preview.previewId });
+
+    const unsafeRestore = new AgentService(runtimeManager, { statePath, getWorkspaceRoot: () => root });
+    const unsafeState = await unsafeRestore.initialize();
+    const unsafeOperation = unsafeState.sessions[0].plan!.recovery!.operations[0];
+    expect(unsafeOperation.resumeEligibility).toMatchObject({ available: false, reason: "Remaining action requires fresh approval." });
+    await expect(unsafeRestore.resumeOperation({ sessionId, operationId: unsafeOperation.operationId })).rejects.toThrow(/fresh approval/i);
+    expect((unsafeRestore.status({ sessionId }) as AgentSession).plan!.recovery!.operations[0]).toMatchObject({ status: "resume-conflict" });
+
+    const raw = JSON.parse(await fsp.readFile(statePath, "utf8"));
+    raw.sessions[0].plan.executionQueue[1].status = "Rejected";
+    raw.sessions[0].plan.approvals[1].status = "Rejected";
+    raw.sessions[0].plan.recovery.operations[0].status = "interrupted";
+    raw.sessions[0].plan.recovery.operations[0].actionsFailed = [actions[1].id];
+    raw.sessions[0].plan.recovery.operations[0].actionsAttempted = [actions[0].id, actions[2].id];
+    raw.sessions[0].plan.recovery.operations[0].actionsCompleted = [actions[0].id];
+    raw.sessions[0].plan.recovery.operations[0].snapshots.push({
+      relativePath: "src/stale.txt",
+      kind: "file",
+      beforeContent: "before\n",
+      beforeHash: contentHash("before\n"),
+      afterContent: "after\n",
+      afterHash: contentHash("after\n")
+    });
+    await fsp.writeFile(path.join(root, "src", "stale.txt"), "manual\n", "utf8");
+    await fsp.writeFile(statePath, JSON.stringify(raw), "utf8");
+
+    const staleRestore = new AgentService(runtimeManager, { statePath, getWorkspaceRoot: () => root });
+    const staleState = await staleRestore.initialize();
+    const staleOperation = staleState.sessions[0].plan!.recovery!.operations[0];
+    await expect(staleRestore.resumeOperation({ sessionId, operationId: staleOperation.operationId })).rejects.toThrow(/File changed since interruption/i);
+    expect((staleRestore.status({ sessionId }) as AgentSession).plan!.recovery!.operations[0]).toMatchObject({ status: "resume-conflict" });
+    expect(await fsp.readFile(path.join(root, "src", "stale.txt"), "utf8")).toBe("manual\n");
+  });
+
+  it("reruns safe interrupted verification commands but refuses dev servers", async () => {
+    const { service, statePath, runtimeManager } = await createService(providerWithActions([
+      { type: "run-terminal-command", title: "Build check", description: "Run deterministic build verification.", command: nodeExecutable, args: ["-e", "process.stdout.write('build ok\\n')", "build"], cwd: "." },
+      { type: "run-terminal-command", title: "Dev server", description: "Run development server.", command: "npm.cmd", args: ["run", "dev"], cwd: "." }
+    ]));
+    const root = path.dirname(statePath);
+    const planned = await service.plan({ prompt: "Resume commands", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const actions = planned.state.sessions[0].plan!.approvals;
+    for (const action of actions) await service.approve({ sessionId, actionId: action.id });
+    const raw = JSON.parse(await fsp.readFile(statePath, "utf8"));
+    raw.sessions[0].plan.approvals[1].status = "Rejected";
+    raw.sessions[0].plan.executionQueue = [
+      { actionId: actions[0].id, type: actions[0].type, title: actions[0].title, status: "Pending" },
+      { actionId: actions[1].id, type: actions[1].type, title: actions[1].title, status: "Rejected" }
+    ];
+    raw.sessions[0].plan.recovery = {
+      schemaVersion: 1,
+      operations: [{
+        operationId: "op-terminal-safe",
+        sessionId,
+        planId: raw.sessions[0].plan.id,
+        workspaceRoot: root,
+        title: "Resume safe terminal",
+        status: "interrupted",
+        userRequest: "Resume commands",
+        approvedScope: [],
+        actionsAttempted: [actions[0].id],
+        actionsCompleted: [],
+        actionsFailed: [],
+        filesCreated: [],
+        filesModified: [],
+        filesDeleted: [],
+        filesRenamed: [],
+        commandsExecuted: [{ actionId: actions[0].id, executable: nodeExecutable, args: ["-e", "process.stdout.write('build ok\\n')", "build"], cwd: root, status: "interrupted" }],
+        repairAttempts: 0,
+        snapshots: [],
+        startedAt: "2026-08-01T00:00:00.000Z"
+      }],
+      interruptedOperationIds: ["op-terminal-safe"]
+    };
+    raw.sessions[0].plan.terminalRuns = [{
+      actionId: actions[0].id,
+      commandId: "old-command",
+      executable: nodeExecutable,
+      args: ["-e", "process.stdout.write('build ok\\n')", "build"],
+      cwd: root,
+      status: "Interrupted",
+      resultStatus: "cancelled",
+      outputPreview: "",
+      stderrPreview: "",
+      failureReason: "Terminal command was interrupted before Levi shut down.",
+      updatedAt: "2026-08-01T00:00:00.000Z"
+    }];
+    await fsp.writeFile(statePath, JSON.stringify(raw), "utf8");
+
+    const restored = new AgentService(runtimeManager, { statePath, getWorkspaceRoot: () => root });
+    await restored.initialize();
+    const resumed = await restored.resumeOperation({ sessionId, operationId: "op-terminal-safe" });
+    expect(resumed.resumedActionIds).toEqual([actions[0].id]);
+    expect(resumed.state.sessions[0].plan!.terminalRuns.find((run: AgentTerminalRunState) => run.actionId === actions[0].id)).toMatchObject({ status: "Succeeded" });
+
+    const devRaw = JSON.parse(await fsp.readFile(statePath, "utf8"));
+    devRaw.sessions[0].plan.approvals[1].status = "Approved";
+    devRaw.sessions[0].plan.executionQueue[1].status = "Pending";
+    devRaw.sessions[0].plan.recovery.operations[0] = {
+      ...devRaw.sessions[0].plan.recovery.operations[0],
+      operationId: "op-terminal-dev",
+      status: "interrupted",
+      actionsAttempted: [actions[1].id],
+      actionsCompleted: [],
+      actionsFailed: [],
+      commandsExecuted: [{ actionId: actions[1].id, executable: "npm.cmd", args: ["run", "dev"], cwd: root, status: "interrupted" }]
+    };
+    await fsp.writeFile(statePath, JSON.stringify(devRaw), "utf8");
+    const devRestored = new AgentService(runtimeManager, { statePath, getWorkspaceRoot: () => root });
+    const devState = await devRestored.initialize();
+    expect(devState.sessions[0].plan!.recovery!.operations[0].resumeEligibility).toMatchObject({ available: false });
+    await expect(devRestored.resumeOperation({ sessionId, operationId: "op-terminal-dev" })).rejects.toThrow(/approval/i);
+  });
+
   it("validates IPC payload-shaped requests and rejects unsafe workspace paths", async () => {
     const { service } = await createService();
 
@@ -492,6 +890,8 @@ describe("Coding Agent foundation", () => {
     expect(channels).toContain('agentExecute: "levi:agent:execute"');
     expect(channels).toContain('agentPreview: "levi:agent:preview"');
     expect(channels).toContain('agentUndo: "levi:agent:undo"');
+    expect(channels).toContain('agentRestoreOperation: "levi:agent:restore-operation"');
+    expect(channels).toContain('agentResumeOperation: "levi:agent:resume-operation"');
     expect(channels).toContain('agentQueue: "levi:agent:queue"');
     expect(channels).toContain('agentCancel: "levi:agent:cancel"');
     expect(channels).toContain('agentTaskExecute: "levi:agent:task-execute"');
@@ -505,23 +905,30 @@ describe("Coding Agent foundation", () => {
     expect(channels).toContain('agentTerminalStatus: "levi:agent:terminal-status"');
     expect(channels).toContain('agentVerify: "levi:agent:verify"');
     expect(channels).toContain('agentRepairPlan: "levi:agent:repair-plan"');
+    expect(channels).toContain('agentRepairExecute: "levi:agent:repair-execute"');
     expect(channels).toContain('agentRepairStatus: "levi:agent:repair-status"');
     expect(main).toContain("const agentService = new AgentService(aiRuntimeManager");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentPlan");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentExecute");
+    expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentRestoreOperation");
+    expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentResumeOperation");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentTaskExecute");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentGitExecute");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentTerminalExecute");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentVerify");
     expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentRepairPlan");
+    expect(main).toContain("ipcMain.handle(IPC_CHANNELS.agentRepairExecute");
     expect(preload).toContain("agent: {");
     expect(preload).toContain("plan: (request: AgentPlanRequest)");
     expect(preload).toContain("execute: (request: AgentExecuteRequest)");
+    expect(preload).toContain("restoreOperation: (request: AgentRestoreOperationRequest)");
+    expect(preload).toContain("resumeOperation: (request: AgentResumeOperationRequest)");
     expect(preload).toContain("taskExecute: (request: AgentTaskExecuteRequest)");
     expect(preload).toContain("gitExecute: (request: AgentGitExecuteRequest)");
     expect(preload).toContain("terminalExecute: (request: AgentTerminalExecuteRequest)");
     expect(preload).toContain("verify: (request: AgentVerifyRequest)");
     expect(preload).toContain("repairPlan: (request: AgentRepairPlanRequest)");
+    expect(preload).toContain("repairExecute: (request: AgentRepairExecuteRequest)");
     expect(service).toContain("this.runtimeManager.chat");
     expect(service).not.toContain("writeWorkspacePath");
     expect(service).not.toContain("taskService.run");
@@ -560,6 +967,228 @@ describe("Coding Agent foundation", () => {
     expect(await fsp.readFile(path.join(root, "src", "existing.txt"), "utf8")).toBe("before\r\n");
   });
 
+  it("treats compatible create-file and create-folder collisions as already satisfied", async () => {
+    const { service, statePath } = await createService(providerWithActions([
+      { type: "create-file", title: "Create existing file", description: "Create a text file.", relativePath: "src/existing.txt", content: "same\n" },
+      { type: "create-folder", title: "Create existing folder", description: "Create folder.", relativePath: "src" }
+    ]));
+    const root = path.dirname(statePath);
+    await fsp.mkdir(path.join(root, "src"), { recursive: true });
+    await fsp.writeFile(path.join(root, "src", "existing.txt"), "same\n", "utf8");
+
+    const planned = await service.plan({ prompt: "Create compatible existing targets", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const actions = planned.state.sessions[0].plan!.approvals;
+
+    for (const action of actions) {
+      await service.approve({ sessionId, actionId: action.id });
+      const preview = await service.preview({ sessionId, actionId: action.id });
+      expect(preview.preview.alreadySatisfied).toBe(true);
+      await service.execute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    }
+
+    const operation = (service.status({ sessionId }) as AgentSession).plan!.recovery!.operations[0];
+    expect(operation.filesCreated).toEqual([]);
+
+    await service.undo({ sessionId });
+    expect(await fsp.readFile(path.join(root, "src", "existing.txt"), "utf8")).toBe("same\n");
+    expect(fs.statSync(path.join(root, "src")).isDirectory()).toBe(true);
+  });
+
+  it("reports create-file and create-folder collisions when existing targets are incompatible", async () => {
+    const { service, statePath } = await createService(providerWithActions([
+      { type: "create-file", title: "Create colliding file", description: "Create a text file.", relativePath: "src/different.txt", content: "expected\n" },
+      { type: "create-folder", title: "Create colliding folder", description: "Create folder.", relativePath: "src/file-target" }
+    ]));
+    const root = path.dirname(statePath);
+    await fsp.mkdir(path.join(root, "src"), { recursive: true });
+    await fsp.writeFile(path.join(root, "src", "different.txt"), "actual\n", "utf8");
+    await fsp.writeFile(path.join(root, "src", "file-target"), "not a folder\n", "utf8");
+
+    const planned = await service.plan({ prompt: "Create incompatible existing targets", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const actions = planned.state.sessions[0].plan!.approvals;
+    for (const action of actions) await service.approve({ sessionId, actionId: action.id });
+
+    await expect(service.preview({ sessionId, actionId: actions[0].id })).rejects.toThrow(/different content/i);
+    await expect(service.preview({ sessionId, actionId: actions[1].id })).rejects.toThrow(/exists as a file/i);
+  });
+
+  it("persists recovery ledger and resumes undo after restart", async () => {
+    const { service, statePath, runtimeManager } = await createService(providerWithActions([
+      { type: "create-file", title: "Create resumable file", description: "Create a text file.", relativePath: "src/resume.txt", content: "hello\n" }
+    ]));
+    const root = path.dirname(statePath);
+    const planned = await service.plan({ prompt: "Create resumable file", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const action = planned.state.sessions[0].plan!.approvals[0];
+
+    await service.approve({ sessionId, actionId: action.id });
+    const preview = await service.preview({ sessionId, actionId: action.id });
+    const executed = await service.execute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    expect(executed.state.sessions[0].plan?.recovery?.operations[0]).toMatchObject({ status: "completed", filesCreated: ["src/resume.txt"] });
+
+    const restored = new AgentService(runtimeManager, { statePath, getWorkspaceRoot: () => root });
+    const restoredState = await restored.initialize();
+    expect(restoredState.sessions[0].messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(restoredState.sessions[0].plan?.lastUndo).toMatchObject({ relativePath: "src/resume.txt" });
+    await restored.undo({ sessionId });
+    expect(fs.existsSync(path.join(root, "src", "resume.txt"))).toBe(false);
+  });
+
+  it("restores a selected completed operation from recovery history", async () => {
+    const { service, statePath } = await createService(providerWithActions([
+      { type: "create-file", title: "Create restorable file", description: "Create a text file.", relativePath: "src/restore.txt", content: "restore\n" }
+    ]));
+    const root = path.dirname(statePath);
+    const planned = await service.plan({ prompt: "Create restorable file", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const action = planned.state.sessions[0].plan!.approvals[0];
+
+    await service.approve({ sessionId, actionId: action.id });
+    const preview = await service.preview({ sessionId, actionId: action.id });
+    const executed = await service.execute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    const operationId = executed.state.sessions[0].plan!.recovery!.operations[0].operationId;
+
+    const restored = await service.restoreOperation({ sessionId, operationId });
+    expect(restored).toMatchObject({ sessionId, operationId, restoredPaths: ["src/restore.txt"] });
+    expect(restored.state.sessions[0].plan?.recovery?.operations[0]).toMatchObject({ status: "rolled-back" });
+    expect(fs.existsSync(path.join(root, "src", "restore.txt"))).toBe(false);
+  });
+
+  it("protects manual edits and created-file collisions during undo", async () => {
+    const { service, statePath } = await createService(providerWithActions([
+      { type: "create-file", title: "Create user-touched file", description: "Create a text file.", relativePath: "src/touched.txt", content: "agent\n" }
+    ]));
+    const root = path.dirname(statePath);
+    const planned = await service.plan({ prompt: "Create user touched file", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const action = planned.state.sessions[0].plan!.approvals[0];
+
+    await service.approve({ sessionId, actionId: action.id });
+    const preview = await service.preview({ sessionId, actionId: action.id });
+    await service.execute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    await fsp.writeFile(path.join(root, "src", "touched.txt"), "manual\n", "utf8");
+
+    await expect(service.undo({ sessionId })).rejects.toThrow(/changed after Levi's operation/i);
+    const status = service.status({ sessionId }) as AgentSession;
+    expect(status.plan?.recovery?.operations[0]).toMatchObject({ status: "rollback-conflict" });
+    expect(await fsp.readFile(path.join(root, "src", "touched.txt"), "utf8")).toBe("manual\n");
+  });
+
+  it("groups approved multi-file operations into one rollback boundary", async () => {
+    const { service, statePath } = await createService(providerWithActions([
+      { type: "create-file", title: "Create generated A", description: "Create a text file.", relativePath: "src/generated-a.txt", content: "a\n" },
+      { type: "create-file", title: "Create generated B", description: "Create a text file.", relativePath: "src/generated-b.txt", content: "b\n" },
+      { type: "modify-file", title: "Modify existing file", description: "Replace file content.", relativePath: "src/existing.txt", content: "after\n" }
+    ]));
+    const root = path.dirname(statePath);
+    await fsp.mkdir(path.join(root, "src"), { recursive: true });
+    await fsp.writeFile(path.join(root, "src", "existing.txt"), "before\n", "utf8");
+
+    const planned = await service.plan({ prompt: "Create multiple files", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const actions = planned.state.sessions[0].plan!.approvals;
+    for (const action of actions) {
+      await service.approve({ sessionId, actionId: action.id });
+      const preview = await service.preview({ sessionId, actionId: action.id });
+      await service.execute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    }
+
+    const operation = (service.status({ sessionId }) as AgentSession).plan!.recovery!.operations[0];
+    expect(operation).toMatchObject({
+      status: "completed",
+      filesCreated: ["src/generated-a.txt", "src/generated-b.txt"],
+      filesModified: ["src/existing.txt"]
+    });
+    expect(operation.snapshots).toHaveLength(3);
+
+    const undone = await service.undo({ sessionId });
+    expect([...(undone.restoredPaths ?? [])].sort()).toEqual(["src/existing.txt", "src/generated-a.txt", "src/generated-b.txt"]);
+    expect(fs.existsSync(path.join(root, "src", "generated-a.txt"))).toBe(false);
+    expect(fs.existsSync(path.join(root, "src", "generated-b.txt"))).toBe(false);
+    expect(await fsp.readFile(path.join(root, "src", "existing.txt"), "utf8")).toBe("before\n");
+    expect((service.status({ sessionId }) as AgentSession).plan!.recovery!.operations[0]).toMatchObject({ status: "rolled-back" });
+  });
+
+  it("resolves rollback conflicts by keeping current files or restoring Levi snapshots", async () => {
+    const { service, statePath } = await createService(providerWithActions([
+      { type: "modify-file", title: "Modify touched file", description: "Replace file content.", relativePath: "src/touched.txt", content: "agent touched\n" },
+      { type: "modify-file", title: "Modify other file", description: "Replace file content.", relativePath: "src/other.txt", content: "agent other\n" }
+    ]));
+    const root = path.dirname(statePath);
+    await fsp.mkdir(path.join(root, "src"), { recursive: true });
+    await fsp.writeFile(path.join(root, "src", "touched.txt"), "before touched\n", "utf8");
+    await fsp.writeFile(path.join(root, "src", "other.txt"), "before other\n", "utf8");
+
+    const planned = await service.plan({ prompt: "Modify files", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const actions = planned.state.sessions[0].plan!.approvals;
+    for (const action of actions) {
+      await service.approve({ sessionId, actionId: action.id });
+      const preview = await service.preview({ sessionId, actionId: action.id });
+      await service.execute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    }
+    const operationId = (service.status({ sessionId }) as AgentSession).plan!.recovery!.operations[0].operationId;
+    await fsp.writeFile(path.join(root, "src", "touched.txt"), "manual touched\n", "utf8");
+
+    await expect(service.undo({ sessionId })).rejects.toThrow(/changed after Levi's operation/i);
+    let operation = (service.status({ sessionId }) as AgentSession).plan!.recovery!.operations[0];
+    expect(operation).toMatchObject({ status: "rollback-conflict" });
+    expect(operation.rollbackConflicts).toEqual([expect.objectContaining({ relativePath: "src/touched.txt" })]);
+
+    await service.restoreOperation({ sessionId, operationId, choices: { "src/touched.txt": "keep-current" } });
+    expect(await fsp.readFile(path.join(root, "src", "touched.txt"), "utf8")).toBe("manual touched\n");
+    expect(await fsp.readFile(path.join(root, "src", "other.txt"), "utf8")).toBe("before other\n");
+
+    const second = await service.plan({ prompt: "Modify files again", runtimeId: "ollama", modelId: "model-a" });
+    const secondSessionId = second.sessionId;
+    await fsp.writeFile(path.join(root, "src", "touched.txt"), "before touched again\n", "utf8");
+    await fsp.writeFile(path.join(root, "src", "other.txt"), "before other again\n", "utf8");
+    const secondActions = second.state.sessions[0].plan!.approvals;
+    for (const action of secondActions) {
+      await service.approve({ sessionId: secondSessionId, actionId: action.id });
+      const preview = await service.preview({ sessionId: secondSessionId, actionId: action.id });
+      await service.execute({ sessionId: secondSessionId, actionId: action.id, previewId: preview.preview.previewId });
+    }
+    const secondOperationId = (service.status({ sessionId: secondSessionId }) as AgentSession).plan!.recovery!.operations[0].operationId;
+    await fsp.writeFile(path.join(root, "src", "touched.txt"), "manual overwritten\n", "utf8");
+
+    await expect(service.undo({ sessionId: secondSessionId })).rejects.toThrow(/changed after Levi's operation/i);
+    await service.restoreOperation({ sessionId: secondSessionId, operationId: secondOperationId, choices: { "src/touched.txt": "restore-snapshot" } });
+    expect(await fsp.readFile(path.join(root, "src", "touched.txt"), "utf8")).toBe("before touched again\n");
+    expect(await fsp.readFile(path.join(root, "src", "other.txt"), "utf8")).toBe("before other again\n");
+    operation = (service.status({ sessionId: secondSessionId }) as AgentSession).plan!.recovery!.operations[0];
+    expect(operation).toMatchObject({ status: "rolled-back", rollbackConflicts: [] });
+  });
+
+  it("restores delete and rename operations with file-level recovery", async () => {
+    const { service, statePath } = await createService(providerWithActions([
+      { type: "delete-file", title: "Delete stale file", description: "Remove stale file.", relativePath: "src/delete-me.txt" },
+      { type: "rename-file", title: "Rename file", description: "Move file.", relativePath: "src/from.txt", destinationRelativePath: "src/to.txt" }
+    ]));
+    const root = path.dirname(statePath);
+    await fsp.mkdir(path.join(root, "src"), { recursive: true });
+    await fsp.writeFile(path.join(root, "src", "delete-me.txt"), "delete\n", "utf8");
+    await fsp.writeFile(path.join(root, "src", "from.txt"), "rename\n", "utf8");
+    const planned = await service.plan({ prompt: "Delete and rename files", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const [deleteAction, renameAction] = planned.state.sessions[0].plan!.approvals;
+
+    await service.approve({ sessionId, actionId: deleteAction.id });
+    const deletePreview = await service.preview({ sessionId, actionId: deleteAction.id });
+    await service.execute({ sessionId, actionId: deleteAction.id, previewId: deletePreview.preview.previewId });
+    await service.undo({ sessionId });
+    expect(await fsp.readFile(path.join(root, "src", "delete-me.txt"), "utf8")).toBe("delete\n");
+
+    await service.approve({ sessionId, actionId: renameAction.id });
+    const renamePreview = await service.preview({ sessionId, actionId: renameAction.id });
+    await service.execute({ sessionId, actionId: renameAction.id, previewId: renamePreview.preview.previewId });
+    await service.undo({ sessionId });
+    expect(await fsp.readFile(path.join(root, "src", "from.txt"), "utf8")).toBe("rename\n");
+    expect(fs.existsSync(path.join(root, "src", "to.txt"))).toBe(false);
+  });
+
   it("executes delete, rename file, create folder, rename folder, and stops unsupported actions", async () => {
     const { service, statePath } = await createService(providerWithActions([
       { type: "delete-file", title: "Delete stale file", description: "Remove stale file.", relativePath: "src/stale.txt" },
@@ -586,6 +1215,9 @@ describe("Coding Agent foundation", () => {
     expect(await fsp.readFile(path.join(root, "src", "new.txt"), "utf8")).toBe("move me\n");
     expect(fs.statSync(path.join(root, "src", "new-folder")).isDirectory()).toBe(true);
     expect(fs.statSync(path.join(root, "src", "renamed-folder")).isDirectory()).toBe(true);
+
+    await service.undo({ sessionId });
+    expect(fs.existsSync(path.join(root, "src", "new-folder"))).toBe(false);
 
     await service.approve({ sessionId, actionId: actions[4].id });
     await expect(service.preview({ sessionId, actionId: actions[4].id })).rejects.toThrow(/workspace file actions/i);
@@ -671,7 +1303,7 @@ describe("Coding Agent foundation", () => {
     expect(verified.state.sessions[0].plan?.verificationReports[0].id).toBe(verified.report.id);
   });
 
-  it("classifies failed verification, plans pending repairs, and requires approval flow", async () => {
+  it("classifies failed verification, generates structured repairs, and executes related file repairs automatically", async () => {
     const planContent = JSON.stringify({
       summary: "Run typecheck.",
       steps: [{
@@ -689,13 +1321,23 @@ describe("Coding Agent foundation", () => {
         suggestedFix: "Add or import the LoginProps type in src/Login.tsx.",
         confidence: 0.82,
         estimatedRisk: "low",
-        classification: "Type errors"
+        classification: "Type errors",
+        actions: [{
+          type: "modify-file",
+          title: "Add LoginProps type",
+          description: "Add the missing props type used by the component.",
+          relativePath: "src/Login.tsx",
+          content: "type LoginProps = { title: string };\nexport function Login(_props: LoginProps) {\n  return null;\n}\n"
+        }]
       }]
     });
     const task: TaskDefinition = { id: "npm:typecheck", label: "typecheck", source: "detected", group: "build", command: "npm.cmd", args: ["run", "typecheck"], cwd: ".", problemMatchers: ["$tsc"] };
     const taskService = createFakeTaskService([task]);
     const runtimeProvider = providerWithResponses([planContent, repairContent]);
-    const { service } = await createService(runtimeProvider, { taskService, getWindow: fakeWindow });
+    const { service, statePath } = await createService(runtimeProvider, { taskService, getWindow: fakeWindow });
+    const root = path.dirname(statePath);
+    await fsp.mkdir(path.join(root, "src"), { recursive: true });
+    await fsp.writeFile(path.join(root, "src", "Login.tsx"), "export function Login(_props: LoginProps) {\n  return null;\n}\n", "utf8");
     const planned = await service.plan({ prompt: "Verify failure", runtimeId: "ollama", modelId: "model-a" });
     const sessionId = planned.sessionId;
     const action = planned.state.sessions[0].plan!.approvals[0];
@@ -715,28 +1357,29 @@ describe("Coding Agent foundation", () => {
 
     const plannedRepair = await service.repairPlan({ sessionId, reportId: verified.report.id });
     expect(plannedRepair.repairs[0]).toMatchObject({ status: "Pending", classification: "Type errors", affectedFiles: ["src/Login.tsx"] });
-    const repairId = plannedRepair.repairs[0].id;
-    const approved = await service.approve({ sessionId, actionId: repairId });
-    expect(approved.sessions[0].plan?.repairQueue[0]).toMatchObject({ id: repairId, status: "Approved" });
-    expect(approved.sessions[0].plan?.repairProgress.map((entry) => entry.stage)).toContain("Repair Approved");
+    expect(plannedRepair.repairs[0].actions).toHaveLength(1);
+    const executed = await service.repairExecute({ sessionId, reportId: verified.report.id, attempt: 1 });
+    expect(executed.executedActions).toHaveLength(1);
+    expect(await fsp.readFile(path.join(root, "src", "Login.tsx"), "utf8")).toContain("type LoginProps");
+    expect(executed.repairs[0]).toMatchObject({ status: "Completed", requiresFreshApproval: false });
+    expect(executed.state.sessions[0].plan?.repairProgress.map((entry) => entry.stage)).toEqual(expect.arrayContaining(["Repair Executing", "Repair Complete"]));
     const status = service.repairStatus({ sessionId });
-    expect(status.repairs[0]).toMatchObject({ id: repairId, status: "Approved" });
+    expect(status.repairs[0]).toMatchObject({ id: plannedRepair.repairs[0].id, status: "Completed" });
     await expect(service.repairPlan({ sessionId: "missing", reportId: verified.report.id })).rejects.toThrow(/not found/i);
   });
 
-  it("executes approved terminal commands through TerminalManager and records live output", async () => {
-    const terminalManager = createFakeTerminalManager();
+  it("executes approved non-interactive terminal commands directly and records stdout, stderr, and exit code", async () => {
     const runtimeProvider = providerWithActions([{
       type: "run-terminal-command",
       title: "Run terminal tests",
       description: "Run a safe validation command.",
-      command: "npm.cmd",
-      args: ["test"],
+      command: nodeExecutable,
+      args: ["-e", "process.stdout.write('running tests\\n'),process.stderr.write('src/index.ts(1,7): error TS1109: Expression expected.\\n'),process.exit(7)"],
       cwd: ".",
-      expectedOutput: "Tests pass.",
+      expectedOutput: "Tests fail with compiler output.",
       estimatedDurationMs: 1000
     }]);
-    const { service, runtimeProvider: providerInstance } = await createService(runtimeProvider, { terminalManager, getWindow: fakeWindow });
+    const { service, runtimeProvider: providerInstance } = await createService(runtimeProvider);
     const planned = await service.plan({ prompt: "Run terminal command", runtimeId: "ollama", modelId: "model-a" });
     const sessionId = planned.sessionId;
     const action = planned.state.sessions[0].plan!.approvals[0];
@@ -744,19 +1387,77 @@ describe("Coding Agent foundation", () => {
     await expect(service.terminalPreview({ sessionId, actionId: action.id })).rejects.toThrow(/approved/i);
     await service.approve({ sessionId, actionId: action.id });
     const preview = await service.terminalPreview({ sessionId, actionId: action.id });
-    expect(preview.preview).toMatchObject({ executable: "npm.cmd", args: ["test"], riskLevel: "low", expectedOutput: "Tests pass." });
+    expect(preview.preview).toMatchObject({ executable: nodeExecutable, riskLevel: "medium", expectedOutput: "Tests fail with compiler output." });
     expect(path.isAbsolute(preview.preview.cwd)).toBe(true);
 
     const execution = await service.terminalExecute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
-    expect(terminalManager.createCommand).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ command: "npm.cmd", args: ["test"], cwd: preview.preview.cwd }), expect.any(Function));
-    expect(execution.terminalRun).toMatchObject({ status: "Running", terminalSessionId: "terminal-1" });
-    terminalManager.emitData("running tests\n");
-    expect(service.terminalStatus({ sessionId }).terminalRuns[0].outputPreview).toContain("running tests");
-    terminalManager.finish(0);
+    expect(execution.terminalRun).toMatchObject({ status: "Running", terminalSessionId: undefined });
     await waitFor(() => expect(service.terminalStatus({ sessionId }).terminalRuns[0].verification).toBeDefined());
     const finished = service.terminalStatus({ sessionId }).terminalRuns[0];
-    expect(finished).toMatchObject({ status: "Succeeded", exitCode: 0, verification: expect.objectContaining({ outputExcerpt: expect.stringContaining("running tests") }) });
+    expect(finished).toMatchObject({
+      status: "Failed",
+      resultStatus: "failed",
+      exitCode: 7,
+      outputPreview: expect.stringContaining("running tests"),
+      stderrPreview: expect.stringContaining("src/index.ts"),
+      verification: expect.objectContaining({ outputExcerpt: expect.stringContaining("running tests") })
+    });
+    const verified = await service.verify({ sessionId });
+    const terminalFailure = verified.report.failures.find((failure) => failure.source === "terminal");
+    expect(terminalFailure).toMatchObject({
+      source: "terminal",
+      exitCode: 7,
+      affectedFiles: ["src/index.ts"],
+      details: expect.objectContaining({
+        command: nodeExecutable,
+        exitCode: 7,
+        relevantFiles: ["src/index.ts"],
+        stderr: expect.stringContaining("src/index.ts"),
+        stdout: expect.stringContaining("running tests")
+      })
+    });
     expect(providerInstance.chat).toHaveBeenCalledTimes(2);
+  });
+
+  it("distinguishes terminal infrastructure failures from project command failures", async () => {
+    const runtimeProvider = providerWithActions([{
+      type: "run-terminal-command",
+      title: "Run missing wrapper",
+      description: "Run an allowed executable that is not present.",
+      command: "gradlew.bat",
+      args: ["test"],
+      cwd: "."
+    }]);
+    const { service, runtimeProvider: providerInstance } = await createService(runtimeProvider);
+    const planned = await service.plan({ prompt: "Run missing wrapper", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const action = planned.state.sessions[0].plan!.approvals[0];
+    await service.approve({ sessionId, actionId: action.id });
+    const preview = await service.terminalPreview({ sessionId, actionId: action.id });
+
+    await service.terminalExecute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    await waitFor(() => expect(service.terminalStatus({ sessionId }).terminalRuns[0].resultStatus).toBe("infrastructure-error"));
+    const failed = service.terminalStatus({ sessionId }).terminalRuns[0];
+    expect(failed).toMatchObject({
+      status: "Failed",
+      resultStatus: "infrastructure-error",
+      failureReason: expect.stringContaining("Terminal execution failed")
+    });
+
+    const verified = await service.verify({ sessionId });
+    expect(verified.report.terminalOutputExcerpt).toBe("");
+    expect(verified.report.failures[0]).toMatchObject({
+      source: "terminal",
+      message: expect.stringContaining("Terminal execution failed"),
+      affectedFiles: []
+    });
+    const repairs = await service.repairPlan({ sessionId, reportId: verified.report.id });
+    expect(repairs.repairs[0]).toMatchObject({
+      actions: [],
+      requiresFreshApproval: true,
+      blockers: ["No structured repair action was generated."]
+    });
+    expect(providerInstance.chat).toHaveBeenCalledTimes(1);
   });
 
   it("rejects dangerous terminal commands, handles cancellation, run-again, queue blocking, and interrupted restore", async () => {
@@ -765,8 +1466,9 @@ describe("Coding Agent foundation", () => {
       { type: "run-terminal-command", title: "Chained", description: "Bad chain.", command: "npm.cmd test && npm.cmd build" },
       { type: "run-terminal-command", title: "Shell", description: "Bad shell.", command: "cmd", args: ["/c", "npm test"] },
       { type: "run-terminal-command", title: "Env", description: "Bad env.", command: "npm.cmd", args: ["test", "TOKEN=value"] },
-      { type: "run-terminal-command", title: "Safe", description: "Safe command.", command: "npm.cmd", args: ["test"], cwd: "." },
-      { type: "run-terminal-command", title: "Second", description: "Second command.", command: "node", args: ["--version"], cwd: "." }
+      { type: "run-terminal-command", title: "Safe", description: "Safe command.", command: nodeExecutable, args: ["-e", "setInterval(function(){},1000)"], cwd: "." },
+      { type: "run-terminal-command", title: "Second", description: "Second command.", command: nodeExecutable, args: ["--version"], cwd: "." },
+      { type: "run-terminal-command", title: "Failing", description: "Failing command.", command: nodeExecutable, args: ["-e", "process.stderr.write('compile failed\\n'),process.exit(1)"], cwd: "." }
     ]), { terminalManager, getWindow: fakeWindow });
     const planned = await service.plan({ prompt: "Terminal safety", runtimeId: "ollama", modelId: "model-a" });
     const sessionId = planned.sessionId;
@@ -781,13 +1483,21 @@ describe("Coding Agent foundation", () => {
     await service.terminalExecute({ sessionId, actionId: actions[3].id, previewId: preview.preview.previewId });
     await expect(service.terminalExecute({ sessionId, actionId: actions[4].id })).rejects.toThrow(/already running/i);
     await service.terminalCancel({ sessionId, actionId: actions[3].id });
-    expect(terminalManager.kill).toHaveBeenCalledWith("terminal-1");
-    expect(service.terminalStatus({ sessionId }).terminalRuns.find((run) => run.actionId === actions[3].id)?.status).toBe("Cancelled");
+    expect(terminalManager.kill).not.toHaveBeenCalled();
+    expect(service.terminalStatus({ sessionId }).terminalRuns.find((run) => run.actionId === actions[3].id)).toMatchObject({ status: "Cancelled", resultStatus: "cancelled" });
 
-    await service.terminalExecute({ sessionId, actionId: actions[3].id, previewId: preview.preview.previewId });
-    terminalManager.finish(1);
-    await waitFor(() => expect(service.terminalStatus({ sessionId }).terminalRuns.find((run) => run.actionId === actions[3].id)?.verification).toBeDefined());
-    expect(service.terminalStatus({ sessionId }).terminalRuns.find((run) => run.actionId === actions[3].id)).toMatchObject({ status: "Failed", failureReason: "Terminal command failed with exit code 1." });
+    const nextPreview = await service.terminalPreview({ sessionId, actionId: actions[4].id });
+    await service.terminalExecute({ sessionId, actionId: actions[4].id, previewId: nextPreview.preview.previewId });
+    await waitFor(() => expect(service.terminalStatus({ sessionId }).terminalRuns.find((run) => run.actionId === actions[4].id)?.verification).toBeDefined());
+    expect(service.terminalStatus({ sessionId }).terminalRuns.find((run) => run.actionId === actions[4].id)).toMatchObject({ status: "Succeeded", resultStatus: "completed", exitCode: 0 });
+
+    const failingPreview = await service.terminalPreview({ sessionId, actionId: actions[5].id });
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await service.terminalExecute({ sessionId, actionId: actions[5].id, previewId: failingPreview.preview.previewId });
+      await waitFor(() => expect(service.terminalStatus({ sessionId }).terminalRuns.find((run) => run.actionId === actions[5].id)?.verification).toBeDefined());
+      const failed = service.terminalStatus({ sessionId }).terminalRuns.find((run) => run.actionId === actions[5].id);
+      expect(failed).toMatchObject({ status: "Failed", resultStatus: "failed", exitCode: 1, failureReason: "Terminal command failed with exit code 1." });
+    }
 
     const restored = new AgentService(new RuntimeManager({ registry: new AIRuntimeProviderRegistry(), statePath: path.join(path.dirname(statePath), "runtime-restore.json"), monitorIntervalMs: 60_000 }), {
       statePath,
@@ -799,10 +1509,11 @@ describe("Coding Agent foundation", () => {
     raw.sessions[0].plan.terminalRuns = [{
       actionId: actions[4].id,
       commandId: "restore-command",
-      executable: "node",
+      executable: nodeExecutable,
       args: ["--version"],
       cwd: path.dirname(statePath),
       status: "Running",
+      resultStatus: undefined,
       terminalSessionId: "terminal-restore",
       outputPreview: "",
       stderrPreview: "",
@@ -1417,10 +2128,14 @@ describe("Coding Agent foundation", () => {
     const repair = {
       id: "repair-1",
       reportId: report.id,
+      attempt: 1,
       problem: "Cannot find name LoginProps.",
       likelyCause: "The props type is missing.",
       affectedFiles: ["src/Login.tsx"],
       suggestedFix: "Add or import LoginProps.",
+      actions: [],
+      requiresFreshApproval: true,
+      blockers: ["No structured repair action was generated."],
       confidence: 0.82,
       estimatedRisk: "low" as const,
       classification: "Type errors" as const,

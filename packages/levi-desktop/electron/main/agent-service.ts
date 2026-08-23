@@ -4,6 +4,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { app } from "electron";
+import { getEffectiveDeveloperEnvironment } from "./developer-environment";
 import type {
   AgentActionType,
   AgentApprovalAction,
@@ -29,7 +30,10 @@ import type {
   AgentProjectSummary,
   AgentQueueRequest,
   AgentRepairPlanRequest,
+  AgentRepairExecuteRequest,
   AgentRepairStatusRequest,
+  AgentRestoreOperationRequest,
+  AgentResumeOperationRequest,
   AgentRenameRequest,
   AgentSession,
   AgentState,
@@ -46,6 +50,14 @@ import type { AIRuntimeProviderId } from "../../src/features/ai-runtime";
 import type { WorkspaceStatus } from "../../src/types/levi-api";
 import { RuntimeManager, validateModelId, validateRuntimeProviderId } from "./ai-runtime";
 import { AgentExecutionService } from "./agent-execution-service";
+import {
+  detectNewAppIntent,
+  shouldBootstrapInChild,
+  starterById,
+  type ProjectStarterInfo,
+  type StarterCommand,
+  type StarterFile
+} from "./project-workflows";
 import type { TaskService } from "./tasks/task-service";
 import type { GitService } from "./git-service";
 import type { TerminalManager } from "./terminal-manager";
@@ -97,6 +109,7 @@ type AgentServiceOptions = {
 type AgentPersistence = {
   sessions: AgentSession[];
   activeSessionId?: string;
+  recoveryState?: { corruptionRecovered?: boolean };
 };
 
 export class AgentService {
@@ -105,6 +118,7 @@ export class AgentService {
   private readonly executionService: AgentExecutionService;
   private readonly disposables: Array<() => void> = [];
   private persistence: AgentPersistence = defaultPersistence();
+  private persistChain: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly runtimeManager: RuntimeManager,
@@ -147,12 +161,16 @@ export class AgentService {
 
   async initialize(): Promise<AgentState> {
     await this.load();
-    for (const session of this.persistence.sessions) this.executionService.markInterrupted(session);
+    for (const session of this.persistence.sessions) {
+      this.executionService.hydrateRecovery(session);
+      this.executionService.markInterrupted(session);
+    }
     await this.persist();
     return this.snapshot();
   }
 
   dispose(): void {
+    this.executionService.dispose();
     while (this.disposables.length) {
       this.disposables.pop()?.();
     }
@@ -223,6 +241,7 @@ export class AgentService {
 
   async plan(rawRequest: unknown): Promise<AgentPlanResult> {
     const request = validatePlanRequest(rawRequest);
+    const ownerObjective = ownerObjectiveFromPrompt(request.prompt);
     const session = request.sessionId
       ? this.requireSession(request.sessionId)
       : await this.createSessionForPlan(request);
@@ -232,15 +251,41 @@ export class AgentService {
     session.modelId = request.modelId;
     session.attachments = request.attachments ?? [];
     session.error = undefined;
-    session.messages = [...session.messages, { id: randomUUID(), role: "user" as const, content: request.prompt, createdAt: now }].slice(-MAX_MESSAGES);
+    session.messages = [...session.messages, { id: randomUUID(), role: "user" as const, content: ownerObjective, createdAt: now }].slice(-MAX_MESSAGES);
     this.persistence.activeSessionId = session.id;
     await this.persistAndEmit();
 
     const projectSummary = await this.analyzeWorkspace(request);
+    const workspaceSummary = this.options.getWorkspaceStatus?.().summary;
+    const bootstrapPlan = createDeterministicNewAppPlan(ownerObjective, projectSummary, workspaceSummary);
+    if (bootstrapPlan) {
+      session.projectSummary = projectSummary;
+      session.plan = bootstrapPlan;
+      session.status = "WaitingForApproval";
+      session.messages = [...session.messages, { id: randomUUID(), role: "assistant" as const, content: bootstrapPlan.summary, createdAt: new Date().toISOString() }].slice(-MAX_MESSAGES);
+      session.title = session.title === "New Agent Session" ? titleFromPrompt(ownerObjective) : session.title;
+      session.updatedAt = new Date().toISOString();
+      await this.persistAndEmit();
+      this.emit({ type: "progress", sessionId: session.id, state: this.snapshot() });
+      return { sessionId: session.id, state: this.snapshot() };
+    }
+    const existingBuildPlan = createDeterministicExistingProjectBuildPlan(ownerObjective, projectSummary, workspaceSummary);
+    if (existingBuildPlan) {
+      session.projectSummary = projectSummary;
+      session.plan = existingBuildPlan;
+      session.status = "WaitingForApproval";
+      session.messages = [...session.messages, { id: randomUUID(), role: "assistant" as const, content: existingBuildPlan.summary, createdAt: new Date().toISOString() }].slice(-MAX_MESSAGES);
+      session.title = session.title === "New Agent Session" ? titleFromPrompt(ownerObjective) : session.title;
+      session.updatedAt = new Date().toISOString();
+      await this.persistAndEmit();
+      this.emit({ type: "progress", sessionId: session.id, state: this.snapshot() });
+      return { sessionId: session.id, state: this.snapshot() };
+    }
     try {
       const response = await this.runtimeManager.chat({
         providerId: request.runtimeId ?? session.runtimeId,
         model: request.modelId,
+        timeoutMs: 300_000,
         messages: [
           {
             role: "system",
@@ -249,18 +294,18 @@ export class AgentService {
           },
           {
             role: "user",
-            content: buildPlanningPrompt(request.prompt, projectSummary, request.attachments ?? [])
+            content: buildPlanningPrompt(ownerObjective, projectSummary, request.attachments ?? [], buildResumeOperationalContext(session, projectSummary))
           }
         ],
         options: { format: "json" }
       });
       session.projectSummary = projectSummary;
-      session.plan = createExecutionPlan(request.prompt, response.content, projectSummary);
+      session.plan = createExecutionPlan(ownerObjective, response.content, projectSummary);
       session.status = session.plan.progress.pendingActions > 0 ? "WaitingForApproval" : "Ready";
       session.messages = [...session.messages, { id: randomUUID(), role: "assistant" as const, content: session.plan.summary, createdAt: new Date().toISOString() }].slice(-MAX_MESSAGES);
     } catch (error) {
       session.projectSummary = projectSummary;
-      session.plan = createFallbackPlan(request.prompt, projectSummary);
+      session.plan = createFallbackPlan(ownerObjective, projectSummary);
       session.status = "WaitingForApproval";
       session.error = errorMessage(error);
       session.messages = [
@@ -273,7 +318,7 @@ export class AgentService {
         }
       ].slice(-MAX_MESSAGES);
     }
-    session.title = session.title === "New Agent Session" ? titleFromPrompt(request.prompt) : session.title;
+    session.title = session.title === "New Agent Session" ? titleFromPrompt(ownerObjective) : session.title;
     session.updatedAt = new Date().toISOString();
     await this.persistAndEmit();
     this.emit({ type: "progress", sessionId: session.id, state: this.snapshot() });
@@ -301,6 +346,16 @@ export class AgentService {
   async undo(rawRequest: unknown) {
     const session = this.requireSession(sessionIdFromRequest<AgentUndoRequest>(rawRequest, "Agent undo request is invalid."));
     return this.executionService.undo(session, rawRequest);
+  }
+
+  async restoreOperation(rawRequest: unknown) {
+    const session = this.requireSession(sessionIdFromRequest<AgentRestoreOperationRequest>(rawRequest, "Agent restore request is invalid."));
+    return this.executionService.restoreOperation(session, rawRequest);
+  }
+
+  async resumeOperation(rawRequest: unknown) {
+    const session = this.requireSession(sessionIdFromRequest<AgentResumeOperationRequest>(rawRequest, "Agent resume request is invalid."));
+    return this.executionService.resumeOperation(session, rawRequest);
   }
 
   queue(rawRequest: unknown) {
@@ -381,6 +436,11 @@ export class AgentService {
   async repairPlan(rawRequest: unknown) {
     const session = this.requireSession(sessionIdFromRequest<AgentRepairPlanRequest>(rawRequest, "Agent repair plan request is invalid."));
     return this.executionService.repairPlan(session, rawRequest);
+  }
+
+  async repairExecute(rawRequest: unknown) {
+    const session = this.requireSession(sessionIdFromRequest<AgentRepairExecuteRequest>(rawRequest, "Agent repair execute request is invalid."));
+    return this.executionService.repairExecute(session, rawRequest);
   }
 
   repairStatus(rawRequest: unknown) {
@@ -488,9 +548,16 @@ export class AgentService {
   }
 
   private snapshot(): AgentState {
+    const workspaceRoot = this.options.getWorkspaceRoot?.();
+    const sessions = workspaceRoot
+      ? this.persistence.sessions.filter((session) => sessionMatchesWorkspace(session, workspaceRoot))
+      : this.persistence.sessions;
+    const activeSessionId = sessions.some((session) => session.id === this.persistence.activeSessionId)
+      ? this.persistence.activeSessionId
+      : sessions.find((session) => !session.archived)?.id ?? sessions[0]?.id;
     return {
-      sessions: [...this.persistence.sessions].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
-      activeSessionId: this.persistence.activeSessionId,
+      sessions: [...sessions].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+      activeSessionId,
       updatedAt: new Date().toISOString()
     };
   }
@@ -504,19 +571,55 @@ export class AgentService {
     try {
       const raw = await fs.readFile(this.statePath, "utf8");
       this.persistence = coercePersistence(JSON.parse(raw));
-    } catch {
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        await preserveCorruptState(this.statePath).catch(() => undefined);
+      }
       this.persistence = defaultPersistence();
+      this.persistence.recoveryState = { corruptionRecovered: (error as NodeJS.ErrnoException).code !== "ENOENT" };
     }
   }
 
   private async persist(): Promise<void> {
-    await fs.mkdir(path.dirname(this.statePath), { recursive: true });
-    await fs.writeFile(this.statePath, JSON.stringify(redactPersistence(this.persistence), null, 2), "utf8");
+    this.persistChain = this.persistChain
+      .catch(() => undefined)
+      .then(async () => {
+        await fs.mkdir(path.dirname(this.statePath), { recursive: true });
+        await writeJsonAtomic(this.statePath, redactPersistence(this.persistence));
+      });
+    await this.persistChain;
   }
 }
 
 function defaultPersistence(): AgentPersistence {
   return { sessions: [] };
+}
+
+function sessionMatchesWorkspace(session: AgentSession, workspaceRoot: string): boolean {
+  const rootPath = session.projectSummary?.rootPath;
+  if (!rootPath) return true;
+  return normalizePathForCompare(rootPath) === normalizePathForCompare(workspaceRoot);
+}
+
+function normalizePathForCompare(value: string): string {
+  return path.resolve(value).replace(/\\/g, "/").toLowerCase();
+}
+
+async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
+  const temporaryPath = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
+  await fs.writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  try {
+    await fs.rename(temporaryPath, filePath);
+  } catch (error) {
+    if (process.platform !== "win32" || ((error as NodeJS.ErrnoException).code !== "EEXIST" && (error as NodeJS.ErrnoException).code !== "EPERM")) throw error;
+    await fs.rm(filePath, { force: true });
+    await fs.rename(temporaryPath, filePath);
+  }
+}
+
+async function preserveCorruptState(filePath: string): Promise<void> {
+  const backupPath = `${filePath}.corrupt-${Date.now()}`;
+  await fs.copyFile(filePath, backupPath);
 }
 
 function validateNewSessionRequest(value: unknown): AgentNewSessionRequest {
@@ -671,11 +774,856 @@ function validateAttachmentContent(value: unknown): string {
   return value;
 }
 
-function buildPlanningPrompt(prompt: string, summary: AgentProjectSummary, attachments: AIChatAttachment[]): string {
+function ownerObjectiveFromPrompt(prompt: string): string {
+  return prompt.split(/\n\s*Treat this as build execution intent/i)[0]?.trim() || prompt.trim();
+}
+
+function createDeterministicNewAppPlan(
+  objective: string,
+  projectSummary: AgentProjectSummary,
+  workspaceSummary: WorkspaceStatus["summary"] | undefined
+): AgentExecutionPlan | null {
+  const intent = detectNewAppIntent(objective);
+  if (!intent.isNewApplication) return null;
+  const starter = starterById(intent.starterId);
+  const slug = intent.projectName;
+  const targetDescription = projectSummary.rootPath ? ` Target workspace: ${projectSummary.rootPath}.` : "";
+  const useExistingMobileRoot = starter.id === "android-compose" && isAndroidWorkspace(workspaceSummary);
+  const childFolder = useExistingMobileRoot ? "" : shouldBootstrapInChild(workspaceSummary) ? slug : "";
+  const now = new Date().toISOString();
+  const approvals: AgentApprovalAction[] = [];
+  const steps: AgentPlanStep[] = [];
+
+  const createStep = (title: string, description: string, estimatedFiles: string[]): AgentPlanStep => {
+    const step: AgentPlanStep = {
+      id: randomUUID(),
+      order: steps.length + 1,
+      title,
+      description,
+      status: "Pending",
+      estimatedFiles: uniqueStrings(estimatedFiles.map((file) => scopedPath(childFolder, file))),
+      actionIds: []
+    };
+    steps.push(step);
+    return step;
+  };
+  const addAction = (step: AgentPlanStep, action: Omit<AgentApprovalAction, "id" | "status" | "stepId" | "createdAt" | "updatedAt">) => {
+    const item: AgentApprovalAction = {
+      ...action,
+      id: randomUUID(),
+      status: "Pending",
+      stepId: step.id,
+      createdAt: now,
+      updatedAt: now
+    };
+    approvals.push(item);
+    step.actionIds.push(item.id);
+  };
+
+  if (!useExistingMobileRoot) {
+    const starterFiles = starterFilesForProject(starter, slug);
+    const bootstrapStep = createStep(
+      `Bootstrap ${starter.label}`,
+      childFolder
+        ? `Create the deterministic ${starter.label} starter in ${childFolder}.`
+        : `Create the deterministic ${starter.label} starter in the workspace root.`,
+      starter.expectedFiles
+    );
+    for (const file of starterFiles) {
+      addAction(bootstrapStep, {
+        type: "create-file",
+        title: `Create ${file.relativePath}`,
+        description: `Write deterministic starter file ${file.relativePath}.`,
+        relativePath: scopedPath(childFolder, file.relativePath),
+        content: file.content
+      });
+    }
+
+    if (starter.installCommand) {
+      const installStep = createStep("Prepare starter dependencies", `Prepare dependencies required by ${starter.label}.`, ["package.json"]);
+      addAction(installStep, terminalAction(starter.installCommand, childFolder, starter.installCommand.label, "Prepare deterministic starter dependencies."));
+    }
+
+    if (starter.buildCommand) {
+      const verifyStep = createStep("Verify starter", "Run the starter verification command before applying feature work.", starter.expectedFiles);
+      addAction(verifyStep, terminalAction(starter.buildCommand, childFolder, starter.buildCommand.label, "Verify the deterministic starter."));
+    }
+  }
+
+  const featureFiles = featureFilesForIntent(intent.requestedFeatures, starter);
+  if (featureFiles.length) {
+    const featureStep = createStep("Implement requested features", `Apply the requested features: ${intent.requestedFeatures.join(", ")}.`, featureFiles.map((file) => file.relativePath));
+    for (const file of featureFiles) {
+      addAction(featureStep, {
+        type: "modify-file",
+        title: `Update ${file.relativePath}`,
+        description: `Apply requested feature implementation to ${file.relativePath}.`,
+        relativePath: scopedPath(childFolder, file.relativePath),
+        content: file.content
+      });
+    }
+  }
+
+  if (starter.buildCommand) {
+    const finalStep = createStep("Verify completed app", "Run final verification after feature implementation.", starter.expectedFiles);
+    addAction(finalStep, terminalAction(starter.buildCommand, childFolder, "Run final verification", "Verify the completed generated app."));
+  }
+
+  const estimatedFiles = uniqueStrings(steps.flatMap((step) => step.estimatedFiles)).slice(0, 40);
+  const plan: AgentExecutionPlan = {
+    id: randomUUID(),
+    objective,
+    summary: useExistingMobileRoot
+      ? `Deterministic Android feature plan will update the current Kotlin + Compose workspace. ${intent.reason}${targetDescription}`
+      : `Deterministic new-app plan selected ${starter.label} for ${slug}. ${intent.reason}${targetDescription}`,
+    planningMode: "deterministic-bootstrap",
+    starterId: starter.id,
+    starterLabel: starter.label,
+    projectSlug: slug,
+    featurePlanningStatus: featureFiles.length ? "Planned" : "NotRequired",
+    plannerRetries: 0,
+    milestones: steps.map((step) => step.title),
+    steps,
+    approvals,
+    executionQueue: [],
+    taskRuns: [],
+    terminalRuns: [],
+    gitRuns: [],
+    browserRuns: [],
+    verificationReports: [],
+    repairQueue: [],
+    repairProgress: [],
+    estimatedFiles,
+    progress: { totalSteps: steps.length, pendingActions: 0, approvedActions: 0, rejectedActions: 0, completedActions: 0 },
+    createdAt: now,
+    updatedAt: now
+  };
+  plan.progress = progressFromApprovals(plan);
+  return plan;
+}
+
+function createDeterministicExistingProjectBuildPlan(
+  objective: string,
+  projectSummary: AgentProjectSummary,
+  workspaceSummary: WorkspaceStatus["summary"] | undefined
+): AgentExecutionPlan | null {
+  const text = objective.toLowerCase();
+  const explicitExistingProject = /\b(existing|current|this)\b.{0,40}\b(project|workspace|repo|repository|app|application)\b/.test(text);
+  if (detectNewAppIntent(objective).isNewApplication || !/\b(build|verify|compile|test)\b/.test(text)) return null;
+  if (!explicitExistingProject) return null;
+  if (!workspaceSummary || !shouldBootstrapInChild(workspaceSummary)) return null;
+  const script = workspaceSummary.scripts.build ? "build" : workspaceSummary.scripts.test ? "test" : undefined;
+  if (!script) return null;
+  const now = new Date().toISOString();
+  const stepId = randomUUID();
+  const actionId = randomUUID();
+  const command = packageManagerCommand(workspaceSummary.packageManager);
+  const action: AgentApprovalAction = {
+    id: actionId,
+    type: "run-terminal-command",
+    title: `Run ${script}`,
+    description: `Run the existing project's ${script} script for verification.`,
+    status: "Pending",
+    stepId,
+    command,
+    args: ["run", script],
+    cwd: ".",
+    expectedOutput: "Command exits successfully",
+    estimatedDurationMs: 120_000,
+    createdAt: now,
+    updatedAt: now
+  };
+  const step: AgentPlanStep = {
+    id: stepId,
+    order: 1,
+    title: "Verify existing project",
+    description: `Use the detected ${projectSummary.frameworks.join(", ") || "project"} configuration without scaffolding new files.`,
+    status: "Pending",
+    estimatedFiles: projectSummary.entryPoints.slice(0, 8),
+    actionIds: [actionId]
+  };
+  const plan: AgentExecutionPlan = {
+    id: randomUUID(),
+    objective,
+    summary: `Deterministic existing-project verification will run ${command} run ${script}. No new project scaffold will be created.`,
+    planningMode: "deterministic-existing-project",
+    featurePlanningStatus: "NotRequired",
+    plannerRetries: 0,
+    milestones: [step.title],
+    steps: [step],
+    approvals: [action],
+    executionQueue: [],
+    taskRuns: [],
+    terminalRuns: [],
+    gitRuns: [],
+    browserRuns: [],
+    verificationReports: [],
+    repairQueue: [],
+    repairProgress: [],
+    estimatedFiles: step.estimatedFiles,
+    progress: { totalSteps: 1, pendingActions: 1, approvedActions: 0, rejectedActions: 0, completedActions: 0 },
+    createdAt: now,
+    updatedAt: now
+  };
+  plan.progress = progressFromApprovals(plan);
+  return plan;
+}
+
+function packageManagerCommand(value: string | undefined): string {
+  if (value === "pnpm") return process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+  if (value === "yarn") return process.platform === "win32" ? "yarn.cmd" : "yarn";
+  return process.platform === "win32" ? "npm.cmd" : "npm";
+}
+
+function isAndroidWorkspace(summary: WorkspaceStatus["summary"] | undefined): boolean {
+  if (!summary) return false;
+  return summary.manifestFiles.some((file) => /(^|\/|\\)(settings\.gradle(\.kts)?|build\.gradle(\.kts)?|AndroidManifest\.xml)$/i.test(file))
+    && (summary.languages.some((language) => /^kotlin$/i.test(language)) || summary.sourceDirectories.some((directory) => normalizeSlashes(directory).startsWith("app/src/main")));
+}
+
+function normalizeSlashes(value: string): string {
+  return value.replace(/\\/g, "/");
+}
+
+function starterFilesForProject(starter: ProjectStarterInfo, slug: string): StarterFile[] {
+  return starter.files.map((file) => {
+    if (file.relativePath !== "package.json") return file;
+    try {
+      const parsed = JSON.parse(file.content) as Record<string, unknown>;
+      parsed.name = slug;
+      return { ...file, content: `${JSON.stringify(parsed, null, 2)}\n` };
+    } catch {
+      return file;
+    }
+  });
+}
+
+function terminalAction(
+  command: StarterCommand,
+  childFolder: string,
+  title: string,
+  description: string
+): Omit<AgentApprovalAction, "id" | "status" | "stepId" | "createdAt" | "updatedAt"> {
+  return {
+    type: "run-terminal-command",
+    title,
+    description,
+    command: command.command,
+    args: command.args,
+    cwd: childFolder || command.cwd || ".",
+    expectedOutput: command.kind === "install" ? "Dependencies installed" : "Command exits successfully",
+    estimatedDurationMs: command.kind === "install" ? 120_000 : 60_000
+  };
+}
+
+function featureFilesForIntent(features: string[], starter: ProjectStarterInfo): StarterFile[] {
+  if (features.includes("calculator") && starter.id === "vanilla-web") return calculatorFiles();
+  if (features.includes("workout tracking") && starter.id === "react-vite") return fitnessReactFiles();
+  if (features.includes("workout tracking") && starter.id === "android-compose") return androidFitnessFiles();
+  return [];
+}
+
+function scopedPath(prefix: string, relativePath: string): string {
+  return prefix ? `${prefix}/${relativePath}` : relativePath;
+}
+
+function fitnessReactFiles(): StarterFile[] {
+  return [
+    {
+      relativePath: "src/App.tsx",
+      content: `import { FormEvent, useEffect, useMemo, useState } from 'react';
+
+type Workout = {
+  id: string;
+  name: string;
+  minutes: number;
+  intensity: 'Easy' | 'Moderate' | 'Hard';
+  completedAt: string;
+};
+
+const STORAGE_KEY = 'levi-fitness-workouts';
+
+const starterWorkouts: Workout[] = [
+  { id: 'seed-1', name: 'Morning mobility', minutes: 18, intensity: 'Easy', completedAt: '2026-08-10' },
+  { id: 'seed-2', name: 'Strength circuit', minutes: 42, intensity: 'Hard', completedAt: '2026-08-12' }
+];
+
+export default function App() {
+  const [workouts, setWorkouts] = useState<Workout[]>(() => {
+    const saved = window.localStorage.getItem(STORAGE_KEY);
+    return saved ? JSON.parse(saved) as Workout[] : starterWorkouts;
+  });
+  const [name, setName] = useState('');
+  const [minutes, setMinutes] = useState(30);
+  const [intensity, setIntensity] = useState<Workout['intensity']>('Moderate');
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(workouts));
+  }, [workouts]);
+
+  const stats = useMemo(() => {
+    const totalMinutes = workouts.reduce((sum, workout) => sum + workout.minutes, 0);
+    const hardSessions = workouts.filter((workout) => workout.intensity === 'Hard').length;
+    return { totalMinutes, hardSessions, sessions: workouts.length };
+  }, [workouts]);
+
+  function addWorkout(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setWorkouts((current) => [
+      {
+        id: crypto.randomUUID(),
+        name: trimmed,
+        minutes,
+        intensity,
+        completedAt: new Date().toISOString().slice(0, 10)
+      },
+      ...current
+    ]);
+    setName('');
+    setMinutes(30);
+    setIntensity('Moderate');
+  }
+
+  return (
+    <main className="app-shell">
+      <section className="dashboard" aria-label="Fitness dashboard">
+        <div>
+          <p className="eyebrow">Fitness Tracker</p>
+          <h1>Training dashboard</h1>
+        </div>
+        <div className="metric-row">
+          <article><span>Sessions</span><strong>{stats.sessions}</strong></article>
+          <article><span>Minutes</span><strong>{stats.totalMinutes}</strong></article>
+          <article><span>Hard days</span><strong>{stats.hardSessions}</strong></article>
+        </div>
+      </section>
+
+      <section className="content-grid">
+        <form className="workout-form" onSubmit={addWorkout}>
+          <h2>Add workout</h2>
+          <label>
+            Workout
+            <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Tempo run" />
+          </label>
+          <label>
+            Minutes
+            <input type="number" min="1" value={minutes} onChange={(event) => setMinutes(Number(event.target.value))} />
+          </label>
+          <label>
+            Intensity
+            <select value={intensity} onChange={(event) => setIntensity(event.target.value as Workout['intensity'])}>
+              <option>Easy</option>
+              <option>Moderate</option>
+              <option>Hard</option>
+            </select>
+          </label>
+          <button type="submit">Add workout</button>
+        </form>
+
+        <section className="workout-list" aria-label="Workout list">
+          <h2>Workout list</h2>
+          {workouts.map((workout) => (
+            <article key={workout.id} className="workout-item">
+              <div>
+                <strong>{workout.name}</strong>
+                <span>{workout.completedAt}</span>
+              </div>
+              <p>{workout.minutes} min · {workout.intensity}</p>
+            </article>
+          ))}
+        </section>
+      </section>
+    </main>
+  );
+}
+`
+    },
+    {
+      relativePath: "src/styles.css",
+      content: `:root {
+  color: #172033;
+  background: #eef2f7;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 32px;
+}
+
+.dashboard {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(220px, 1fr) minmax(280px, 620px);
+  align-items: end;
+  border-bottom: 1px solid #cbd5e1;
+  padding-bottom: 28px;
+}
+
+.eyebrow {
+  color: #0f766e;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  margin: 0 0 8px;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  font-size: clamp(2rem, 5vw, 4.5rem);
+  line-height: 1;
+  margin-bottom: 0;
+}
+
+.metric-row,
+.content-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.metric-row {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.metric-row article,
+.workout-form,
+.workout-item {
+  background: #ffffff;
+  border: 1px solid #d6dee8;
+  border-radius: 8px;
+  padding: 18px;
+}
+
+.metric-row span,
+.workout-item span {
+  color: #64748b;
+  display: block;
+  font-size: 0.85rem;
+}
+
+.metric-row strong {
+  display: block;
+  font-size: 2rem;
+  margin-top: 6px;
+}
+
+.content-grid {
+  grid-template-columns: minmax(260px, 360px) 1fr;
+  margin-top: 28px;
+}
+
+.workout-form {
+  display: grid;
+  gap: 14px;
+}
+
+.workout-form label {
+  display: grid;
+  gap: 6px;
+  font-weight: 700;
+}
+
+.workout-form input,
+.workout-form select {
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.workout-form button {
+  background: #0f766e;
+  border: 0;
+  border-radius: 6px;
+  color: white;
+  cursor: pointer;
+  font-weight: 800;
+  padding: 12px;
+}
+
+.workout-list {
+  display: grid;
+  gap: 12px;
+}
+
+.workout-item {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.workout-item p {
+  margin: 0;
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    padding: 20px;
+  }
+
+  .dashboard,
+  .content-grid,
+  .metric-row {
+    grid-template-columns: 1fr;
+  }
+
+  .workout-item {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+}
+`
+    }
+  ];
+}
+
+function androidFitnessFiles(): StarterFile[] {
+  return [
+    {
+      relativePath: "app/src/main/java/app/levi/generated/MainActivity.kt",
+      content: `package app.levi.generated
+
+import android.content.Context
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+data class CompletedWorkout(
+  val id: String,
+  val name: String,
+  val minutes: Int,
+  val completedAt: String
+)
+
+private const val PREFS_NAME = "trucker_fitness"
+private const val HISTORY_KEY = "history"
+
+class MainActivity : ComponentActivity() {
+  override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    setContent {
+      MaterialTheme {
+        Surface(modifier = Modifier.fillMaxSize()) {
+          TruckerFitnessApp()
+        }
+      }
+    }
+  }
+}
+
+@Composable
+fun TruckerFitnessApp() {
+  val context = LocalContext.current
+  val history = remember {
+    mutableStateListOf<CompletedWorkout>().also { list ->
+      list.addAll(loadHistory(context))
+    }
+  }
+  val customName = remember { mutableStateOf("") }
+  val totalMinutes = history.sumOf { it.minutes }
+
+  fun addWorkout(name: String, minutes: Int) {
+    val workout = CompletedWorkout(
+      id = System.currentTimeMillis().toString(),
+      name = name,
+      minutes = minutes,
+      completedAt = SimpleDateFormat("MMM d, HH:mm", Locale.US).format(Date())
+    )
+    history.add(0, workout)
+    saveHistory(context, history)
+  }
+
+  Column(
+    modifier = Modifier
+      .fillMaxSize()
+      .verticalScroll(rememberScrollState())
+      .padding(20.dp),
+    verticalArrangement = Arrangement.spacedBy(16.dp)
+  ) {
+    Text("Trucker Fitness", style = MaterialTheme.typography.headlineMedium)
+    Text("Offline-first workouts designed for short stops and long routes.")
+
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+      MetricCard("Sessions", history.size.toString(), Modifier.weight(1f))
+      MetricCard("Minutes", totalMinutes.toString(), Modifier.weight(1f))
+    }
+
+    Text("Workout list", style = MaterialTheme.typography.titleLarge)
+    PresetWorkout("5-minute workout", "Cab mobility and breathing reset", 5, ::addWorkout)
+    PresetWorkout("10-minute workout", "Core, squats, and shoulder work", 10, ::addWorkout)
+    PresetWorkout("20-minute workout", "Full body no-equipment circuit", 20, ::addWorkout)
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+      Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Add completed workout", style = MaterialTheme.typography.titleMedium)
+        OutlinedTextField(
+          value = customName.value,
+          onValueChange = { customName.value = it },
+          label = { Text("Workout name") },
+          modifier = Modifier.fillMaxWidth()
+        )
+        Button(
+          onClick = {
+            val name = customName.value.trim().ifEmpty { "Custom truck-stop workout" }
+            addWorkout(name, 15)
+            customName.value = ""
+          }
+        ) {
+          Text("Add completed workout")
+        }
+      }
+    }
+
+    Text("Workout history", style = MaterialTheme.typography.titleLarge)
+    if (history.isEmpty()) {
+      Text("No completed workouts yet. Choose a 5, 10, or 20 minute workout to begin.")
+    } else {
+      history.forEach { workout ->
+        Card(modifier = Modifier.fillMaxWidth()) {
+          Column(modifier = Modifier.padding(16.dp)) {
+            Text(workout.name, style = MaterialTheme.typography.titleMedium)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text("${'$'}{workout.minutes} minutes - ${'$'}{workout.completedAt}")
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+fun MetricCard(label: String, value: String, modifier: Modifier = Modifier) {
+  Card(modifier = modifier) {
+    Column(modifier = Modifier.padding(16.dp)) {
+      Text(label)
+      Text(value, style = MaterialTheme.typography.headlineSmall)
+    }
+  }
+}
+
+@Composable
+fun PresetWorkout(title: String, description: String, minutes: Int, onComplete: (String, Int) -> Unit) {
+  Card(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      Text(title, style = MaterialTheme.typography.titleMedium)
+      Text(description)
+      Button(onClick = { onComplete(title, minutes) }) {
+        Text("Complete ${'$'}minutes-minute workout")
+      }
+    }
+  }
+}
+
+fun loadHistory(context: Context): List<CompletedWorkout> {
+  val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(HISTORY_KEY, "") ?: ""
+  if (raw.isBlank()) return emptyList()
+  return raw.split("\\n").mapNotNull { line ->
+    val parts = line.split("|")
+    if (parts.size != 4) null else CompletedWorkout(parts[0], parts[1], parts[2].toIntOrNull() ?: 0, parts[3])
+  }
+}
+
+fun saveHistory(context: Context, history: List<CompletedWorkout>) {
+  val raw = history.joinToString("\\n") { workout ->
+    listOf(workout.id, workout.name.replace("|", " "), workout.minutes.toString(), workout.completedAt).joinToString("|")
+  }
+  context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    .edit()
+    .putString(HISTORY_KEY, raw)
+    .apply()
+}
+`
+    }
+  ];
+}
+
+function calculatorFiles(): StarterFile[] {
+  return [
+    {
+      relativePath: "index.html",
+      content: `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Calculator</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="calculator" aria-label="Calculator">
+    <output id="display">0</output>
+    <div class="keys" id="keys"></div>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
+`
+    },
+    {
+      relativePath: "styles.css",
+      content: `body {
+  align-items: center;
+  background: #edf2f4;
+  color: #202631;
+  display: flex;
+  font-family: system-ui, sans-serif;
+  justify-content: center;
+  margin: 0;
+  min-height: 100vh;
+}
+
+.calculator {
+  background: #ffffff;
+  border: 1px solid #ccd6e0;
+  border-radius: 8px;
+  box-shadow: 0 18px 60px rgba(15, 23, 42, 0.14);
+  padding: 18px;
+  width: min(360px, calc(100vw - 32px));
+}
+
+output {
+  background: #101828;
+  border-radius: 6px;
+  color: #f8fafc;
+  display: block;
+  font-size: 2.5rem;
+  margin-bottom: 14px;
+  min-height: 72px;
+  overflow: hidden;
+  padding: 12px;
+  text-align: right;
+}
+
+.keys {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, 1fr);
+}
+
+button {
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  min-height: 54px;
+}
+
+button.operator,
+button.equals {
+  background: #0f766e;
+  color: white;
+}
+`
+    },
+    {
+      relativePath: "app.js",
+      content: `const display = document.querySelector('#display');
+const keys = document.querySelector('#keys');
+const buttons = ['7', '8', '9', '/', '4', '5', '6', '*', '1', '2', '3', '-', '0', '.', 'C', '+', '='];
+let expression = '';
+
+function render() {
+  display.textContent = expression || '0';
+}
+
+function calculate() {
+  if (!/^[0-9+\\-*\\/. ]+$/.test(expression)) return;
+  try {
+    expression = String(Function('"use strict"; return (' + expression + ')')());
+  } catch {
+    expression = '';
+  }
+  render();
+}
+
+for (const label of buttons) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = label;
+  if ('+-*/'.includes(label)) button.className = 'operator';
+  if (label === '=') button.className = 'equals';
+  button.addEventListener('click', () => {
+    if (label === 'C') expression = '';
+    else if (label === '=') calculate();
+    else expression += label;
+    render();
+  });
+  keys.append(button);
+}
+
+render();
+`
+    }
+  ];
+}
+
+function buildPlanningPrompt(
+  prompt: string,
+  summary: AgentProjectSummary,
+  attachments: AIChatAttachment[],
+  resumeContext?: ReturnType<typeof buildResumeOperationalContext>
+): string {
+  const existingProject = Boolean(
+    summary.rootPath &&
+    (summary.entryPoints.length > 0 || summary.buildSystem.length > 0 || summary.sourceDirectories.length > 0)
+  );
   return JSON.stringify({
-    instruction: "Return JSON only with shape { summary: string, steps: [{ title, description, estimatedFiles, actions }] }. Actions are proposals only and must not be executed.",
+    instruction:
+      "Return JSON only with shape { summary: string, steps: [{ title, description, estimatedFiles, actions }] }. Actions are proposals only and must not be executed. For build/create/implement/add requests, provide concrete executable actions using existing action types: create-folder, create-file, modify-file, run-terminal-command, run-task, git-operation, rename-file, rename-folder, delete-file. File actions must include relativePath and complete content for create-file or whole-file edits for modify-file when known. Terminal actions must use structured command, args, cwd, and expectedOutput. Never include shell wrappers, destructive commands, publishing, deployment, secrets, or paths outside the workspace. If the request creates a new application and this workspace already contains an existing project, place all generated files under a sanitized child folder inside the current workspace instead of contaminating the existing project root.",
     objective: prompt,
-    project: summary,
+    project: {
+      ...summary,
+      existingProject,
+      newApplicationSafeDefault: existingProject ? "Use a sanitized child folder for generated app files." : "Use the selected workspace root when it is suitable and empty."
+    },
+    resumeContext,
     context: attachments.map((attachment) => ({
       sourceId: attachment.sourceId,
       label: attachment.label,
@@ -686,6 +1634,65 @@ function buildPlanningPrompt(prompt: string, summary: AgentProjectSummary, attac
       preview: attachment.preview ?? attachment.content?.slice(0, 1_200)
     }))
   });
+}
+
+function buildResumeOperationalContext(session: AgentSession, summary: AgentProjectSummary) {
+  const recentOperations = (session.plan?.recovery?.operations ?? []).slice(-6).map((operation) => ({
+    operationId: operation.operationId,
+    status: operation.status,
+    userRequest: operation.userRequest,
+    filesCreated: operation.filesCreated.slice(0, 12),
+    filesModified: operation.filesModified.slice(0, 12),
+    filesDeleted: operation.filesDeleted.slice(0, 12),
+    filesRenamed: operation.filesRenamed.slice(0, 12),
+    verification: operation.verificationResult,
+    repairAttempts: operation.repairAttempts
+  }));
+  const recentMessages = session.messages.slice(-6).map((message) => ({
+    role: message.role,
+    content: message.content.slice(0, 1_000)
+  }));
+  const lastVerification = session.plan?.verificationReports?.[0];
+  return {
+    projectName: summary.projectName,
+    projectType: summary.frameworks.join(", ") || summary.languages.join(", ") || "unknown",
+    rootPath: summary.rootPath,
+    currentGitBranch: summary.git.summary.find((line) => line.startsWith("## "))?.replace(/^##\s*/, ""),
+    currentWorkspaceState: {
+      languages: summary.languages,
+      frameworks: summary.frameworks,
+      buildSystem: summary.buildSystem,
+      sourceDirectories: summary.sourceDirectories,
+      entryPoints: summary.entryPoints,
+      openFiles: summary.openFiles,
+      gitChangedFiles: summary.git.changedFiles
+    },
+    recentUserRequest: [...session.messages].reverse().find((message) => message.role === "user")?.content.slice(0, 1_000),
+    recentAgentOperations: recentOperations,
+    lastVerification: lastVerification ? {
+      status: lastVerification.status,
+      summary: lastVerification.summary,
+      gitChangedFiles: lastVerification.gitChangedFiles.slice(0, 20),
+      failures: lastVerification.failures.slice(0, 6).map((failure) => ({
+        message: failure.message,
+      affectedFiles: failure.affectedFiles.slice(0, 10)
+      }))
+    } : undefined,
+    detectedCommands: summary.buildSystem.slice(0, 20),
+    recentRelevantFiles: uniqueStrings([
+      ...summary.openFiles,
+      ...summary.entryPoints,
+      ...(session.plan?.estimatedFiles ?? []),
+      ...(session.plan?.recovery?.operations ?? []).flatMap((operation) => [
+        ...operation.filesCreated,
+        ...operation.filesModified,
+        ...operation.filesDeleted,
+        ...operation.filesRenamed.flatMap((item) => [item.from, item.to])
+      ])
+    ]).slice(0, 40),
+    recentOperationSummary: recentOperations.map((operation) => `${operation.status}: ${operation.userRequest}`).slice(-6),
+    recentConversation: recentMessages
+  };
 }
 
 function createExecutionPlan(objective: string, modelContent: string, projectSummary: AgentProjectSummary): AgentExecutionPlan {
@@ -888,13 +1895,19 @@ function parsePlanContent(content: string): { summary: string; steps: ParsedStep
 function parseJsonObject(content: string): Record<string, unknown> | null {
   const trimmed = content.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim();
-  const candidate = fenced ?? trimmed.slice(trimmed.indexOf("{"), trimmed.lastIndexOf("}") + 1);
-  try {
-    const parsed = JSON.parse(candidate) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
-  } catch {
-    return null;
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  const candidate = fenced ?? (start >= 0 && end > start ? trimmed.slice(start, end + 1) : "");
+  if (!candidate) return null;
+  for (const attempt of [candidate, candidate.replace(/,\s*([}\]])/g, "$1")]) {
+    try {
+      const parsed = JSON.parse(attempt) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+    } catch {
+      // Try the next structured recovery candidate.
+    }
   }
+  return null;
 }
 
 function parseStep(value: unknown): ParsedStep | null {
@@ -942,6 +1955,10 @@ function parseAction(value: unknown): ParsedStep["actions"][number] | null {
 
 function parseRelativeAlias(value: unknown): string | undefined {
   return typeof value === "string" && !path.isAbsolute(value) && !value.includes("..") ? value.slice(0, 500).replace(/\\/g, "/") : undefined;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
 }
 
 function parseFileEdit(value: unknown): NonNullable<AgentApprovalAction["edits"]>[number] | null {
@@ -1026,7 +2043,7 @@ async function readGitStatus(rootPath: string): Promise<AgentProjectSummary["git
 
 function execFileText(command: string, args: string[], cwd: string, timeoutMs: number): Promise<{ stdout: string }> {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { cwd, timeout: timeoutMs, windowsHide: true, maxBuffer: 64 * 1024 }, (error, stdout) => {
+    execFile(command, args, { cwd, env: getEffectiveDeveloperEnvironment(), timeout: timeoutMs, windowsHide: true, maxBuffer: 64 * 1024 }, (error, stdout) => {
       if (error) reject(error);
       else resolve({ stdout: stdout.toString() });
     });
@@ -1038,7 +2055,8 @@ function coercePersistence(value: unknown): AgentPersistence {
   const record = value as Record<string, unknown>;
   const sessions = Array.isArray(record.sessions) ? record.sessions.map(coerceSession).filter(Boolean).slice(0, MAX_SESSIONS) as AgentSession[] : [];
   const activeSessionId = typeof record.activeSessionId === "string" && sessions.some((item) => item.id === record.activeSessionId) ? record.activeSessionId : sessions[0]?.id;
-  return { sessions, activeSessionId };
+  const recoveryState = record.recoveryState && typeof record.recoveryState === "object" ? { corruptionRecovered: (record.recoveryState as { corruptionRecovered?: unknown }).corruptionRecovered === true } : undefined;
+  return { sessions, activeSessionId, recoveryState };
 }
 
 function coerceSession(value: unknown): AgentSession | null {
@@ -1093,10 +2111,29 @@ function coercePlan(value: unknown): AgentExecutionPlan | undefined {
     repairQueue: Array.isArray(record.repairQueue) ? record.repairQueue.slice(0, MAX_ACTIONS) : [],
     repairProgress: Array.isArray(record.repairProgress) ? record.repairProgress.slice(-80) : [],
     lastUndo: record.lastUndo && typeof record.lastUndo === "object" ? record.lastUndo : undefined,
+    recovery: coerceRecovery(record.recovery),
     progress: progressFromApprovals(record),
     estimatedFiles: Array.isArray(record.estimatedFiles) ? record.estimatedFiles.slice(0, 40) : [],
     createdAt: typeof record.createdAt === "string" ? record.createdAt : new Date().toISOString(),
     updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : new Date().toISOString()
+  };
+}
+
+function coerceRecovery(value: unknown): AgentExecutionPlan["recovery"] {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as NonNullable<AgentExecutionPlan["recovery"]>;
+  const operations = Array.isArray(record.operations)
+    ? record.operations.filter((operation) => operation && typeof operation === "object" && typeof operation.operationId === "string").slice(-100)
+    : [];
+  const interruptedOperationIds = Array.isArray(record.interruptedOperationIds)
+    ? record.interruptedOperationIds.filter((item): item is string => typeof item === "string").slice(-100)
+    : [];
+  return {
+    schemaVersion: 1,
+    operations,
+    interruptedOperationIds,
+    activeOperationId: typeof record.activeOperationId === "string" ? record.activeOperationId : undefined,
+    corruptionRecovered: record.corruptionRecovered === true
   };
 }
 
@@ -1119,8 +2156,24 @@ function coerceProjectSummary(value: unknown): AgentProjectSummary | undefined {
 }
 
 function redactPersistence(persistence: AgentPersistence): AgentPersistence {
-  const raw = JSON.stringify(persistence).replace(/(api[_-]?key|token|secret|password)["']?\s*[:=]\s*["'][^"']+["']/gi, "$1:REDACTED");
-  return JSON.parse(raw) as AgentPersistence;
+  return redactValue(persistence) as AgentPersistence;
+}
+
+function redactValue(value: unknown): unknown {
+  if (typeof value === "string") return redactSecretText(value);
+  if (Array.isArray(value)) return value.map(redactValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    /api[_-]?key|token|secret|password|authorization|credential/i.test(key) ? "[REDACTED]" : redactValue(item)
+  ]));
+}
+
+function redactSecretText(value: string): string {
+  return value
+    .replace(/\b(authorization\s*:\s*bearer)\s+[^\s"'`]+/gi, "$1 [REDACTED]")
+    .replace(/\b(api[_-]?key|token|secret|password|credential)(\s*[=:]\s*)[^\s"'`]+/gi, "$1$2[REDACTED]")
+    .replace(/\b(sk-[A-Za-z0-9_-]{12,})\b/g, "[REDACTED]");
 }
 
 function optionalProvider(value: unknown): AIRuntimeProviderId | undefined {

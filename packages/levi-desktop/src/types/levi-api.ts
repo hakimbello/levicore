@@ -119,9 +119,15 @@ import type {
   AgentQueueResult,
   AgentRepairPlanRequest,
   AgentRepairPlanResult,
+  AgentRepairExecuteRequest,
+  AgentRepairExecutionResult,
   AgentRepairStatusRequest,
   AgentRepairStatusResult,
   AgentRenameRequest,
+  AgentResumeOperationRequest,
+  AgentResumeOperationResult,
+  AgentRestoreOperationRequest,
+  AgentRestoreOperationResult,
   AgentSession,
   AgentState,
   AgentStatusRequest,
@@ -224,12 +230,20 @@ export type {
   AgentQueueResult,
   AgentRepairPlanRequest,
   AgentRepairPlanResult,
+  AgentRepairExecuteRequest,
+  AgentRepairExecutionResult,
   AgentRepairProgressEntry,
   AgentRepairQueueItem,
   AgentRepairStatus,
   AgentRepairStatusRequest,
   AgentRepairStatusResult,
   AgentRenameRequest,
+  AgentResumeEligibility,
+  AgentResumeOperationRequest,
+  AgentResumeOperationResult,
+  AgentResumePointer,
+  AgentRestoreOperationRequest,
+  AgentRestoreOperationResult,
   AgentRiskLevel,
   AgentSession,
   AgentSessionStatus,
@@ -349,6 +363,264 @@ export type OllamaStatus = {
 export type SelectedProject = {
   path: string;
   name: string;
+};
+
+export type ProjectType =
+  | "vanilla-web"
+  | "react"
+  | "vite"
+  | "vue-vite"
+  | "svelte-vite"
+  | "sveltekit"
+  | "nuxt"
+  | "astro"
+  | "nextjs"
+  | "node"
+  | "python"
+  | "flask"
+  | "fastapi"
+  | "django"
+  | "go"
+  | "rust"
+  | "dotnet"
+  | "electron"
+  | "tauri"
+  | "typescript"
+  | "android-gradle"
+  | "kotlin-android"
+  | "flutter"
+  | "react-native"
+  | "expo"
+  | "ios"
+  | "git"
+  | "empty"
+  | "unknown";
+
+export type MobilePlatform = "android" | "ios" | "flutter" | "react-native" | "expo";
+export type MobileLanguage = "kotlin" | "java" | "swift" | "dart" | "typescript" | "javascript";
+export type MobileFramework = "jetpack-compose" | "android-views" | "swiftui" | "flutter" | "react-native" | "expo";
+export type MobileBuildSystem = "gradle" | "xcode" | "swift-package-manager" | "flutter" | "npm";
+export type UniversalRunTargetKind =
+  | "browser"
+  | "android-device"
+  | "android-emulator"
+  | "ios-simulator"
+  | "ios-device"
+  | "desktop"
+  | "local-server";
+
+export type MobileProjectModel = {
+  platform: MobilePlatform;
+  language: MobileLanguage;
+  framework: MobileFramework;
+  buildSystem: MobileBuildSystem;
+  requiredTools: string[];
+  buildCommand?: string;
+  testCommand?: string;
+  runCommand?: string;
+  deviceTargets: UniversalRunTargetKind[];
+  emulatorTargets: UniversalRunTargetKind[];
+  packageIdentifier?: string;
+  launcherActivity?: string;
+  minimumPlatformVersion?: string;
+  projectRoot: string;
+  modules: string[];
+  appModule?: string;
+  confidence: number;
+  evidence: string[];
+};
+
+export type MobileToolStatus = "ready" | "missing" | "unavailable" | "unknown";
+
+export type MobileTool = {
+  name: string;
+  status: MobileToolStatus;
+  version?: string;
+  detail?: string;
+  executablePath?: string;
+  guidance?: string;
+};
+
+export type AndroidDeviceTarget = {
+  id: string;
+  kind: "android-device" | "android-emulator";
+  state: "device" | "offline" | "unauthorized" | "unknown";
+  model?: string;
+  product?: string;
+  name?: string;
+  manufacturer?: string;
+  androidVersion?: string;
+  apiLevel?: string;
+};
+
+export type MobileEnvironment = {
+  os: NodeJS.Platform;
+  android: {
+    jdk: MobileTool;
+    javaHome: MobileTool;
+    androidSdk: MobileTool;
+    adb: MobileTool;
+    gradle: MobileTool;
+    gradleWrapper: MobileTool;
+    buildTools: MobileTool;
+    platformTools: MobileTool;
+    platforms: MobileTool;
+    emulator: MobileTool;
+    avds: MobileTool & { names: string[] };
+    devices: MobileTool & { targets: AndroidDeviceTarget[] };
+    status: "ready" | "missing-tools" | "no-targets" | "unknown";
+    summary: string;
+  };
+  flutter: {
+    flutter: MobileTool;
+    dart: MobileTool;
+    doctor: MobileTool;
+    androidTarget: MobileTool;
+    iosTarget: MobileTool;
+  };
+  reactNative: {
+    node: MobileTool;
+    npm: MobileTool;
+    pnpm: MobileTool;
+    yarn: MobileTool;
+    npx: MobileTool;
+    expoCli: MobileTool;
+    androidTooling: MobileTool;
+    iosTooling: MobileTool;
+  };
+  ios: {
+    sourceDevelopment: MobileTool;
+    nativeBuild: MobileTool;
+    xcode: MobileTool;
+    xcodebuild: MobileTool;
+    swift: MobileTool;
+    swiftPackageManager: MobileTool;
+    simulators: MobileTool;
+    devices: MobileTool;
+    summary: string;
+  };
+};
+
+export type ProjectDetection = {
+  projectType: ProjectType;
+  adapterId?: string;
+  projectFamily?: "web" | "api" | "empty" | "mobile" | "desktop" | "cli" | "library";
+  framework?: string;
+  language?: string;
+  packageManager?: string;
+  buildSystem?: string;
+  requiredTools?: string[];
+  installCommand?: string;
+  buildCommand?: string;
+  testCommand?: string;
+  checkCommand?: string;
+  lintCommand?: string;
+  devCommand?: string;
+  runCommand?: string;
+  packageCommand?: string;
+  entryPoint?: string;
+  mobile?: MobileProjectModel;
+  runTargets?: UniversalRunTargetKind[];
+  confidence: number;
+  evidence: string[];
+};
+
+export type ProjectStarterCategory =
+  | "vanilla-web"
+  | "react-vite"
+  | "nextjs"
+  | "node-api"
+  | "android-compose"
+  | "empty-project"
+  | "empty"
+  | "clone-github";
+
+export type StarterCommandInfo = {
+  label: string;
+  command: string;
+  args: string[];
+  cwd?: string;
+  kind: "install" | "build" | "test" | "dev" | "verify";
+  required: boolean;
+};
+
+export type ProjectStarterInfo = {
+  id: ProjectStarterCategory;
+  label: string;
+  projectFamily?: "web" | "api" | "empty" | "mobile" | "desktop";
+  framework?: string;
+  language?: string;
+  packageManager?: string;
+  requiredTools?: string[];
+  initializationActions?: "deterministic-files" | "ecosystem-initializer" | "empty";
+  expectedFiles?: string[];
+  verificationStrategy?: "build-command" | "syntax-check" | "static-files" | "none";
+  description: string;
+  installCommand?: string | StarterCommandInfo;
+  buildCommand?: StarterCommandInfo;
+  testCommand?: StarterCommandInfo;
+  devCommand?: StarterCommandInfo;
+  verificationCommand?: string;
+};
+
+export type CloneRepositoryRequest = {
+  repositoryUrl: string;
+  destinationFolder: string;
+};
+
+export type CloneRepositoryResult = {
+  project: SelectedProject;
+  detection: ProjectDetection;
+  summary: string;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+};
+
+export type CreateStarterRequest = {
+  starter: ProjectStarterCategory;
+  destinationFolder: string;
+  projectName?: string;
+};
+
+export type CreateStarterResult = {
+  project: SelectedProject;
+  detection: ProjectDetection;
+  summary: string;
+  commands: string[];
+  needsEnvironmentCheck?: boolean;
+  warnings: string[];
+};
+
+export type RunAppCommand = {
+  id: string;
+  label: string;
+  command: string;
+  args: string[];
+  cwd?: string;
+  confidence: number;
+  longRunning: boolean;
+};
+
+export type RunAppStatus = {
+  running: boolean;
+  terminalSessionId?: string;
+  command?: RunAppCommand;
+  target?: AndroidDeviceTarget;
+  outputPreview: string;
+  startedAt?: string;
+  stoppedAt?: string;
+  exitCode?: number;
+};
+
+export type RunAppResult = {
+  status: RunAppStatus;
+};
+
+export type ViewChangesResult = {
+  createdFiles: string[];
+  modifiedFiles: string[];
+  deletedFiles: string[];
 };
 
 export type TerminalSession = {
@@ -1136,6 +1408,16 @@ export type LeviApi = {
   projects: {
     getRecent: () => Promise<SelectedProject | null>;
     openFolder: () => Promise<SelectedProject | null>;
+    starters: () => Promise<ProjectStarterInfo[]>;
+    createStarter: (request: CreateStarterRequest) => Promise<CreateStarterResult>;
+    cloneRepository: (request: CloneRepositoryRequest) => Promise<CloneRepositoryResult>;
+    detect: () => Promise<ProjectDetection>;
+    mobileEnvironment: () => Promise<MobileEnvironment>;
+    runCommands: () => Promise<RunAppCommand[]>;
+    runApp: (request?: { commandId?: string }) => Promise<RunAppResult>;
+    stopApp: () => Promise<RunAppResult>;
+    runStatus: () => Promise<RunAppStatus>;
+    viewChanges: () => Promise<ViewChangesResult>;
   };
   workspace: {
     getStatus: () => Promise<WorkspaceStatus>;
@@ -1304,6 +1586,8 @@ export type LeviApi = {
     preview: (request: AgentPreviewRequest) => Promise<AgentPreviewResult>;
     execute: (request: AgentExecuteRequest) => Promise<AgentExecutionResult>;
     undo: (request: AgentUndoRequest) => Promise<AgentUndoResult>;
+    restoreOperation: (request: AgentRestoreOperationRequest) => Promise<AgentRestoreOperationResult>;
+    resumeOperation: (request: AgentResumeOperationRequest) => Promise<AgentResumeOperationResult>;
     queue: (request: AgentQueueRequest) => Promise<AgentQueueResult>;
     cancel: (request: AgentCancelRequest) => Promise<AgentExecutionResult>;
     taskPreview: (request: AgentTaskPreviewRequest) => Promise<AgentTaskPreviewResult>;
@@ -1320,6 +1604,7 @@ export type LeviApi = {
     gitStatus: (request: AgentGitStatusRequest) => Promise<AgentGitStatusResult>;
     verify: (request: AgentVerifyRequest) => Promise<AgentVerifyResult>;
     repairPlan: (request: AgentRepairPlanRequest) => Promise<AgentRepairPlanResult>;
+    repairExecute: (request: AgentRepairExecuteRequest) => Promise<AgentRepairExecutionResult>;
     repairStatus: (request: AgentRepairStatusRequest) => Promise<AgentRepairStatusResult>;
     browserPreview: (request: AgentBrowserPreviewRequest) => Promise<AgentBrowserPreviewResult>;
     browserExecute: (request: AgentBrowserExecuteRequest) => Promise<AgentBrowserExecutionResult>;

@@ -106,6 +106,7 @@ export type AgentActionPreview = {
   actionType: AgentActionType;
   targetPath: string;
   destinationPath?: string;
+  alreadySatisfied?: boolean;
   summary: string;
   riskLevel: AgentRiskLevel;
   destructive: boolean;
@@ -138,6 +139,129 @@ export type AgentUndoMetadata = {
   destinationRelativePath?: string;
   actionType: AgentActionType;
   timestamp: string;
+};
+
+export type AgentOperationStatus =
+  | "planned"
+  | "approved"
+  | "running"
+  | "inspecting"
+  | "resumable"
+  | "resuming"
+  | "resume-conflict"
+  | "verifying"
+  | "repairing"
+  | "completed"
+  | "blocked"
+  | "cancelled"
+  | "interrupted"
+  | "rolling-back"
+  | "rolled-back"
+  | "rollback-conflict"
+  | "rollback-failed"
+  | "Executing"
+  | "Completed"
+  | "Failed"
+  | "Cancelled"
+  | "Interrupted"
+  | "Undone"
+  | "Conflict";
+
+export type AgentRecoveredFileKind = "missing" | "file" | "folder";
+
+export type AgentRecoveredFileSnapshot = {
+  relativePath: string;
+  destinationRelativePath?: string;
+  kind: AgentRecoveredFileKind;
+  createdKind?: "file" | "folder";
+  beforeContent?: string;
+  beforeHash?: string;
+  afterContent?: string;
+  afterHash?: string;
+};
+
+export type AgentCommandLedgerEntry = {
+  actionId?: string;
+  commandId?: string;
+  executable: string;
+  args: string[];
+  cwd?: string;
+  status: "running" | "succeeded" | "failed" | "cancelled" | "interrupted";
+  exitCode?: number;
+  durationMs?: number;
+};
+
+export type AgentResumeEligibility = {
+  available: boolean;
+  reason?: string;
+  safeActionIds: string[];
+  blockedActionIds: string[];
+  completed: number;
+  remaining: number;
+  evaluatedAt: string;
+};
+
+export type AgentResumePointer = {
+  lastCompletedActionId?: string;
+  currentActionId?: string;
+  remainingActionIds: string[];
+};
+
+export type AgentRollbackChoice = "keep-current" | "restore-snapshot";
+
+export type AgentRollbackConflict = {
+  relativePath: string;
+  message: string;
+  currentContent?: string;
+  snapshotContent?: string;
+  choice?: AgentRollbackChoice;
+};
+
+export type AgentOperationLedgerEntry = {
+  operationId: string;
+  sessionId: string;
+  planId?: string;
+  workspaceRoot?: string;
+  actionId?: string;
+  actionType?: AgentActionType;
+  title: string;
+  status: AgentOperationStatus;
+  userRequest: string;
+  approvedScope: string[];
+  actionsAttempted: string[];
+  actionsCompleted: string[];
+  actionsFailed: string[];
+  filesCreated: string[];
+  filesModified: string[];
+  filesDeleted: string[];
+  filesRenamed: Array<{ from: string; to: string }>;
+  commandsExecuted: AgentCommandLedgerEntry[];
+  resumeEligibility?: AgentResumeEligibility;
+  resumePointer?: AgentResumePointer;
+  verificationResult?: AgentVerificationStatus | "Blocked" | "Cancelled";
+  repairAttempts: number;
+  gitHeadBefore?: string;
+  gitHeadAfter?: string;
+  gitBranchBefore?: string;
+  gitBranchAfter?: string;
+  gitDirtyBefore?: boolean;
+  gitDirtyAfter?: boolean;
+  filesBefore?: AgentRecoveredFileSnapshot[];
+  filesAfter?: AgentRecoveredFileSnapshot[];
+  snapshots: AgentRecoveredFileSnapshot[];
+  rollbackConflicts?: AgentRollbackConflict[];
+  rollbackLimitations?: string[];
+  conflict?: string;
+  startedAt: string;
+  completedAt?: string;
+};
+
+export type AgentRecoveryState = {
+  schemaVersion: 1;
+  operations: AgentOperationLedgerEntry[];
+  interruptedOperationIds: string[];
+  activeOperationId?: string;
+  corruptionRecovered?: boolean;
 };
 
 export type AgentTaskActionStatus = "Pending" | "Approved" | "Running" | "Succeeded" | "Failed" | "Cancelled" | "Interrupted";
@@ -193,6 +317,7 @@ export type AgentTaskVerificationSummary = {
 };
 
 export type AgentTerminalActionStatus = "Pending" | "Approved" | "Running" | "Succeeded" | "Failed" | "Cancelled" | "Interrupted";
+export type AgentTerminalResultStatus = "completed" | "failed" | "cancelled" | "infrastructure-error";
 
 export type AgentTerminalPreview = {
   previewId: string;
@@ -216,6 +341,7 @@ export type AgentTerminalRunState = {
   args: string[];
   cwd: string;
   status: AgentTerminalActionStatus;
+  resultStatus?: AgentTerminalResultStatus;
   terminalSessionId?: string;
   startedAt?: string;
   endedAt?: string;
@@ -247,6 +373,8 @@ export type AgentGitOperation =
   | "unstage-file"
   | "stage-all"
   | "commit"
+  | "pull"
+  | "push"
   | "create-branch"
   | "switch-branch"
   | "restore-file"
@@ -385,7 +513,7 @@ export type AgentFailureClassification =
   | "Missing import"
   | "Syntax"
   | "Unknown";
-export type AgentRepairStatus = "Pending" | "Approved" | "Rejected" | "Cancelled" | "Completed";
+export type AgentRepairStatus = "Pending" | "Approved" | "Rejected" | "Cancelled" | "Executing" | "Completed" | "Blocked";
 
 export type AgentVerificationCheck = {
   kind: "build" | "test" | "lint" | "typecheck";
@@ -403,6 +531,7 @@ export type AgentVerificationFailure = {
   source: "task" | "terminal" | "problems" | "git" | "execution";
   message: string;
   affectedFiles: string[];
+  details?: Record<string, unknown>;
   actionId?: string;
   exitCode?: number;
   severity: "error" | "warning";
@@ -428,10 +557,14 @@ export type AgentVerificationReport = {
 export type AgentRepairQueueItem = {
   id: string;
   reportId: string;
+  attempt: number;
   problem: string;
   likelyCause: string;
   affectedFiles: string[];
   suggestedFix: string;
+  actions: AgentApprovalAction[];
+  requiresFreshApproval: boolean;
+  blockers: string[];
   confidence: number;
   estimatedRisk: AgentRiskLevel;
   classification: AgentFailureClassification;
@@ -442,9 +575,10 @@ export type AgentRepairQueueItem = {
 
 export type AgentRepairProgressEntry = {
   id: string;
-  stage: "Verification Started" | "Verification Complete" | "Repair Planned" | "Repair Approved" | "Repair Complete";
+  stage: "Verification Started" | "Verification Complete" | "Repair Planned" | "Repair Approved" | "Repair Executing" | "Repair Complete";
   reportId?: string;
   repairId?: string;
+  attempt?: number;
   createdAt: string;
 };
 
@@ -452,6 +586,13 @@ export type AgentExecutionPlan = {
   id: string;
   objective: string;
   summary: string;
+  planningMode?: "ai" | "deterministic-bootstrap" | "deterministic-existing-project" | "ai-with-bootstrap";
+  starterId?: string;
+  starterLabel?: string;
+  projectSlug?: string;
+  featurePlanningStatus?: "NotRequired" | "Planned" | "Retrying" | "TimedOut" | "Failed";
+  plannerRetries?: number;
+  milestones?: string[];
   steps: AgentPlanStep[];
   approvals: AgentApprovalAction[];
   executionQueue: AgentExecutionQueueItem[];
@@ -463,6 +604,7 @@ export type AgentExecutionPlan = {
   repairQueue: AgentRepairQueueItem[];
   repairProgress: AgentRepairProgressEntry[];
   lastUndo?: AgentUndoMetadata;
+  recovery?: AgentRecoveryState;
   estimatedFiles: string[];
   progress: {
     totalSteps: number;
@@ -566,6 +708,18 @@ export type AgentExecuteRequest = {
 
 export type AgentUndoRequest = {
   sessionId: string;
+  choices?: Record<string, AgentRollbackChoice>;
+};
+
+export type AgentRestoreOperationRequest = {
+  sessionId: string;
+  operationId: string;
+  choices?: Record<string, AgentRollbackChoice>;
+};
+
+export type AgentResumeOperationRequest = {
+  sessionId: string;
+  operationId: string;
 };
 
 export type AgentQueueRequest = {
@@ -654,6 +808,13 @@ export type AgentRepairStatusRequest = {
   repairId?: string;
 };
 
+export type AgentRepairExecuteRequest = {
+  sessionId: string;
+  reportId?: string;
+  repairId?: string;
+  attempt?: number;
+};
+
 export type AgentStatusRequest = {
   sessionId?: string;
 };
@@ -691,6 +852,23 @@ export type AgentUndoResult = {
   sessionId: string;
   actionId: string;
   relativePath: string;
+  operationId?: string;
+  restoredPaths?: string[];
+  conflicts?: AgentRollbackConflict[];
+  state: AgentState;
+};
+
+export type AgentRestoreOperationResult = {
+  sessionId: string;
+  operationId: string;
+  restoredPaths: string[];
+  state: AgentState;
+};
+
+export type AgentResumeOperationResult = {
+  sessionId: string;
+  operationId: string;
+  resumedActionIds: string[];
   state: AgentState;
 };
 
@@ -776,6 +954,16 @@ export type AgentRepairStatusResult = {
   repairs: AgentRepairQueueItem[];
   reports: AgentVerificationReport[];
   progress: AgentRepairProgressEntry[];
+  state: AgentState;
+};
+
+export type AgentRepairExecutionResult = {
+  sessionId: string;
+  reportId: string;
+  attempt: number;
+  executedActions: AgentExecutionQueueItem[];
+  blockedActions: AgentApprovalAction[];
+  repairs: AgentRepairQueueItem[];
   state: AgentState;
 };
 

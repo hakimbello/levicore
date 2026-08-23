@@ -3,6 +3,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import type { AgentRiskLevel } from "../../src/features/agent";
+import { getEffectiveDeveloperEnvironment } from "./developer-environment";
 
 const GIT_TIMEOUT_MS = 10_000;
 const GIT_DIFF_TIMEOUT_MS = 15_000;
@@ -14,6 +15,8 @@ const SUPPORTED_OPERATIONS = new Set<GitOperation>([
   "unstage-file",
   "stage-all",
   "commit",
+  "pull",
+  "push",
   "create-branch",
   "switch-branch",
   "restore-file",
@@ -26,6 +29,8 @@ export type GitOperation =
   | "unstage-file"
   | "stage-all"
   | "commit"
+  | "pull"
+  | "push"
   | "create-branch"
   | "switch-branch"
   | "restore-file"
@@ -157,6 +162,10 @@ export class GitService {
       ({ stdout, stderr } = await git(preview.repositoryRoot, ["commit", "-m", preview.commitMessage ?? ""], GIT_TIMEOUT_MS));
       const hash = await git(preview.repositoryRoot, ["rev-parse", "--short", "HEAD"], GIT_TIMEOUT_MS);
       commitHash = hash.stdout.trim() || undefined;
+    } else if (preview.operation === "pull") {
+      ({ stdout, stderr } = await git(preview.repositoryRoot, ["pull", "--ff-only"], GIT_TIMEOUT_MS));
+    } else if (preview.operation === "push") {
+      ({ stdout, stderr } = await git(preview.repositoryRoot, ["push"], GIT_TIMEOUT_MS));
     } else if (preview.operation === "create-branch") {
       ({ stdout, stderr } = await git(preview.repositoryRoot, ["branch", preview.branchName ?? ""], GIT_TIMEOUT_MS));
     } else if (preview.operation === "switch-branch") {
@@ -240,6 +249,9 @@ function validateRepositoryState(request: GitOperationPreviewRequest, status: Gi
   if (request.operation === "commit" && !status.entries.some((entry) => entry.index !== " " && entry.index !== "?")) {
     throw new Error("No staged changes are available to commit.");
   }
+  if ((request.operation === "pull" || request.operation === "push") && status.entries.length > 0) {
+    warnings.push("Repository has local changes.");
+  }
   return warnings;
 }
 
@@ -275,7 +287,7 @@ function countDiff(diff: string): { added: number; removed: number } {
 
 function riskForGitOperation(operation: GitOperation): AgentRiskLevel {
   if (operation === "status" || operation === "show-diff") return "low";
-  if (operation === "commit" || operation === "restore-file" || operation === "switch-branch") return "high";
+  if (operation === "commit" || operation === "pull" || operation === "push" || operation === "restore-file" || operation === "switch-branch") return "high";
   return "medium";
 }
 
@@ -358,7 +370,7 @@ function isInside(root: string, candidate: string): boolean {
 
 function git(cwd: string, args: string[], timeoutMs: number, maxBuffer = 256 * 1024): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile("git", args, { cwd, timeout: timeoutMs, windowsHide: true, maxBuffer }, (error, stdout, stderr) => {
+    execFile("git", args, { cwd, env: getEffectiveDeveloperEnvironment(), timeout: timeoutMs, windowsHide: true, maxBuffer }, (error, stdout, stderr) => {
       if (error) {
         reject(new Error(stderr.toString().trim() || stdout.toString().trim() || error.message));
       } else {

@@ -3,21 +3,29 @@ import {
   DEFAULT_CONVERSATION_MODEL,
   MAX_CONVERSATION_MESSAGE_LENGTH,
   type ConversationMessage,
+  type CreateStarterRequest,
   type EditApplyResult,
   type EditProposal,
   type EditUndoResult,
   type ExecutionPlan,
   type ExecutionPublicTransaction,
+  type MobileEnvironment,
+  type ProjectStarterCategory,
+  type RunAppCommand,
+  type RunAppStatus,
   type SelectedProject,
+  type ViewChangesResult,
   type WorkspaceFileReference,
   type WorkspaceStatus
 } from "../../types/levi-api";
+import type { AgentApprovalAction, AgentSession, AgentState, AgentVerificationReport } from "../agent";
 import { Icon } from "../../components/Icon";
 import { LazySurface } from "../../components/LazySurface";
 import { layout } from "../../design";
 import { SafeMarkdown } from "./SafeMarkdown";
 import type { PlanActionNotice } from "./plan-format";
-import { isPlanningPrompt, isSingleFileEditPrompt } from "../../shared/prompt-routing";
+import { classifyPromptIntent } from "../../shared/prompt-routing";
+import { type BuildPhase, BuildReviewPanel } from "./BuildReviewPanel";
 
 const EditReviewPanel = lazy(async () => {
   const module = await import("./EditReviewPanel");
@@ -42,6 +50,10 @@ type HomeProps = {
   onEditApplied: (result: EditApplyResult) => void;
   onEditUndone: (result: EditUndoResult) => void;
   onExecutionTransactionUpdate: (transaction: ExecutionPublicTransaction) => void;
+  onProjectOpened: (project: SelectedProject) => Promise<void>;
+  onOpenProject: () => void;
+  onOpenTerminal: () => Promise<void>;
+  onOpenChangedFile: (relativePath: string) => Promise<void>;
 };
 
 type ChatMessageStatus = "streaming" | "done" | "stopped" | "error";
@@ -68,11 +80,38 @@ function getWorkspaceStatusText(status: WorkspaceStatus): string {
 }
 
 function isLikelyEditPrompt(prompt: string): boolean {
-  return isSingleFileEditPrompt(prompt);
+  return classifyPromptIntent(prompt) === "edit";
 }
 
 function isLikelyPlanningPrompt(prompt: string): boolean {
-  return isPlanningPrompt(prompt);
+  return classifyPromptIntent(prompt) === "plan";
+}
+
+function isLikelyBuildPrompt(prompt: string): boolean {
+  return classifyPromptIntent(prompt) === "build";
+}
+
+function sessionFromState(state: AgentState, sessionId: string): AgentSession | null {
+  return state.sessions.find((session) => session.id === sessionId) ?? null;
+}
+
+function buildProgressMessage(session: AgentSession, phase: BuildPhase): string {
+  const plan = session.plan;
+  if (!plan) {
+    return phase === "planning" ? "Planning build..." : "Preparing build...";
+  }
+  const completed = plan.progress.completedActions;
+  const total = plan.approvals.length;
+  if (phase === "building") {
+    return `Building. Step ${Math.min(completed + 1, total)} of ${total}.`;
+  }
+  if (phase === "verifying") {
+    return "Running verification...";
+  }
+  if (phase === "completed") {
+    return "Build completed. Review the completion report below.";
+  }
+  return "Review the build plan below. No files have been modified.";
 }
 
 export function Home({
@@ -81,7 +120,11 @@ export function Home({
   newChatSignal,
   onOpenCitation,
   onEditApplied,
-  onExecutionTransactionUpdate
+  onExecutionTransactionUpdate,
+  onProjectOpened,
+  onOpenProject,
+  onOpenTerminal,
+  onOpenChangedFile
 }: HomeProps) {
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -91,6 +134,23 @@ export function Home({
   const [activeEditAssistantId, setActiveEditAssistantId] = useState<string | null>(null);
   const [activePlanRequestId, setActivePlanRequestId] = useState<string | null>(null);
   const [activePlanAssistantId, setActivePlanAssistantId] = useState<string | null>(null);
+  const [activeBuildAssistantId, setActiveBuildAssistantId] = useState<string | null>(null);
+  const [activeBuildSession, setActiveBuildSession] = useState<AgentSession | null>(null);
+  const [buildPhase, setBuildPhase] = useState<BuildPhase>("idle");
+  const [buildError, setBuildError] = useState<string | null>(null);
+  const [buildVerification, setBuildVerification] = useState<AgentVerificationReport | null>(null);
+  const [runCommands, setRunCommands] = useState<RunAppCommand[]>([]);
+  const [selectedRunCommandId, setSelectedRunCommandId] = useState<string>("");
+  const [runStatus, setRunStatus] = useState<RunAppStatus | null>(null);
+  const [changes, setChanges] = useState<ViewChangesResult | null>(null);
+  const [postBuildError, setPostBuildError] = useState<string | null>(null);
+  const [projectMode, setProjectMode] = useState<"none" | "new" | "clone">("none");
+  const [starter, setStarter] = useState<ProjectStarterCategory>("vanilla-web");
+  const [destinationFolder, setDestinationFolder] = useState("");
+  const [projectName, setProjectName] = useState("");
+  const [repositoryUrl, setRepositoryUrl] = useState("");
+  const [projectWorkflowStatus, setProjectWorkflowStatus] = useState<string | null>(null);
+  const [mobileEnvironment, setMobileEnvironment] = useState<MobileEnvironment | null>(null);
   const [editProposal, setEditProposal] = useState<EditProposal | null>(null);
   const [editReviewError, setEditReviewError] = useState<string | null>(null);
   const [lastEditPrompt, setLastEditPrompt] = useState<string | null>(null);
@@ -108,9 +168,12 @@ export function Home({
   const activeEditAssistantIdRef = useRef<string | null>(null);
   const activePlanRequestIdRef = useRef<string | null>(null);
   const activePlanAssistantIdRef = useRef<string | null>(null);
+  const activeBuildAssistantIdRef = useRef<string | null>(null);
+  const activeBuildSessionIdRef = useRef<string | null>(null);
 
-  const isGenerating = Boolean(activeRequestId) || Boolean(activeEditRequestId) || Boolean(activePlanRequestId) || isStarting;
-  const canStop = Boolean(activeRequestId) || Boolean(activeEditRequestId) || Boolean(activePlanRequestId);
+  const isBuildBusy = buildPhase === "planning" || buildPhase === "building" || buildPhase === "verifying";
+  const isGenerating = Boolean(activeRequestId) || Boolean(activeEditRequestId) || Boolean(activePlanRequestId) || isStarting || isBuildBusy;
+  const canStop = Boolean(activeRequestId) || Boolean(activeEditRequestId) || Boolean(activePlanRequestId) || isBuildBusy;
   const canSubmit = draft.trim().length > 0 && !isGenerating;
   const conversationStarted = messages.length > 0;
 
@@ -151,6 +214,10 @@ export function Home({
   useEffect(() => {
     activePlanAssistantIdRef.current = activePlanAssistantId;
   }, [activePlanAssistantId]);
+
+  useEffect(() => {
+    activeBuildAssistantIdRef.current = activeBuildAssistantId;
+  }, [activeBuildAssistantId]);
 
   useEffect(() => {
     let disposed = false;
@@ -417,6 +484,22 @@ export function Home({
   }, []);
 
   useEffect(() => {
+    return window.levi.agent.onEvent((event) => {
+      const sessionId = activeBuildSessionIdRef.current;
+      if (!sessionId) {
+        return;
+      }
+      const next = sessionFromState(event.state, sessionId);
+      if (next) {
+        setActiveBuildSession(next);
+      }
+      if (event.type === "verification" && event.sessionId === sessionId) {
+        setBuildVerification(event.report);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
     if (activeRequestIdRef.current) {
       void window.levi.conversation.cancel(activeRequestIdRef.current);
     }
@@ -435,6 +518,17 @@ export function Home({
     setActiveEditAssistantId(null);
     setActivePlanRequestId(null);
     setActivePlanAssistantId(null);
+    setActiveBuildAssistantId(null);
+    setActiveBuildSession(null);
+    activeBuildSessionIdRef.current = null;
+    setBuildPhase("idle");
+    setBuildError(null);
+    setBuildVerification(null);
+    setRunCommands([]);
+    setSelectedRunCommandId("");
+    setRunStatus(null);
+    setChanges(null);
+    setPostBuildError(null);
     setEditProposal(null);
     setEditReviewError(null);
     setLastEditPrompt(null);
@@ -443,6 +537,7 @@ export function Home({
     setExecutionError(null);
     setPlanNotice(null);
     setIsStarting(false);
+    setMobileEnvironment(null);
   }, [newChatSignal]);
 
   useEffect(() => {
@@ -563,6 +658,348 @@ export function Home({
     }
   }
 
+  async function startBuildPlan(nextMessages: ChatMessage[], prompt: string) {
+    const assistantId = createMessageId("assistant");
+    setMessages([
+      ...nextMessages,
+      { id: assistantId, role: "assistant", content: "Understanding request", status: "streaming" }
+    ]);
+    setActiveBuildAssistantId(assistantId);
+    activeBuildAssistantIdRef.current = assistantId;
+    setActiveBuildSession(null);
+    activeBuildSessionIdRef.current = null;
+    setBuildPhase("planning");
+    setBuildError(null);
+    setBuildVerification(null);
+    setIsStarting(true);
+    try {
+      setMessages((current) =>
+        current.map((message) => (message.id === assistantId ? { ...message, content: "Inspecting workspace" } : message))
+      );
+      const result = await window.levi.agent.plan({
+        prompt: [
+          prompt,
+          "",
+          "Treat this as build execution intent, not a read-only plan. Produce concrete approved actions with file contents, safe terminal commands when needed, and verification steps. If this is a new app inside an existing project, put generated files under a sanitized child folder inside the current workspace."
+        ].join("\n"),
+        modelId: DEFAULT_CONVERSATION_MODEL
+      });
+      const session = sessionFromState(result.state, result.sessionId);
+      if (!session) {
+        throw new Error("Build session was not created.");
+      }
+      setActiveBuildSession(session);
+      activeBuildSessionIdRef.current = session.id;
+      setBuildPhase("ready");
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === assistantId
+            ? { ...message, content: buildProgressMessage(session, "ready"), status: "done" }
+            : message
+        )
+      );
+    } catch (error) {
+      setBuildPhase("blocked");
+      setBuildError(error instanceof Error ? error.message : "Levi could not prepare the build plan.");
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === assistantId
+            ? {
+                ...message,
+                content: "Levi could not prepare the build plan.",
+                status: "error",
+                recoverable: true
+              }
+            : message
+        )
+      );
+    } finally {
+      setIsStarting(false);
+    }
+  }
+
+  function requiresSeparateApproval(action: AgentApprovalAction): boolean {
+    if (action.type === "delete-file" || action.type === "git-operation") {
+      return true;
+    }
+    if (action.type.startsWith("browser-")) {
+      return true;
+    }
+    const commandText = `${action.command ?? ""} ${(action.args ?? []).join(" ")}`.toLowerCase();
+    return /\b(publish|deploy|release|token|secret|credential|password|api[_-]?key)\b/.test(commandText);
+  }
+
+  function hasConcreteWorkspaceTarget(action: AgentApprovalAction): boolean {
+    if (action.type === "create-file" || action.type === "modify-file" || action.type === "delete-file" || action.type === "create-folder") {
+      return Boolean(action.relativePath);
+    }
+    if (action.type === "rename-file" || action.type === "rename-folder") {
+      return Boolean(action.relativePath && action.destinationRelativePath);
+    }
+    return true;
+  }
+
+  async function refreshBuildSession(sessionId: string): Promise<AgentSession> {
+    const state = await window.levi.agent.status();
+    const next = "sessions" in state ? sessionFromState(state, sessionId) : state.id === sessionId ? state : null;
+    if (!next && activeBuildSession?.id === sessionId) {
+      return activeBuildSession;
+    }
+    if (!next) {
+      throw new Error("Build session is no longer available.");
+    }
+    setActiveBuildSession(next);
+    return next;
+  }
+
+  async function waitForTerminalAction(sessionId: string, actionId: string): Promise<void> {
+    for (let attempt = 0; attempt < 600; attempt += 1) {
+      const status = await window.levi.agent.terminalStatus({ sessionId, actionId });
+      const run = status.terminalRuns[0];
+      const next = sessionFromState(status.state, sessionId);
+      if (next) {
+        setActiveBuildSession(next);
+      }
+      if (!run || run.status === "Succeeded" || (run.status === "Failed" && run.resultStatus === "failed")) {
+        return;
+      }
+      if (run.status === "Failed" || run.status === "Cancelled" || run.status === "Interrupted") {
+        throw new Error(run.failureReason ?? `Terminal action ${run.status.toLowerCase()}.`);
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    }
+    throw new Error("Terminal verification command timed out.");
+  }
+
+  async function executeApprovedBuildAction(sessionId: string, action: AgentApprovalAction): Promise<void> {
+    if (!hasConcreteWorkspaceTarget(action)) {
+      throw new Error("Build plan is not executable because it contains a placeholder action without a workspace target.");
+    }
+    if (requiresSeparateApproval(action)) {
+      throw new Error(`${action.title} requires separate approval before Levi can continue.`);
+    }
+    const approved = await window.levi.agent.approve({ sessionId, actionId: action.id });
+    const approvedSession = sessionFromState(approved, sessionId);
+    if (approvedSession) {
+      setActiveBuildSession(approvedSession);
+    }
+    if (action.type === "run-terminal-command") {
+      const preview = await window.levi.agent.terminalPreview({ sessionId, actionId: action.id });
+      if (preview.preview.riskLevel === "high") {
+        throw new Error(`${action.title} is high risk and requires separate approval.`);
+      }
+      await window.levi.agent.terminalExecute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+      await waitForTerminalAction(sessionId, action.id);
+      return;
+    }
+    if (action.type === "run-task") {
+      const preview = await window.levi.agent.taskPreview({ sessionId, actionId: action.id });
+      if (preview.preview.riskLevel === "high" || preview.preview.longRunning) {
+        throw new Error(`${action.title} requires separate approval before Levi can continue.`);
+      }
+      await window.levi.agent.taskExecute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+      return;
+    }
+    const preview = await window.levi.agent.preview({ sessionId, actionId: action.id });
+    if (preview.preview.riskLevel === "high" || preview.preview.destructive) {
+      throw new Error(`${action.title} requires separate approval before Levi can continue.`);
+    }
+    await window.levi.agent.execute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+  }
+
+  async function rerunVerificationActions(sessionId: string): Promise<void> {
+    const latest = await refreshBuildSession(sessionId);
+    const actions = latest.plan?.approvals ?? [];
+    for (const action of actions) {
+      if (action.type === "run-terminal-command" || action.type === "run-task") {
+        await executeApprovedBuildAction(sessionId, action);
+      }
+    }
+  }
+
+  async function approveAndBuild() {
+    if (!activeBuildSession?.plan || buildPhase !== "ready") {
+      return;
+    }
+    const sessionId = activeBuildSession.id;
+    const assistantId = activeBuildAssistantIdRef.current;
+    setBuildPhase("building");
+    setBuildError(null);
+    setBuildVerification(null);
+    try {
+      let latest = await refreshBuildSession(sessionId);
+      const actions = latest.plan?.approvals ?? [];
+      for (let index = 0; index < actions.length; index += 1) {
+        const action = actions[index];
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === assistantId
+              ? { ...message, content: `Step ${index + 1} of ${actions.length}\n${action.title}`, status: "streaming" }
+              : message
+          )
+        );
+        await executeApprovedBuildAction(sessionId, action);
+        latest = await refreshBuildSession(sessionId);
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === assistantId ? { ...message, content: buildProgressMessage(latest, "building"), status: "streaming" } : message
+          )
+        );
+      }
+      setBuildPhase("verifying");
+      let verification = await window.levi.agent.verify({ sessionId });
+      setBuildVerification(verification.report);
+      const finalSession = sessionFromState(verification.state, sessionId);
+      if (finalSession) {
+        setActiveBuildSession(finalSession);
+      }
+      let repairBlockedReason: string | null = null;
+      if (verification.report.status === "Failed") {
+        for (let repairAttempt = 1; repairAttempt <= 3 && verification.report.status === "Failed"; repairAttempt += 1) {
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === assistantId
+                ? { ...message, content: `Repairing\nAttempt ${repairAttempt} of 3`, status: "streaming" }
+                : message
+            )
+          );
+          try {
+            await window.levi.agent.repairPlan({ sessionId, reportId: verification.report.id });
+            const repairExecution = await window.levi.agent.repairExecute({
+              sessionId,
+              reportId: verification.report.id,
+              attempt: repairAttempt
+            });
+            const next = sessionFromState(repairExecution.state, sessionId);
+            if (next) {
+              setActiveBuildSession(next);
+            }
+            if (repairExecution.executedActions.length === 0) {
+              repairBlockedReason = "Repair actions require fresh approval or could not be validated.";
+              break;
+            }
+          } catch (error) {
+            repairBlockedReason = error instanceof Error ? error.message : "Repair execution failed.";
+            break;
+          }
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === assistantId
+                ? { ...message, content: "Re-running verification", status: "streaming" }
+                : message
+            )
+          );
+          await rerunVerificationActions(sessionId);
+          verification = await window.levi.agent.verify({ sessionId });
+          setBuildVerification(verification.report);
+        }
+      }
+      if (verification.report.status === "Failed") {
+        setBuildPhase("blocked");
+        setBuildError(repairBlockedReason ?? "Verification failed after 3 repair rounds. Review the final error and affected files.");
+      } else {
+        setBuildPhase("completed");
+        await window.levi.workspace.refresh().catch(() => null);
+        const [detectedCommands, detectedChanges] = await Promise.all([
+          window.levi.projects.runCommands().catch(() => []),
+          window.levi.projects.viewChanges().catch(() => null)
+        ]);
+        setRunCommands(detectedCommands);
+        setSelectedRunCommandId(detectedCommands[0]?.id ?? "");
+        setChanges(detectedChanges);
+      }
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === assistantId
+            ? {
+                ...message,
+                content: verification.report.status === "Succeeded" ? "Build completed" : "Build blocked by verification",
+                status: "done"
+              }
+            : message
+        )
+      );
+    } catch (error) {
+      setBuildPhase("blocked");
+      setBuildError(error instanceof Error ? error.message : "Build execution was blocked.");
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === assistantId
+            ? {
+                ...message,
+                content: error instanceof Error ? error.message : "Build execution was blocked.",
+                status: "error",
+                recoverable: true
+              }
+            : message
+        )
+      );
+    }
+  }
+
+  async function startProjectWorkflow() {
+    setProjectWorkflowStatus("Inspecting project");
+    try {
+      if (projectMode === "clone") {
+        setProjectWorkflowStatus("Cloning repository");
+        const result = await window.levi.projects.cloneRepository({
+          repositoryUrl,
+          destinationFolder
+        });
+        await onProjectOpened(result.project);
+        setProjectWorkflowStatus(result.summary);
+      } else if (projectMode === "new") {
+        setProjectWorkflowStatus("Creating project");
+        const request: CreateStarterRequest = { starter, destinationFolder, projectName: projectName || undefined };
+        const result = await window.levi.projects.createStarter(request);
+        await onProjectOpened(result.project);
+        setProjectWorkflowStatus(result.warnings[0] ?? result.summary);
+      }
+    } catch (error) {
+      setProjectWorkflowStatus(error instanceof Error ? error.message : "Project workflow failed.");
+    }
+  }
+
+  useEffect(() => {
+    let disposed = false;
+    if (projectMode !== "new" || starter !== "android-compose") {
+      setMobileEnvironment(null);
+      return () => {
+        disposed = true;
+      };
+    }
+    window.levi.projects.mobileEnvironment()
+      .then((environment) => {
+        if (!disposed) setMobileEnvironment(environment);
+      })
+      .catch(() => {
+        if (!disposed) setMobileEnvironment(null);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [projectMode, starter]);
+
+  async function runApp(commandId?: string) {
+    setPostBuildError(null);
+    try {
+      const result = await window.levi.projects.runApp({ commandId });
+      setRunStatus(result.status);
+      await onOpenTerminal();
+    } catch (error) {
+      setPostBuildError(error instanceof Error ? error.message : "Run App failed.");
+    }
+  }
+
+  async function stopApp() {
+    const result = await window.levi.projects.stopApp();
+    setRunStatus(result.status);
+  }
+
+  async function refreshChanges() {
+    setChanges(await window.levi.projects.viewChanges());
+  }
+
   async function submitPrompt() {
     const content = draft.trim();
     if (!content || isGenerating) {
@@ -577,6 +1014,8 @@ export function Home({
       await startEditProposal(nextMessages, boundedContent);
     } else if (isLikelyPlanningPrompt(boundedContent)) {
       await startPlanning(nextMessages, boundedContent);
+    } else if (isLikelyBuildPrompt(boundedContent)) {
+      await startBuildPlan(nextMessages, boundedContent);
     } else {
       await startGeneration(nextMessages);
     }
@@ -591,6 +1030,14 @@ export function Home({
     }
     if (activePlanRequestIdRef.current) {
       await window.levi.planning.cancel(activePlanRequestIdRef.current);
+    }
+    if (activeBuildSessionIdRef.current && isBuildBusy) {
+      try {
+        await window.levi.agent.cancel({ sessionId: activeBuildSessionIdRef.current });
+      } catch {
+        // There may be no pending execution queue yet.
+      }
+      setBuildPhase("cancelled");
     }
   }
 
@@ -774,6 +1221,71 @@ export function Home({
                 ) : null}
               </details>
             </div>
+            <div className="levi-project-actions" aria-label="Project actions">
+              <button type="button" className="levi-secondary-button" onClick={() => setProjectMode(projectMode === "new" ? "none" : "new")}>
+                <Icon name="plus" />
+                <span>New Project</span>
+              </button>
+              <button type="button" className="levi-secondary-button" onClick={() => setProjectMode(projectMode === "clone" ? "none" : "clone")}>
+                <Icon name="source-control" />
+                <span>Clone Repository</span>
+              </button>
+            </div>
+            {projectMode !== "none" ? (
+              <div className="levi-project-workflow" aria-label={projectMode === "clone" ? "Clone Repository" : "New Project"}>
+                {projectMode === "new" ? (
+                  <label>
+                    <span>Starter</span>
+                    <select value={starter} onChange={(event) => setStarter(event.target.value as ProjectStarterCategory)}>
+                      <option value="vanilla-web">Vanilla Web</option>
+                      <option value="react-vite">React + Vite</option>
+                      <option value="nextjs">Next.js</option>
+                      <option value="node-api">Node API</option>
+                      <option value="android-compose">Android App - Kotlin + Compose</option>
+                      <option value="empty">Empty Project</option>
+                    </select>
+                  </label>
+                ) : (
+                  <label>
+                    <span>Repository URL</span>
+                    <input value={repositoryUrl} onChange={(event) => setRepositoryUrl(event.target.value)} placeholder="https://github.com/owner/repo" />
+                  </label>
+                )}
+                <label>
+                  <span>Destination folder</span>
+                  <input value={destinationFolder} onChange={(event) => setDestinationFolder(event.target.value)} placeholder="C:\\Projects\\my-app" />
+                </label>
+                {projectMode === "new" ? (
+                  <label>
+                    <span>Project folder</span>
+                    <input value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="fitness-tracker" />
+                  </label>
+                ) : null}
+                <div className="levi-project-workflow-actions">
+                  <button type="button" className="levi-apply-button" onClick={() => void startProjectWorkflow()}>
+                    {projectMode === "clone" ? "Clone and Open" : "Create and Open"}
+                  </button>
+                </div>
+                {projectMode === "new" && starter === "android-compose" && mobileEnvironment ? (
+                  <div className="levi-mobile-environment" aria-label="Android development environment">
+                    <div><span>JDK</span><strong>{mobileEnvironment.android.jdk.status === "ready" ? "Ready" : "Missing"}</strong></div>
+                    <div><span>Android SDK</span><strong>{mobileEnvironment.android.androidSdk.status === "ready" ? "Ready" : "Missing"}</strong></div>
+                    <div><span>ADB</span><strong>{mobileEnvironment.android.adb.status === "ready" ? "Ready" : "Missing"}</strong></div>
+                    <div><span>Gradle</span><strong>{mobileEnvironment.android.gradle.status === "ready" ? "Ready" : "Missing"}</strong></div>
+                    <div><span>Emulator</span><strong>{mobileEnvironment.android.avds.names.length ? `${mobileEnvironment.android.avds.names.length} available` : "None"}</strong></div>
+                    <div><span>Connected devices</span><strong>{mobileEnvironment.android.devices.targets.length}</strong></div>
+                    <p>{mobileEnvironment.android.summary}</p>
+                    <details>
+                      <summary>Details</summary>
+                      {[mobileEnvironment.android.jdk, mobileEnvironment.android.androidSdk, mobileEnvironment.android.adb, mobileEnvironment.android.gradle, mobileEnvironment.android.emulator].map((tool) => (
+                        <p key={tool.name}>{tool.name}: {tool.detail ?? tool.guidance ?? tool.status}</p>
+                      ))}
+                    </details>
+                  </div>
+                ) : null}
+                {projectWorkflowStatus ? <p>{projectWorkflowStatus}</p> : null}
+              </div>
+            ) : null}
           </>
         ) : (
           <div className="levi-messages" aria-label="Conversation">
@@ -828,6 +1340,46 @@ export function Home({
                   onApprove={approvePlan}
                   onRefine={refinePlan}
                   onAskQuestion={askPlanQuestion}
+                />
+              </LazySurface>
+            ) : null}
+            {activeBuildSession ? (
+              <LazySurface label="Build approval">
+                <BuildReviewPanel
+                  session={activeBuildSession}
+                  phase={buildPhase}
+                  error={buildError}
+                  verification={buildVerification}
+                  runCommands={runCommands}
+                  selectedRunCommandId={selectedRunCommandId}
+                  runStatus={runStatus}
+                  changes={changes}
+                  postBuildError={postBuildError}
+                  onApproveBuild={approveAndBuild}
+                  onCancel={async () => {
+                    if (activeBuildSessionIdRef.current) {
+                      try {
+                        await window.levi.agent.cancel({ sessionId: activeBuildSessionIdRef.current });
+                      } catch {
+                        // No executable queue may exist before approval.
+                      }
+                    }
+                    setBuildPhase("cancelled");
+                  }}
+                  onEditPlan={() => {
+                    setDraft("Adjust this build plan: ");
+                    requestAnimationFrame(() => {
+                      resizePromptBox();
+                      promptRef.current?.focus();
+                    });
+                  }}
+                  onSelectRunCommand={setSelectedRunCommandId}
+                  onRunApp={() => runApp(selectedRunCommandId || undefined)}
+                  onStopApp={stopApp}
+                  onOpenProject={onOpenProject}
+                  onViewChanges={refreshChanges}
+                  onOpenTerminal={onOpenTerminal}
+                  onOpenChangedFile={onOpenChangedFile}
                 />
               </LazySurface>
             ) : null}

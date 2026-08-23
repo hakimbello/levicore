@@ -107,6 +107,7 @@ import { TerminalManager } from "./terminal-manager";
 import { TaskService } from "./tasks/task-service";
 import { GitService } from "./git-service";
 import { BrowserService } from "./browser-service";
+import { ProjectWorkflowService } from "./project-workflows";
 import { registerDebugTaskRunner } from "./debug-tasks";
 import type { DebugEvent } from "../../src/features/debugger";
 import type { AIChatEvent } from "../../src/features/ai-chat";
@@ -135,6 +136,14 @@ const taskService = new TaskService(
 );
 const gitService = new GitService(() => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null);
 const browserService = new BrowserService(() => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null);
+const projectWorkflowService = new ProjectWorkflowService({
+  getWorkspaceRoot: () => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null,
+  openProjectAtPath,
+  refreshWorkspace,
+  getWorkspaceSummary: () => workspaceScan?.summary,
+  terminalManager,
+  getWindow: () => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null
+});
 const agentService = new AgentService(aiRuntimeManager, {
   emit: sendAgentEvent,
   getWorkspaceRoot: () => workspaceScan?.rootRealPath ?? selectedProject?.path ?? null,
@@ -1598,6 +1607,46 @@ function registerIpc(): void {
     }
     return openProjectAtPath(directoryPath);
   });
+  ipcMain.handle(IPC_CHANNELS.projectsStarters, (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return projectWorkflowService.starters();
+  });
+  ipcMain.handle(IPC_CHANNELS.projectsCreateStarter, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return projectWorkflowService.createStarter(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.projectsCloneRepository, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return projectWorkflowService.cloneRepository(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.projectsDetect, async (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return projectWorkflowService.detect();
+  });
+  ipcMain.handle(IPC_CHANNELS.projectsMobileEnvironment, async (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return projectWorkflowService.mobileEnvironment();
+  });
+  ipcMain.handle(IPC_CHANNELS.projectsRunCommands, (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return projectWorkflowService.runCommands();
+  });
+  ipcMain.handle(IPC_CHANNELS.projectsRunApp, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return projectWorkflowService.startRun(request?.commandId);
+  });
+  ipcMain.handle(IPC_CHANNELS.projectsStopApp, (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return projectWorkflowService.stopRun();
+  });
+  ipcMain.handle(IPC_CHANNELS.projectsRunStatus, (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return projectWorkflowService.getRunStatus();
+  });
+  ipcMain.handle(IPC_CHANNELS.projectsViewChanges, async (_event, ...args) => {
+    assertNoIpcArgs(args);
+    return projectWorkflowService.viewChanges();
+  });
   ipcMain.handle(IPC_CHANNELS.workspaceGetStatus, () => withRuntimeStatus(workspaceStatus));
   ipcMain.handle(IPC_CHANNELS.workspaceRefresh, () => refreshWorkspace());
   ipcMain.handle(IPC_CHANNELS.workspaceOpenFile, async (event, request) => {
@@ -2416,6 +2465,14 @@ function registerIpc(): void {
     assertNoIpcArgs(args);
     return agentService.undo(request);
   });
+  ipcMain.handle(IPC_CHANNELS.agentRestoreOperation, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.restoreOperation(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentResumeOperation, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.resumeOperation(request);
+  });
   ipcMain.handle(IPC_CHANNELS.agentQueue, (_event, request, ...args) => {
     assertNoIpcArgs(args);
     return agentService.queue(request);
@@ -2479,6 +2536,10 @@ function registerIpc(): void {
   ipcMain.handle(IPC_CHANNELS.agentRepairPlan, async (_event, request, ...args) => {
     assertNoIpcArgs(args);
     return agentService.repairPlan(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentRepairExecute, async (_event, request, ...args) => {
+    assertNoIpcArgs(args);
+    return agentService.repairExecute(request);
   });
   ipcMain.handle(IPC_CHANNELS.agentRepairStatus, (_event, request, ...args) => {
     assertNoIpcArgs(args);

@@ -220,7 +220,7 @@ export class RuntimeManager {
           throw error;
         }
         return events;
-      });
+      }, request.timeoutMs);
       for (const event of result) yield event;
     } catch (error) {
       const fallbackProviderIds = this.compatibleFallbacks(providerId, request.model);
@@ -374,7 +374,7 @@ export class RuntimeManager {
     const requestId = request.requestId ?? this.nextRequestId(kind);
     const prepared = { ...request, requestId };
     try {
-      const response = await this.runQueued(providerId, request.model, kind, requestId, (signal) => run(provider, prepared, signal));
+      const response = await this.runQueued(providerId, request.model, kind, requestId, (signal) => run(provider, prepared, signal), request.timeoutMs);
       if ("content" in response) {
         return { ...response, fallbackProviderIds: this.compatibleFallbacks(providerId, request.model) };
       }
@@ -384,7 +384,7 @@ export class RuntimeManager {
       this.bumpFailure(providerId);
       try {
         const retryId = `${requestId}-retry`;
-        return await this.runQueued(providerId, request.model, kind, retryId, (signal) => run(provider, { ...prepared, requestId: retryId }, signal));
+        return await this.runQueued(providerId, request.model, kind, retryId, (signal) => run(provider, { ...prepared, requestId: retryId }, signal), request.timeoutMs);
       } catch (secondError) {
         const fallbackProviderIds = this.compatibleFallbacks(providerId, request.model);
         const message = fallbackProviderIds.length > 0
@@ -412,7 +412,8 @@ export class RuntimeManager {
     modelId: string,
     type: AIRuntimeRequestSummary["type"],
     requestId: string,
-    run: (signal: AbortSignal) => Promise<T>
+    run: (signal: AbortSignal) => Promise<T>,
+    timeoutMs = REQUEST_TIMEOUT_MS
   ): Promise<T> {
     const now = new Date().toISOString();
     this.requests.set(requestId, { id: requestId, providerId, modelId, type, status: "Queued", queuedAt: now });
@@ -425,7 +426,7 @@ export class RuntimeManager {
     this.updateRequest(requestId, { status: "Running", startedAt: new Date().toISOString() });
     this.updateQueuedCounts();
     try {
-      const result = await withTimeout(run(controller.signal), REQUEST_TIMEOUT_MS, controller);
+      const result = await withTimeout(run(controller.signal), timeoutMs, controller);
       this.markRequestDone(providerId, requestId, "Completed", Math.round(performance.now() - started));
       return result;
     } catch (error) {

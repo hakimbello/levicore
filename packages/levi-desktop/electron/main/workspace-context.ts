@@ -28,6 +28,7 @@ const EXCLUDED_DIRECTORIES = new Set([
   ".next",
   ".turbo",
   ".cache",
+  ".gradle",
   "vendor",
   "target",
   "release"
@@ -62,7 +63,7 @@ const BINARY_EXTENSIONS = new Set([
   ".avi"
 ]);
 
-const LOCKFILES = new Set(["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "Cargo.lock", "composer.lock"]);
+const LOCKFILES = new Set(["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "Cargo.lock", "composer.lock", "poetry.lock", "uv.lock", "Pipfile.lock", "go.sum"]);
 
 const MANIFEST_NAMES = new Set([
   "package.json",
@@ -73,15 +74,34 @@ const MANIFEST_NAMES = new Set([
   "vite.config.ts",
   "vite.config.js",
   "vite.config.mjs",
+  "svelte.config.js",
+  "svelte.config.mjs",
+  "nuxt.config.ts",
+  "nuxt.config.js",
+  "astro.config.ts",
+  "astro.config.mjs",
   "next.config.ts",
   "next.config.js",
   "next.config.mjs",
   "pyproject.toml",
   "requirements.txt",
+  "Pipfile",
+  "poetry.lock",
+  "uv.lock",
+  "setup.py",
+  "manage.py",
   "Cargo.toml",
   "go.mod",
+  "go.sum",
+  "pubspec.yaml",
+  "pubspec.lock",
+  "Package.swift",
   "pom.xml",
   "build.gradle",
+  "build.gradle.kts",
+  "settings.gradle",
+  "settings.gradle.kts",
+  "AndroidManifest.xml",
   "Dockerfile",
   "docker-compose.yml",
   "docker-compose.yaml",
@@ -166,7 +186,16 @@ function languageForExtension(extension: string): string | null {
     ".py": "Python",
     ".rs": "Rust",
     ".go": "Go",
+    ".cs": "C#",
+    ".csproj": "MSBuild",
+    ".sln": "MSBuild",
+    ".dart": "Dart",
+    ".swift": "Swift",
+    ".vue": "Vue",
+    ".svelte": "Svelte",
     ".java": "Java",
+    ".kt": "Kotlin",
+    ".kts": "Kotlin",
     ".gradle": "Gradle",
     ".toml": "TOML",
     ".yaml": "YAML",
@@ -191,7 +220,16 @@ export function getMonacoLanguage(relativePath: string): string {
     ".py": "python",
     ".rs": "rust",
     ".go": "go",
+    ".cs": "csharp",
+    ".csproj": "xml",
+    ".sln": "plaintext",
+    ".dart": "dart",
+    ".swift": "swift",
+    ".vue": "html",
+    ".svelte": "html",
     ".java": "java",
+    ".kt": "kotlin",
+    ".kts": "kotlin",
     ".toml": "toml",
     ".yaml": "yaml",
     ".yml": "yaml"
@@ -286,7 +324,7 @@ async function parsePackageJson(scan: Pick<WorkspaceScan, "files">): Promise<{
   }
 }
 
-function detectFrameworks(files: WorkspaceFileRecord[], dependencies: Record<string, string>): string[] {
+async function detectFrameworks(files: WorkspaceFileRecord[], dependencies: Record<string, string>): Promise<string[]> {
   const names = new Set<string>();
   const dependencyNames = new Set(Object.keys(dependencies).map((name) => name.toLowerCase()));
   if (dependencyNames.has("react")) names.add("React");
@@ -294,10 +332,38 @@ function detectFrameworks(files: WorkspaceFileRecord[], dependencies: Record<str
   if (dependencyNames.has("vite") || files.some((file) => file.relativePath.startsWith("vite.config."))) names.add("Vite");
   if (dependencyNames.has("electron") || files.some((file) => file.relativePath.startsWith("electron/"))) names.add("Electron");
   if (dependencyNames.has("vue")) names.add("Vue");
-  if (dependencyNames.has("svelte")) names.add("Svelte");
+  if (dependencyNames.has("svelte") || files.some((file) => file.extension === ".svelte")) names.add("Svelte");
+  if (dependencyNames.has("@sveltejs/kit") || files.some((file) => file.relativePath.startsWith("svelte.config."))) names.add("SvelteKit");
+  if (dependencyNames.has("nuxt") || files.some((file) => file.relativePath.startsWith("nuxt.config."))) names.add("Nuxt");
+  if (dependencyNames.has("astro") || files.some((file) => file.relativePath.startsWith("astro.config."))) names.add("Astro");
   if (dependencyNames.has("express")) names.add("Express");
+  if (dependencyNames.has("expo") || files.some((file) => file.relativePath === "app.json" || file.relativePath === "app.config.js" || file.relativePath === "app.config.ts")) names.add("Expo");
+  if (dependencyNames.has("react-native") || files.some((file) => file.relativePath === "android/app/build.gradle" || file.relativePath === "ios/Podfile")) names.add("React Native");
+  if (dependencyNames.has("@tauri-apps/api") || dependencyNames.has("@tauri-apps/cli") || files.some((file) => file.relativePath.startsWith("src-tauri/"))) names.add("Tauri");
   if (files.some((file) => file.relativePath === "Cargo.toml")) names.add("Cargo");
   if (files.some((file) => file.relativePath === "go.mod")) names.add("Go modules");
+  if (files.some((file) => file.relativePath === "pubspec.yaml" || file.relativePath.startsWith("lib/") && file.extension === ".dart")) names.add("Flutter");
+  if (files.some((file) => file.relativePath === "manage.py")) names.add("Django");
+  if (files.some((file) => file.relativePath.endsWith(".csproj") || file.relativePath.endsWith(".sln"))) names.add(".NET");
+  if (files.some((file) => file.relativePath.endsWith(".xcodeproj") || file.relativePath.endsWith(".xcworkspace") || file.relativePath === "Package.swift")) names.add("iOS");
+  if (files.some((file) => file.extension === ".swift")) names.add("Swift");
+  for (const file of files.filter((item) => item.extension === ".py" && item.contentEligible).slice(0, 80)) {
+    const content = await readTextFile(file);
+    if (!content) continue;
+    if (/\bfrom\s+fastapi\s+import\b|\bimport\s+fastapi\b/i.test(content)) names.add("FastAPI");
+    if (/\bfrom\s+flask\s+import\b|\bimport\s+flask\b/i.test(content)) names.add("Flask");
+    if (/\bfrom\s+django\b|\bimport\s+django\b|DJANGO_SETTINGS_MODULE/i.test(content)) names.add("Django");
+  }
+  for (const file of files.filter((item) => item.relativePath.endsWith(".csproj") && item.contentEligible).slice(0, 40)) {
+    const content = await readTextFile(file);
+    if (!content) continue;
+    if (/Microsoft\.NET\.Sdk\.Web|Microsoft\.AspNetCore/i.test(content)) names.add("ASP.NET Core");
+  }
+  const androidManifests = files.some((file) => /(^|\/)AndroidManifest\.xml$/i.test(file.relativePath));
+  const androidGradle = files.some((file) => /(^|\/)(settings|build)\.gradle(\.kts)?$/i.test(file.relativePath));
+  const androidSources = files.some((file) => /(^|\/)app\/src\/main\//i.test(file.relativePath));
+  if (androidManifests || androidGradle && androidSources) names.add("Android");
+  if (files.some((file) => /\.(kt|kts)$/i.test(file.relativePath)) && (androidManifests || androidGradle)) names.add("Jetpack Compose");
   return Array.from(names);
 }
 
@@ -306,7 +372,14 @@ function detectPackageManager(files: WorkspaceFileRecord[]): string | undefined 
   if (paths.has("pnpm-lock.yaml")) return "pnpm";
   if (paths.has("yarn.lock")) return "yarn";
   if (paths.has("package-lock.json")) return "npm";
+  if (paths.has("poetry.lock")) return "poetry";
+  if (paths.has("uv.lock")) return "uv";
+  if (paths.has("Pipfile")) return "pipenv";
+  if (paths.has("requirements.txt") || paths.has("pyproject.toml") || paths.has("setup.py")) return "pip";
+  if (paths.has("go.mod")) return "go";
   if (paths.has("Cargo.lock") || paths.has("Cargo.toml")) return "cargo";
+  if (Array.from(paths).some((file) => file.endsWith(".csproj") || file.endsWith(".sln"))) return "dotnet";
+  if (paths.has("pubspec.yaml")) return "flutter";
   return undefined;
 }
 
@@ -320,6 +393,23 @@ function detectApplicationType(frameworks: string[]): string | undefined {
   if (frameworks.includes("Vite") && frameworks.includes("React")) {
     return "Vite React application";
   }
+  if (frameworks.includes("Nuxt")) return "Nuxt application";
+  if (frameworks.includes("Astro")) return "Astro application";
+  if (frameworks.includes("SvelteKit")) return "SvelteKit application";
+  if (frameworks.includes("Vite") && frameworks.includes("Vue")) return "Vite Vue application";
+  if (frameworks.includes("Vite") && frameworks.includes("Svelte")) return "Vite Svelte application";
+  if (frameworks.includes("FastAPI")) return "FastAPI application";
+  if (frameworks.includes("Flask")) return "Flask application";
+  if (frameworks.includes("Django")) return "Django application";
+  if (frameworks.includes("Tauri")) return "Tauri desktop application";
+  if (frameworks.includes("Electron")) return "Electron desktop application";
+  if (frameworks.includes("Flutter")) return "Flutter application";
+  if (frameworks.includes("Expo")) return "Expo application";
+  if (frameworks.includes("React Native")) return "React Native application";
+  if (frameworks.includes(".NET")) return ".NET application";
+  if (frameworks.includes("Android")) {
+    return frameworks.includes("Jetpack Compose") ? "Android Kotlin application with Jetpack Compose" : "Android application";
+  }
   return undefined;
 }
 
@@ -328,10 +418,15 @@ async function buildSummary(rootPath: string, files: WorkspaceFileRecord[]): Pro
   const languages = Array.from(
     new Set(files.map((file) => languageForExtension(file.extension)).filter((language): language is string => Boolean(language)))
   ).sort();
-  const frameworks = detectFrameworks(files, packageInfo.dependencies).sort();
+  const frameworks = (await detectFrameworks(files, packageInfo.dependencies)).sort();
   const pathSet = new Set(files.map((file) => file.relativePath));
-  const manifests = files.filter((file) => MANIFEST_NAMES.has(path.basename(file.relativePath)) || DOC_NAME_PATTERN.test(path.basename(file.relativePath)));
-  const sourceDirectories = ["src", "app", "pages", "lib", "packages", "electron"].filter((directory) =>
+  const manifests = files.filter((file) =>
+    MANIFEST_NAMES.has(path.basename(file.relativePath)) ||
+    DOC_NAME_PATTERN.test(path.basename(file.relativePath)) ||
+    /\.(csproj|sln|xcodeproj|xcworkspace)$/i.test(file.relativePath) ||
+    /^src-tauri\/(Cargo\.toml|tauri\.conf\.json)$/i.test(file.relativePath)
+  );
+  const sourceDirectories = ["src", "app", "app/src/main", "pages", "lib", "packages", "electron", "src-tauri", "cmd", "internal"].filter((directory) =>
     files.some((file) => file.relativePath.startsWith(`${directory}/`))
   );
   const testDirectories = ["test", "tests", "__tests__", "cypress", "e2e"].filter((directory) =>
@@ -346,9 +441,21 @@ async function buildSummary(rootPath: string, files: WorkspaceFileRecord[]): Pro
     "app/page.tsx",
     "pages/index.tsx",
     "electron/main/index.ts",
+    "src-tauri/src/main.rs",
     "main.go",
-    "src/main.rs"
+    "src/main.rs",
+    "main.py",
+    "app.py",
+    "manage.py",
+    "src/main.py",
+    "Program.cs",
+    "lib/main.dart",
+    "Sources/main.swift"
   ].filter((entry) => pathSet.has(entry));
+  const androidActivity = files
+    .map((file) => file.relativePath)
+    .find((file) => /(^|\/)MainActivity\.(kt|java)$/i.test(file));
+  if (androidActivity) entryPoints.push(androidActivity);
 
   return {
     projectName: packageInfo.packageName ?? path.basename(rootPath),

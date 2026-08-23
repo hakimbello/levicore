@@ -30,6 +30,7 @@ describe("workspace context scanning and retrieval", () => {
     await writeFile(root, "dist/bundle.js", "generated\n");
     await writeFile(root, "build/output.js", "generated\n");
     await writeFile(root, "release/app.exe", "generated\n");
+    await writeFile(root, ".gradle/levi/README", "generated cache\n");
     await writeFile(root, ".env", "TOKEN=secret\n");
     await writeFile(root, "private.key", "secret\n");
     await writeFile(root, "src/logo.png", Buffer.from([0, 1, 2, 3]));
@@ -45,6 +46,7 @@ describe("workspace context scanning and retrieval", () => {
     expect(paths).not.toContain("dist/bundle.js");
     expect(paths).not.toContain("build/output.js");
     expect(paths).not.toContain("release/app.exe");
+    expect(paths).not.toContain(".gradle/levi/README");
     expect(scan.files.find((file) => file.relativePath === ".env")?.contentEligible).toBe(false);
     expect(scan.files.find((file) => file.relativePath === "private.key")?.contentEligible).toBe(false);
     expect(scan.files.find((file) => file.relativePath === "src/logo.png")?.contentEligible).toBe(false);
@@ -84,6 +86,59 @@ describe("workspace context scanning and retrieval", () => {
     expect(scan.summary.testDirectories).toContain("test");
     expect(scan.summary.documentationFiles).toContain("README.md");
     expect(scan.summary.likelyEntryPoints).toEqual(expect.arrayContaining(["src/main.tsx", "electron/main/index.ts"]));
+  });
+
+  it("detects Android Kotlin Compose workspace metadata", async () => {
+    const root = await makeWorkspace();
+    await writeFile(root, "settings.gradle.kts", "include(\":app\")\n");
+    await writeFile(root, "build.gradle.kts", "plugins { id(\"com.android.application\") apply false }\n");
+    await writeFile(root, "app/build.gradle.kts", "plugins { id(\"org.jetbrains.kotlin.android\") }\n");
+    await writeFile(root, "app/src/main/AndroidManifest.xml", "<manifest />\n");
+    await writeFile(root, "app/src/main/java/app/levi/generated/MainActivity.kt", "import androidx.compose.material3.Text\nfun Screen() { Text(\"Hi\") }\n");
+
+    const scan = await scanWorkspace(root);
+
+    expect(scan.summary.languages).toContain("Kotlin");
+    expect(scan.summary.frameworks).toEqual(expect.arrayContaining(["Android", "Jetpack Compose"]));
+    expect(scan.summary.applicationType).toBe("Android Kotlin application with Jetpack Compose");
+    expect(scan.summary.manifestFiles).toEqual(expect.arrayContaining(["settings.gradle.kts", "build.gradle.kts", "app/build.gradle.kts", "app/src/main/AndroidManifest.xml"]));
+    expect(scan.summary.sourceDirectories).toContain("app/src/main");
+    expect(scan.summary.likelyEntryPoints[0]).toContain("MainActivity.kt");
+  });
+
+  it("detects universal language and framework metadata", async () => {
+    const root = await makeWorkspace();
+    await writeFile(root, "package.json", JSON.stringify({
+      name: "universal",
+      scripts: { dev: "vite", build: "vite build", android: "expo start --android" },
+      dependencies: { vue: "latest", vite: "latest", electron: "latest", expo: "latest", "react-native": "latest", "@tauri-apps/api": "latest" },
+      devDependencies: { astro: "latest", nuxt: "latest", svelte: "latest", "@sveltejs/kit": "latest" }
+    }, null, 2));
+    await writeFile(root, "vite.config.ts", "export default {};\n");
+    await writeFile(root, "svelte.config.js", "export default {};\n");
+    await writeFile(root, "nuxt.config.ts", "export default defineNuxtConfig({});\n");
+    await writeFile(root, "astro.config.mjs", "export default {};\n");
+    await writeFile(root, "src-tauri/Cargo.toml", "[package]\nname = \"demo\"\n");
+    await writeFile(root, "src-tauri/tauri.conf.json", "{}\n");
+    await writeFile(root, "main.py", "from fastapi import FastAPI\napp = FastAPI()\n");
+    await writeFile(root, "requirements.txt", "fastapi\n");
+    await writeFile(root, "go.mod", "module demo\n");
+    await writeFile(root, "main.go", "package main\nfunc main() {}\n");
+    await writeFile(root, "Cargo.toml", "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n");
+    await writeFile(root, "src/main.rs", "fn main() {}\n");
+    await writeFile(root, "TaskApi.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Web\"></Project>\n");
+    await writeFile(root, "Program.cs", "var builder = WebApplication.CreateBuilder(args);\n");
+    await writeFile(root, "pubspec.yaml", "name: demo\n");
+    await writeFile(root, "lib/main.dart", "void main() {}\n");
+    await writeFile(root, "Package.swift", "// swift-tools-version: 6.0\n");
+    await writeFile(root, "Sources/main.swift", "import SwiftUI\n");
+
+    const scan = await scanWorkspace(root);
+
+    expect(scan.summary.frameworks).toEqual(expect.arrayContaining(["Vue", "Vite", "Svelte", "SvelteKit", "Nuxt", "Astro", "Electron", "Tauri", "FastAPI", "Go modules", "Cargo", ".NET", "ASP.NET Core", "Flutter", "Expo", "React Native", "iOS", "Swift"]));
+    expect(scan.summary.languages).toEqual(expect.arrayContaining(["Python", "Go", "Rust", "C#", "Dart", "Swift"]));
+    expect(scan.summary.manifestFiles).toEqual(expect.arrayContaining(["requirements.txt", "go.mod", "Cargo.toml", "TaskApi.csproj", "pubspec.yaml", "Package.swift", "src-tauri/Cargo.toml", "src-tauri/tauri.conf.json"]));
+    expect(scan.summary.likelyEntryPoints).toEqual(expect.arrayContaining(["main.py", "main.go", "src/main.rs", "Program.cs", "lib/main.dart", "Sources/main.swift"]));
   });
 
   it("prioritizes exact filenames, keywords, package scripts, and bounded excerpts", async () => {

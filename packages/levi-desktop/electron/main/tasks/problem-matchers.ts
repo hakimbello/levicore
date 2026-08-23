@@ -84,6 +84,26 @@ const MATCHERS: ProblemMatcherDefinition[] = [
     messageIndex: 4
   },
   {
+    id: "$dotnet",
+    owner: "dotnet",
+    pattern: /^(.+\.(?:cs|fs|vb))\((\d+),(\d+)\):\s+(error|warning)\s+\w+\d+:\s+(.+)$/,
+    fileIndex: 1,
+    lineIndex: 2,
+    columnIndex: 3,
+    severityIndex: 4,
+    messageIndex: 5
+  },
+  {
+    id: "$flutter",
+    owner: "flutter",
+    pattern: /^(.+\.(?:dart)):(\d+):(\d+):\s+(Error|Warning):\s+(.+)$/,
+    fileIndex: 1,
+    lineIndex: 2,
+    columnIndex: 3,
+    severityIndex: 4,
+    messageIndex: 5
+  },
+  {
     id: "$gcc",
     owner: "gcc",
     pattern: /^(.+):(\d+):(\d+):\s+(error|warning):\s+(.+)$/,
@@ -135,10 +155,42 @@ export function parseProblemsFromOutput(
   const problems: TaskProblem[] = [];
   const lines = chunk.split(/\r?\n/);
   let pendingMessage: string | undefined;
+  let pendingPythonLocation: { relativePath: string; line: number; column: number } | undefined;
+  const parsePythonTracebacks = selected.some((matcher) => matcher.id === "$python");
 
   for (const line of lines) {
     const trimmed = line.trimEnd();
     if (!trimmed) continue;
+
+    if (parsePythonTracebacks) {
+      const pythonFrame = trimmed.match(/^\s*File "(.+)", line (\d+)(?:, in .*)?\s*$/i);
+      if (pythonFrame) {
+        const relativePath = normalizeRelativePath(pythonFrame[1] ?? "", workspaceRoot);
+        pendingPythonLocation = {
+          relativePath,
+          line: Number.parseInt(pythonFrame[2] ?? "1", 10) || 1,
+          column: 1
+        };
+        continue;
+      }
+
+      const pythonException = trimmed.match(/^\s*((?:[A-Za-z_][\w.]*Error|Exception|KeyboardInterrupt|SystemExit)(?::\s+.+)?)\s*$/);
+      if (pythonException) {
+        const location = pendingPythonLocation ?? { relativePath: "", line: 1, column: 1 };
+        problems.push({
+          id: `${taskRunId ?? "problem"}:${problems.length}:${location.relativePath}:${location.line}`,
+          relativePath: location.relativePath,
+          line: location.line,
+          column: location.column,
+          severity: "error",
+          message: pythonException[1] ?? trimmed,
+          source,
+          taskRunId
+        });
+        pendingPythonLocation = undefined;
+        continue;
+      }
+    }
 
     for (const matcher of selected) {
       const match = trimmed.match(matcher.pattern);
@@ -149,7 +201,7 @@ export function parseProblemsFromOutput(
         matcher.severityIndex ? match[matcher.severityIndex] : undefined,
         matcher.severity ?? "error"
       );
-      const message = (match[matcher.messageIndex] ?? pendingMessage ?? trimmed).trim();
+      const message = ((matcher.messageIndex === 0 ? pendingMessage : undefined) ?? match[matcher.messageIndex] ?? pendingMessage ?? trimmed).trim();
       if (!message && !relativePath) continue;
       problems.push({
         id: `${taskRunId ?? "problem"}:${problems.length}:${relativePath}:${match[matcher.lineIndex] ?? 0}`,

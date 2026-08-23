@@ -50,6 +50,51 @@ describe("task-discovery", () => {
     expect(tasks.some((task) => task.label === "Custom Build")).toBe(true);
     expect(tasks.some((task) => task.label === "lint")).toBe(true);
   });
+
+  it("discovers universal profile tasks for non-Node projects", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "levi-task-universal-"));
+    const tasks = await discoverTasks(root, {
+      projectName: "task-api",
+      rootPath: root,
+      languages: ["C#"],
+      frameworks: ["ASP.NET Core"],
+      packageManager: "dotnet",
+      likelyEntryPoints: ["Program.cs"],
+      sourceDirectories: [],
+      testDirectories: [],
+      scripts: {},
+      documentationFiles: [],
+      manifestFiles: ["TaskApi.csproj"],
+      includedFileCount: 1,
+      excludedFileCount: 0,
+      scanTimestamp: new Date().toISOString()
+    });
+
+    expect(tasks.find((task) => task.id === "universal:dotnet-build")).toMatchObject({ command: "dotnet", args: ["build"], problemMatchers: ["$dotnet"] });
+    expect(tasks.find((task) => task.id === "universal:dotnet-run")).toMatchObject({ label: "Run App", args: ["run"] });
+  });
+
+  it("discovers cargo check from the Rust universal profile", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "levi-task-rust-"));
+    const tasks = await discoverTasks(root, {
+      projectName: "todo",
+      rootPath: root,
+      languages: ["Rust"],
+      frameworks: [],
+      packageManager: "cargo",
+      likelyEntryPoints: ["src/main.rs"],
+      sourceDirectories: ["src"],
+      testDirectories: [],
+      scripts: {},
+      documentationFiles: [],
+      manifestFiles: ["Cargo.toml"],
+      includedFileCount: 1,
+      excludedFileCount: 0,
+      scanTimestamp: new Date().toISOString()
+    });
+
+    expect(tasks.find((task) => task.id === "universal:rust-check")).toMatchObject({ label: "Check", command: "cargo", args: ["check"] });
+  });
 });
 
 describe("problem-matchers", () => {
@@ -73,6 +118,68 @@ describe("problem-matchers", () => {
     );
     expect(eslint[0]?.severity).toBe("error");
     expect(eslint[0]?.line).toBe(3);
+  });
+
+  it("parses .NET and Flutter diagnostics", () => {
+    const root = "C:\\Project";
+    const dotnet = parseProblemsFromOutput(
+      "Program.cs(8,17): error CS1002: ; expected",
+      ["$dotnet"],
+      root,
+      "Build"
+    );
+    expect(dotnet[0]).toMatchObject({ relativePath: "Program.cs", line: 8, column: 17, message: "; expected" });
+
+    const flutter = parseProblemsFromOutput(
+      "lib/main.dart:12:7: Error: The method 'missing' isn't defined.",
+      ["$flutter"],
+      root,
+      "Analyze"
+    );
+    expect(flutter[0]).toMatchObject({ relativePath: "lib/main.dart", line: 12, column: 7 });
+  });
+
+  it("parses Python traceback exceptions with the last frame location", () => {
+    const root = "C:\\Project";
+    const python = parseProblemsFromOutput(
+      [
+        "Traceback (most recent call last):",
+        '  File "C:\\Project\\main.py", line 1, in <module>',
+        "    import definitely_missing_module",
+        "ModuleNotFoundError: No module named 'definitely_missing_module'"
+      ].join("\n"),
+      ["$python"],
+      root,
+      "Python Runtime"
+    );
+
+    expect(python[0]).toMatchObject({
+      relativePath: "main.py",
+      line: 1,
+      column: 1,
+      message: "ModuleNotFoundError: No module named 'definitely_missing_module'"
+    });
+  });
+
+  it("keeps Cargo compiler messages attached to location diagnostics", () => {
+    const root = "C:\\Project";
+    const cargo = parseProblemsFromOutput(
+      [
+        "error: expected expression, found `;`",
+        "  --> src\\main.rs:19:18",
+        "   |"
+      ].join("\n"),
+      ["$cargo", "$cargo-location"],
+      root,
+      "Cargo Build"
+    );
+
+    expect(cargo[0]).toMatchObject({
+      relativePath: "src/main.rs",
+      line: 19,
+      column: 18,
+      message: "error: expected expression, found `;`"
+    });
   });
 });
 
