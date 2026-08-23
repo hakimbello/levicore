@@ -32,6 +32,7 @@ import type {
   AgentRepairExecuteRequest,
   AgentRepairStatusRequest,
   AgentRestoreOperationRequest,
+  AgentResumeOperationRequest,
   AgentRenameRequest,
   AgentSession,
   AgentState,
@@ -349,6 +350,11 @@ export class AgentService {
   async restoreOperation(rawRequest: unknown) {
     const session = this.requireSession(sessionIdFromRequest<AgentRestoreOperationRequest>(rawRequest, "Agent restore request is invalid."));
     return this.executionService.restoreOperation(session, rawRequest);
+  }
+
+  async resumeOperation(rawRequest: unknown) {
+    const session = this.requireSession(sessionIdFromRequest<AgentResumeOperationRequest>(rawRequest, "Agent resume request is invalid."));
+    return this.executionService.resumeOperation(session, rawRequest);
   }
 
   queue(rawRequest: unknown) {
@@ -1668,9 +1674,22 @@ function buildResumeOperationalContext(session: AgentSession, summary: AgentProj
       gitChangedFiles: lastVerification.gitChangedFiles.slice(0, 20),
       failures: lastVerification.failures.slice(0, 6).map((failure) => ({
         message: failure.message,
-        affectedFiles: failure.affectedFiles.slice(0, 10)
+      affectedFiles: failure.affectedFiles.slice(0, 10)
       }))
     } : undefined,
+    detectedCommands: summary.buildSystem.slice(0, 20),
+    recentRelevantFiles: uniqueStrings([
+      ...summary.openFiles,
+      ...summary.entryPoints,
+      ...(session.plan?.estimatedFiles ?? []),
+      ...(session.plan?.recovery?.operations ?? []).flatMap((operation) => [
+        ...operation.filesCreated,
+        ...operation.filesModified,
+        ...operation.filesDeleted,
+        ...operation.filesRenamed.flatMap((item) => [item.from, item.to])
+      ])
+    ]).slice(0, 40),
+    recentOperationSummary: recentOperations.map((operation) => `${operation.status}: ${operation.userRequest}`).slice(-6),
     recentConversation: recentMessages
   };
 }

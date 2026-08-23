@@ -144,6 +144,10 @@ export type AgentOperationStatus =
   | "planned"
   | "approved"
   | "running"
+  | "inspecting"
+  | "resumable"
+  | "resuming"
+  | "resume-conflict"
   | "verifying"
   | "repairing"
   | "completed"
@@ -175,11 +179,30 @@ export type AgentRecoveredFileSnapshot = {
 };
 
 export type AgentCommandLedgerEntry = {
+  actionId?: string;
+  commandId?: string;
   executable: string;
   args: string[];
+  cwd?: string;
   status: "running" | "succeeded" | "failed" | "cancelled" | "interrupted";
   exitCode?: number;
   durationMs?: number;
+};
+
+export type AgentResumeEligibility = {
+  available: boolean;
+  reason?: string;
+  safeActionIds: string[];
+  blockedActionIds: string[];
+  completed: number;
+  remaining: number;
+  evaluatedAt: string;
+};
+
+export type AgentResumePointer = {
+  lastCompletedActionId?: string;
+  currentActionId?: string;
+  remainingActionIds: string[];
 };
 
 export type AgentRollbackChoice = "keep-current" | "restore-snapshot";
@@ -211,6 +234,8 @@ export type AgentOperationLedgerEntry = {
   filesDeleted: string[];
   filesRenamed: Array<{ from: string; to: string }>;
   commandsExecuted: AgentCommandLedgerEntry[];
+  resumeEligibility?: AgentResumeEligibility;
+  resumePointer?: AgentResumePointer;
   verificationResult?: AgentVerificationStatus | "Blocked" | "Cancelled";
   repairAttempts: number;
   gitHeadBefore?: string;
@@ -690,6 +715,11 @@ export type AgentRestoreOperationRequest = {
   choices?: Record<string, AgentRollbackChoice>;
 };
 
+export type AgentResumeOperationRequest = {
+  sessionId: string;
+  operationId: string;
+};
+
 export type AgentQueueRequest = {
   sessionId: string;
 };
@@ -830,6 +860,13 @@ export type AgentRestoreOperationResult = {
   sessionId: string;
   operationId: string;
   restoredPaths: string[];
+  state: AgentState;
+};
+
+export type AgentResumeOperationResult = {
+  sessionId: string;
+  operationId: string;
+  resumedActionIds: string[];
   state: AgentState;
 };
 

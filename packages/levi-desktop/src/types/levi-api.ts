@@ -124,6 +124,8 @@ import type {
   AgentRepairStatusRequest,
   AgentRepairStatusResult,
   AgentRenameRequest,
+  AgentResumeOperationRequest,
+  AgentResumeOperationResult,
   AgentRestoreOperationRequest,
   AgentRestoreOperationResult,
   AgentSession,
@@ -236,6 +238,10 @@ export type {
   AgentRepairStatusRequest,
   AgentRepairStatusResult,
   AgentRenameRequest,
+  AgentResumeEligibility,
+  AgentResumeOperationRequest,
+  AgentResumeOperationResult,
+  AgentResumePointer,
   AgentRestoreOperationRequest,
   AgentRestoreOperationResult,
   AgentRiskLevel,
@@ -1581,6 +1587,7 @@ export type LeviApi = {
     execute: (request: AgentExecuteRequest) => Promise<AgentExecutionResult>;
     undo: (request: AgentUndoRequest) => Promise<AgentUndoResult>;
     restoreOperation: (request: AgentRestoreOperationRequest) => Promise<AgentRestoreOperationResult>;
+    resumeOperation: (request: AgentResumeOperationRequest) => Promise<AgentResumeOperationResult>;
     queue: (request: AgentQueueRequest) => Promise<AgentQueueResult>;
     cancel: (request: AgentCancelRequest) => Promise<AgentExecutionResult>;
     taskPreview: (request: AgentTaskPreviewRequest) => Promise<AgentTaskPreviewResult>;

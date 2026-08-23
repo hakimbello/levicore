@@ -846,6 +846,19 @@ function ExecutionReview({
     }
   }
 
+  async function resumeOperation(operationId: string) {
+    onError(null);
+    try {
+      const result = await window.levi.agent.resumeOperation({ sessionId, operationId });
+      onState(result.state);
+      await window.levi.workspace.refresh().catch(() => undefined);
+    } catch (error) {
+      const listed = await window.levi.agent.list().catch(() => null);
+      if (listed) onState(listed);
+      onError(error instanceof Error ? error.message : "Could not resume agent operation.");
+    }
+  }
+
   function approveRestore(operation: AgentOperationLedgerEntry) {
     const files = Array.from(new Set([
       ...operation.filesCreated,
@@ -899,7 +912,8 @@ function ExecutionReview({
       operation.status === "interrupted" ? "Levi was interrupted during a build." : operation.title,
       "",
       `Completed actions: ${operation.actionsCompleted.length}`,
-      `Pending actions: ${Math.max(0, operation.actionsAttempted.length - operation.actionsCompleted.length - operation.actionsFailed.length)}`,
+      `Remaining actions: ${operation.resumePointer?.remainingActionIds.length ?? operation.resumeEligibility?.remaining ?? Math.max(0, operation.actionsAttempted.length - operation.actionsCompleted.length - operation.actionsFailed.length)}`,
+      operation.resumeEligibility?.reason ? `Resume unavailable: ${operation.resumeEligibility.reason}` : "",
       "",
       "Affected paths:",
       files.join("\n") || "No affected paths recorded"
@@ -1059,8 +1073,13 @@ function ExecutionReview({
                 <div>
                   <strong>{operation.title}</strong>
                   <span>{operation.status} / {operation.filesCreated.length + operation.filesModified.length + operation.filesDeleted.length + operation.filesRenamed.length} files changed</span>
+                  {operation.status === "interrupted" ? <small>Levi was interrupted during a build.</small> : null}
+                  {operation.status === "interrupted" || operation.status === "resume-conflict" || operation.status === "resumable" ? (
+                    <small>Completed: {operation.resumeEligibility?.completed ?? operation.actionsCompleted.length} / Remaining: {operation.resumeEligibility?.remaining ?? operation.resumePointer?.remainingActionIds.length ?? 0}</small>
+                  ) : null}
                   {operation.verificationResult ? <small>{operation.verificationResult}</small> : null}
                   {operation.conflict ? <p>{operation.conflict}</p> : null}
+                  {operation.resumeEligibility && !operation.resumeEligibility.available && operation.resumeEligibility.reason ? <p>{operation.resumeEligibility.reason}</p> : null}
                   {operation.rollbackConflicts?.length ? (
                     <div className="levi-agent-task-problems" aria-label="Rollback conflicts">
                       {operation.rollbackConflicts.map((conflict) => <p key={conflict.relativePath}>{conflict.relativePath}: {conflict.message}</p>)}
@@ -1076,10 +1095,12 @@ function ExecutionReview({
                       <button type="button" onClick={() => onError("Rollback cancelled.")}>Cancel</button>
                     </>
                   ) : null}
-                  {operation.status === "interrupted" || operation.status === "cancelled" ? (
+                  {operation.status === "interrupted" || operation.status === "cancelled" || operation.status === "resume-conflict" ? (
                     <>
                       <button type="button" onClick={() => inspectOperation(operation)}>Inspect Changes</button>
-                      <button type="button" disabled title="Safe resume requires deterministic remaining actions without terminal commands.">Resume Where Safe</button>
+                      {operation.resumeEligibility?.available ? (
+                        <button type="button" onClick={() => void resumeOperation(operation.operationId)}>Resume Where Safe</button>
+                      ) : null}
                       <button type="button" onClick={() => approveRestore(operation)}>Undo Partial Changes</button>
                     </>
                   ) : null}

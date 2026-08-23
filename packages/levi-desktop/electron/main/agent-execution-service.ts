@@ -7,6 +7,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { BrowserWindow } from "electron";
 import type {
   AgentActionPreview,
+  AgentActionType,
   AgentApprovalAction,
   AgentBrowserExecuteRequest,
   AgentBrowserExecutionResult,
@@ -16,6 +17,7 @@ import type {
   AgentBrowserStatusRequest,
   AgentBrowserStatusResult,
   AgentCancelRequest,
+  AgentCommandLedgerEntry,
   AgentDiffLine,
   AgentExecuteRequest,
   AgentExecutionQueueItem,
@@ -46,6 +48,9 @@ import type {
   AgentRepairStatusResult,
   AgentRestoreOperationRequest,
   AgentRestoreOperationResult,
+  AgentResumeEligibility,
+  AgentResumeOperationRequest,
+  AgentResumeOperationResult,
   AgentRiskLevel,
   AgentRollbackChoice,
   AgentRollbackConflict,
@@ -160,6 +165,9 @@ const SAFE_TERMINAL_EXECUTABLES = new Set([
   "go.exe"
 ]);
 const BLOCKED_TERMINAL_EXECUTABLES = new Set(["cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe", "bash", "zsh", "sh", "git", "git.exe"]);
+const SAFE_RESUME_FILE_ACTIONS = new Set<AgentActionType>(["create-folder", "create-file", "modify-file", "rename-file", "rename-folder"]);
+const SAFE_RESUME_COMMAND_WORDS = /\b(build|test|typecheck|lint|check|install|ci|assemble|verify|restore)\b/i;
+const UNSAFE_RESUME_COMMAND_WORDS = /\b(dev|serve|start|watch|preview|publish|deploy|push|login|token|secret|credential|password|key)\b/i;
 const SHELL_OPERATOR_PATTERN = /(&&|\|\||;|>>|>|<|\||`|\$\(|\$\{|\*|\?)/;
 const ENV_INJECTION_PATTERN = /(^|[\s])([A-Za-z_][A-Za-z0-9_]*=|%[A-Za-z_][A-Za-z0-9_]*%|\$[A-Za-z_][A-Za-z0-9_]*)/;
 const POWERSHELL_INVOKE_PATTERN = /\b(invoke-expression|iex)\b/i;
@@ -377,6 +385,114 @@ export class AgentExecutionService {
       return { sessionId: session.id, operationId: operation.operationId, restoredPaths, state: this.options.snapshot() };
     } catch (error) {
       await this.options.persistAndEmit();
+      throw error;
+    }
+  }
+
+  async resumeOperation(session: AgentSession, rawRequest: unknown): Promise<AgentResumeOperationResult> {
+    const request = validateResumeOperationRequest(rawRequest);
+    if (request.sessionId !== session.id) throw new Error("Agent resume request session does not match.");
+    if (!session.plan) throw new Error("Agent session has no execution plan.");
+    const recovery = ensureRecovery(session);
+    const operation = recovery.operations.find((item) => item.operationId === request.operationId);
+    if (!operation) throw new Error("Agent operation was not found.");
+    const workspaceRoot = this.options.getWorkspaceRoot();
+    if (!workspaceRoot || (operation.workspaceRoot && path.resolve(operation.workspaceRoot) !== path.resolve(workspaceRoot))) {
+      await this.persistResumeConflict(session, operation, "Workspace no longer matches.");
+      throw new Error("Workspace no longer matches.");
+    }
+
+    operation.status = "inspecting";
+    await this.touch(session);
+    const eligibility = await this.evaluateResumeEligibility(session, operation);
+    operation.resumeEligibility = eligibility;
+    operation.resumePointer = pointerForResume(session, operation);
+    if (!eligibility.available) {
+      await this.persistResumeConflict(session, operation, eligibility.reason ?? "Resume Where Safe is unavailable.");
+      throw new Error(eligibility.reason ?? "Resume Where Safe is unavailable.");
+    }
+
+    operation.status = "resumable";
+    await this.touch(session);
+    operation.status = "resuming";
+    recovery.activeOperationId = operation.operationId;
+    session.status = "Executing";
+    session.error = undefined;
+    await this.touch(session);
+
+    const resumedActionIds: string[] = [];
+    try {
+      for (const actionId of operation.resumePointer?.remainingActionIds ?? []) {
+        if (operation.actionsCompleted.includes(actionId)) continue;
+        const action = requireAction(session, actionId);
+        operation.resumePointer = {
+          lastCompletedActionId: operation.actionsCompleted[operation.actionsCompleted.length - 1],
+          currentActionId: actionId,
+          remainingActionIds: (operation.resumePointer?.remainingActionIds ?? []).filter((id) => id !== actionId)
+        };
+        await this.touch(session);
+
+        const actionEligibility = await this.evaluateResumeAction(session, operation, action);
+        if (!actionEligibility.safe) {
+          await this.persistResumeConflict(session, operation, actionEligibility.reason);
+          throw new Error(actionEligibility.reason);
+        }
+
+        if (SAFE_RESUME_FILE_ACTIONS.has(action.type)) {
+          let item = ensureQueueItem(session, action);
+          if (item.status === "Completed") continue;
+          item.status = "Executing";
+          item.startedAt = item.startedAt ?? new Date().toISOString();
+          const preview = actionEligibility.preview ?? await this.createPreview(session.id, action);
+          const currentOperation = await this.beginFileOperation(session, action, preview);
+          await this.touch(session);
+          item = ensureQueueItem(session, action);
+          const undo = await this.applyAction(action, preview);
+          this.undoBySession.set(session.id, undo);
+          session.plan.lastUndo = undoMetadata(undo);
+          item.status = "Completed";
+          item.completedAt = new Date().toISOString();
+          item.error = undefined;
+          await this.completeFileOperation(session, currentOperation, "Completed", undo);
+          resumedActionIds.push(action.id);
+          this.options.emitExecution(session.id, action.id);
+        } else if (action.type === "run-terminal-command") {
+          const terminalPreview = actionEligibility.terminalPreview ?? await this.createTerminalPreview(session.id, action);
+          this.terminalPreviews.set(terminalPreview.previewId, terminalPreview);
+          await this.terminalExecute(session, { sessionId: session.id, actionId: action.id, previewId: terminalPreview.previewId });
+          operation.commandsExecuted = appendCommandLedger(operation.commandsExecuted, terminalPreview, "running");
+          const run = await this.waitForTerminalResume(session, action.id);
+          operation.commandsExecuted = appendCommandLedger(operation.commandsExecuted, terminalPreview, commandLedgerStatus(run));
+          if (run.status !== "Succeeded") {
+            operation.actionsFailed = uniqueStrings([...operation.actionsFailed, action.id]);
+            await this.persistResumeConflict(session, operation, run.failureReason ?? "Resumed command failed.");
+            throw new Error(run.failureReason ?? "Resumed command failed.");
+          }
+          operation.actionsCompleted = uniqueStrings([...operation.actionsCompleted, action.id]);
+          operation.resumePointer.lastCompletedActionId = action.id;
+          resumedActionIds.push(action.id);
+        }
+        operation.resumePointer = pointerForResume(session, operation);
+      }
+
+      const nextEligibility = await this.evaluateResumeEligibility(session, operation);
+      operation.resumeEligibility = nextEligibility;
+      operation.resumePointer = pointerForResume(session, operation);
+      operation.status = nextEligibility.remaining > 0 ? "running" : "verifying";
+      await this.touch(session);
+      const report = await this.verify(session, { sessionId: session.id });
+      const current = ensureRecovery(session).operations.find((item) => item.operationId === operation.operationId);
+      if (current) {
+        current.verificationResult = report.report.status;
+        current.status = report.report.status === "Failed" ? "blocked" : "completed";
+        current.completedAt = report.report.completedAt;
+        current.conflict = report.report.status === "Failed" ? report.report.summary : undefined;
+        current.resumeEligibility = await this.evaluateResumeEligibility(session, current);
+        current.resumePointer = pointerForResume(session, current);
+      }
+      return { sessionId: session.id, operationId: operation.operationId, resumedActionIds, state: report.state };
+    } catch (error) {
+      await this.persistResumeConflict(session, operation, errorMessage(error));
       throw error;
     }
   }
@@ -1000,6 +1116,12 @@ export class AgentExecutionService {
         timestamp: latest.completedAt ?? latest.startedAt
       };
     }
+    for (const operation of operations) {
+      if (operation.status === "interrupted" || operation.status === "resume-conflict" || operation.status === "resumable") {
+        operation.resumePointer = pointerForResume(session, operation);
+        operation.resumeEligibility = syncResumeEligibility(session, operation);
+      }
+    }
   }
 
   markInterrupted(session: AgentSession): void {
@@ -1010,6 +1132,8 @@ export class AgentExecutionService {
           operation.status = "interrupted";
           operation.completedAt = new Date().toISOString();
           operation.conflict = "Levi was interrupted during a build.";
+          operation.resumePointer = pointerForResume(session, operation);
+          operation.resumeEligibility = syncResumeEligibility(session, operation);
           recovery.interruptedOperationIds = uniqueStrings([...recovery.interruptedOperationIds, operation.operationId]).slice(-100);
           if (recovery.activeOperationId === operation.operationId) recovery.activeOperationId = undefined;
         }
@@ -1477,6 +1601,123 @@ export class AgentExecutionService {
     if (current.status === "completed" || current.status === "blocked") {
       recovery.activeOperationId = undefined;
     }
+  }
+
+  private async evaluateResumeEligibility(session: AgentSession, operation: AgentOperationLedgerEntry): Promise<AgentResumeEligibility> {
+    const pointer = pointerForResume(session, operation);
+    const safeActionIds: string[] = [];
+    const blockedActionIds: string[] = [];
+    let reason: string | undefined;
+    for (const actionId of pointer.remainingActionIds) {
+      const action = session.plan?.approvals.find((item) => item.id === actionId);
+      if (!action) {
+        blockedActionIds.push(actionId);
+        reason = "Remaining action requires missing snapshot state.";
+        break;
+      }
+      const result = await this.evaluateResumeAction(session, operation, action);
+      if (result.safe) {
+        safeActionIds.push(actionId);
+      } else {
+        blockedActionIds.push(actionId);
+        reason = result.reason;
+        break;
+      }
+    }
+    return {
+      available: pointer.remainingActionIds.length > 0 && blockedActionIds.length === 0,
+      reason: blockedActionIds.length ? reason : pointer.remainingActionIds.length ? undefined : "No remaining actions to resume.",
+      safeActionIds,
+      blockedActionIds,
+      completed: operation.actionsCompleted.length,
+      remaining: pointer.remainingActionIds.length,
+      evaluatedAt: new Date().toISOString()
+    };
+  }
+
+  private async evaluateResumeAction(
+    session: AgentSession,
+    operation: AgentOperationLedgerEntry,
+    action: AgentApprovalAction
+  ): Promise<{ safe: true; preview?: AgentActionPreview; terminalPreview?: AgentTerminalPreview } | { safe: false; reason: string }> {
+    if (action.status !== "Approved") return { safe: false, reason: "Remaining action requires approval." };
+    if (action.type === "delete-file" || action.type === "git-operation" || action.type.startsWith("browser-")) {
+      return { safe: false, reason: "Remaining action requires fresh approval." };
+    }
+    if (SAFE_RESUME_FILE_ACTIONS.has(action.type)) {
+      try {
+        const preview = await this.createPreview(session.id, action);
+        const snapshot = snapshotForAction(operation, action.id, preview.targetPath, preview.destinationPath);
+        const staleReason = snapshot ? await this.validateSnapshotPrecondition(snapshot, preview) : undefined;
+        if (staleReason) return { safe: false, reason: staleReason };
+        return { safe: true, preview };
+      } catch (error) {
+        return { safe: false, reason: resumeReasonFromError(error) };
+      }
+    }
+    if (action.type === "run-terminal-command") {
+      try {
+        const preview = await this.createTerminalPreview(session.id, action);
+        if (!isSafeResumeTerminalPreview(preview)) return { safe: false, reason: "Remaining command requires approval." };
+        const prior = latestTerminalRun(session, action.id);
+        if (prior && prior.status !== "Interrupted" && prior.status !== "Cancelled" && prior.status !== "Failed") {
+          return { safe: false, reason: "Command already ran or is still running." };
+        }
+        return { safe: true, terminalPreview: preview };
+      } catch (error) {
+        return { safe: false, reason: resumeReasonFromError(error) };
+      }
+    }
+    return { safe: false, reason: "Remaining action requires fresh approval." };
+  }
+
+  private async validateSnapshotPrecondition(snapshot: AgentRecoveredFileSnapshot, preview: AgentActionPreview): Promise<string | undefined> {
+    if (preview.actionType === "modify-file" && snapshot.beforeHash && hashContent(preview.originalContent ?? "") !== snapshot.beforeHash) {
+      return "File changed since interruption.";
+    }
+    if (preview.actionType === "create-file" && snapshot.afterHash) {
+      const target = await this.resolvePath(preview.targetPath);
+      try {
+        const current = await readTextFile(target.absolutePath, target.rootRealPath);
+        if (hashContent(current) === snapshot.afterHash) return undefined;
+        return "File changed since interruption.";
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+        return resumeReasonFromError(error);
+      }
+    }
+    if ((preview.actionType === "rename-file" || preview.actionType === "rename-folder") && snapshot.destinationRelativePath !== preview.destinationPath) {
+      return "Rename target changed since interruption.";
+    }
+    return undefined;
+  }
+
+  private async persistResumeConflict(session: AgentSession, operation: AgentOperationLedgerEntry, reason: string): Promise<void> {
+    operation.status = "resume-conflict";
+    operation.conflict = reason;
+    operation.resumeEligibility = {
+      available: false,
+      reason,
+      safeActionIds: [],
+      blockedActionIds: operation.resumePointer?.currentActionId ? [operation.resumePointer.currentActionId] : [],
+      completed: operation.actionsCompleted.length,
+      remaining: operation.resumePointer?.remainingActionIds.length ?? 0,
+      evaluatedAt: new Date().toISOString()
+    };
+    if (session.plan?.recovery?.activeOperationId === operation.operationId) session.plan.recovery.activeOperationId = undefined;
+    session.status = "Error";
+    session.error = reason;
+    await this.touch(session);
+  }
+
+  private async waitForTerminalResume(session: AgentSession, actionId: string): Promise<AgentTerminalRunState> {
+    const started = Date.now();
+    while (Date.now() - started < 30_000) {
+      const run = latestTerminalRun(session, actionId);
+      if (run && run.status !== "Running") return run;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error("Resumed command did not finish within the bounded verification window.");
   }
 
   private async safeGitStatus(): Promise<GitRepositoryStatus | undefined> {
@@ -2042,6 +2283,15 @@ function validateRestoreOperationRequest(value: unknown): AgentRestoreOperationR
   };
 }
 
+function validateResumeOperationRequest(value: unknown): AgentResumeOperationRequest {
+  if (!value || typeof value !== "object") throw new Error("Agent resume request is invalid.");
+  const record = value as Record<string, unknown>;
+  return {
+    sessionId: validateId(record.sessionId, "sessionId"),
+    operationId: validateId(record.operationId, "operationId")
+  };
+}
+
 function validateRollbackChoices(value: unknown): Record<string, AgentRollbackChoice> | undefined {
   if (value === undefined) return undefined;
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Agent rollback choices are invalid.");
@@ -2357,6 +2607,127 @@ function hasPendingFileActions(session: AgentSession, operation: AgentOperationL
     && item.status !== "Cancelled"
     && !operation.actionsFailed.includes(item.actionId)
   );
+}
+
+function pointerForResume(session: AgentSession, operation: AgentOperationLedgerEntry) {
+  const queue = session.plan?.executionQueue ?? [];
+  const actionIds = (session.plan?.approvals ?? [])
+    .filter((action) => action.status !== "Rejected" && action.status !== "Cancelled")
+    .filter((action) => {
+      const item = queue.find((candidate) => candidate.actionId === action.id);
+      return item?.status !== "Rejected" && item?.status !== "Cancelled";
+    })
+    .map((action) => action.id);
+  const attempted = new Set(operation.actionsAttempted);
+  const completed = new Set(operation.actionsCompleted);
+  const failed = new Set(operation.actionsFailed);
+  const operationStarted = new Set([...operation.actionsAttempted, ...operation.actionsCompleted, ...operation.actionsFailed]);
+  const startIndex = actionIds.findIndex((actionId) => operationStarted.has(actionId));
+  const remainingActionIds = actionIds
+    .slice(startIndex >= 0 ? startIndex : 0)
+    .filter((actionId) => !completed.has(actionId) && !failed.has(actionId))
+    .filter((actionId) => attempted.has(actionId) || operationStarted.size > 0);
+  return {
+    lastCompletedActionId: operation.actionsCompleted[operation.actionsCompleted.length - 1],
+    currentActionId: remainingActionIds[0],
+    remainingActionIds
+  };
+}
+
+function syncResumeEligibility(session: AgentSession, operation: AgentOperationLedgerEntry): AgentResumeEligibility {
+  const pointer = pointerForResume(session, operation);
+  const safeActionIds: string[] = [];
+  const blockedActionIds: string[] = [];
+  let reason: string | undefined;
+  for (const actionId of pointer.remainingActionIds) {
+    const action = session.plan?.approvals.find((item) => item.id === actionId);
+    if (!action) {
+      blockedActionIds.push(actionId);
+      reason = "Remaining action requires missing snapshot state.";
+      break;
+    }
+    const safe = action.status === "Approved" && (
+      SAFE_RESUME_FILE_ACTIONS.has(action.type)
+      || (action.type === "run-terminal-command" && isLikelySafeResumeTerminalAction(action))
+    );
+    if (safe) {
+      safeActionIds.push(actionId);
+    } else {
+      blockedActionIds.push(actionId);
+      reason = action.status !== "Approved" ? "Remaining action requires approval." : "Remaining action requires fresh approval.";
+      break;
+    }
+  }
+  return {
+    available: pointer.remainingActionIds.length > 0 && blockedActionIds.length === 0,
+    reason: blockedActionIds.length ? reason : pointer.remainingActionIds.length ? undefined : "No remaining actions to resume.",
+    safeActionIds,
+    blockedActionIds,
+    completed: operation.actionsCompleted.length,
+    remaining: pointer.remainingActionIds.length,
+    evaluatedAt: new Date().toISOString()
+  };
+}
+
+function isLikelySafeResumeTerminalAction(action: AgentApprovalAction): boolean {
+  try {
+    const command = validateTerminalCommand(action);
+    const text = `${command.executable} ${command.args.join(" ")}`.toLowerCase();
+    return SAFE_TERMINAL_EXECUTABLES.has(path.basename(command.executable).toLowerCase())
+      && SAFE_RESUME_COMMAND_WORDS.test(text)
+      && !UNSAFE_RESUME_COMMAND_WORDS.test(text);
+  } catch {
+    return false;
+  }
+}
+
+function snapshotForAction(operation: AgentOperationLedgerEntry, actionId: string, relativePath: string, destinationPath?: string): AgentRecoveredFileSnapshot | undefined {
+  return operation.snapshots.find((snapshot) =>
+    snapshot.relativePath === relativePath
+    || snapshot.destinationRelativePath === relativePath
+    || (destinationPath !== undefined && snapshot.destinationRelativePath === destinationPath)
+    || operation.actionId === actionId
+  );
+}
+
+function latestTerminalRun(session: AgentSession, actionId: string): AgentTerminalRunState | undefined {
+  return [...(session.plan?.terminalRuns ?? [])].reverse().find((run) => run.actionId === actionId);
+}
+
+function isSafeResumeTerminalPreview(preview: AgentTerminalPreview): boolean {
+  const command = `${preview.executable} ${preview.args.join(" ")}`.toLowerCase();
+  if (UNSAFE_RESUME_COMMAND_WORDS.test(command)) return false;
+  if (!SAFE_RESUME_COMMAND_WORDS.test(command)) return false;
+  return SAFE_TERMINAL_EXECUTABLES.has(path.basename(preview.executable).toLowerCase());
+}
+
+function appendCommandLedger(commands: AgentCommandLedgerEntry[], preview: AgentTerminalPreview, status: AgentCommandLedgerEntry["status"]): AgentCommandLedgerEntry[] {
+  const next = commands.filter((command) => command.actionId !== preview.actionId || command.commandId !== preview.commandId);
+  next.push({
+    actionId: preview.actionId,
+    commandId: preview.commandId,
+    executable: preview.executable,
+    args: [...preview.args],
+    cwd: preview.cwd,
+    status
+  });
+  return next.slice(-40);
+}
+
+function commandLedgerStatus(run: AgentTerminalRunState): AgentCommandLedgerEntry["status"] {
+  if (run.status === "Succeeded") return "succeeded";
+  if (run.status === "Cancelled") return "cancelled";
+  if (run.status === "Interrupted") return "interrupted";
+  return "failed";
+}
+
+function resumeReasonFromError(error: unknown): string {
+  const message = errorMessage(error);
+  if (/changed/i.test(message)) return "File changed since interruption.";
+  if (/approval/i.test(message)) return "Remaining action requires approval.";
+  if (/workspace|outside|escapes/i.test(message)) return "Workspace no longer matches.";
+  if (/exists|already/i.test(message)) return message;
+  return message || "Resume Where Safe is unavailable.";
 }
 
 function snapshotFromPreview(preview: AgentActionPreview): AgentRecoveredFileSnapshot {
