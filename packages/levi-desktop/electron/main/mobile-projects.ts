@@ -5,6 +5,12 @@ import os from "node:os";
 import { execFile as execFileCallback } from "node:child_process";
 import type { WorkspaceScanSummary } from "../../src/types/levi-api";
 import type { StarterCommand, StarterFile } from "./project-workflows";
+import {
+  getEffectiveDeveloperEnvironment,
+  redactedDeveloperToolDiagnostic,
+  resolveDeveloperToolFromEnvironment,
+  type DeveloperToolId
+} from "./developer-environment";
 
 const TOOL_TIMEOUT_MS = 8_000;
 const MAX_TOOL_OUTPUT = 24_000;
@@ -227,36 +233,37 @@ export async function detectMobileProject(root: string | null, summary: Workspac
   return model;
 }
 
-export async function detectMobileEnvironment(root: string | null, execFile: ExecFile = execFileCallback, env: NodeJS.ProcessEnv = process.env): Promise<MobileEnvironment> {
+export async function detectMobileEnvironment(root: string | null, execFile: ExecFile = execFileCallback, env: NodeJS.ProcessEnv = getEffectiveDeveloperEnvironment()): Promise<MobileEnvironment> {
   const javaExecutable = env.JAVA_HOME
     ? path.join(env.JAVA_HOME, "bin", process.platform === "win32" ? "java.exe" : "java")
     : defaultAndroidStudioJavaPath();
-  const java = await commandTool(execFile, await exists(javaExecutable) ? javaExecutable : "java", ["-version"], undefined, /version\s+"([^"]+)"/i);
-  const node = await commandTool(execFile, process.platform === "win32" ? "node.exe" : "node", ["--version"], undefined, /(v?\d+[^\s]*)/);
-  const npm = await commandTool(execFile, process.platform === "win32" ? "npm.cmd" : "npm", ["--version"], undefined, /(\d+[^\s]*)/);
-  const npx = await commandTool(execFile, process.platform === "win32" ? "npx.cmd" : "npx", ["--version"], undefined, /(\d+[^\s]*)/);
-  const pnpm = await commandTool(execFile, process.platform === "win32" ? "pnpm.cmd" : "pnpm", ["--version"], undefined, /(\d+[^\s]*)/);
-  const yarn = await commandTool(execFile, process.platform === "win32" ? "yarn.cmd" : "yarn", ["--version"], undefined, /(\d+[^\s]*)/);
+  const java = await commandTool(execFile, await exists(javaExecutable) ? javaExecutable : "java", ["-version"], undefined, /version\s+"([^"]+)"/i, env);
+  const node = await commandTool(execFile, process.platform === "win32" ? "node.exe" : "node", ["--version"], undefined, /(v?\d+[^\s]*)/, env);
+  const npm = await commandTool(execFile, process.platform === "win32" ? "npm.cmd" : "npm", ["--version"], undefined, /(\d+[^\s]*)/, env);
+  const npx = await commandTool(execFile, process.platform === "win32" ? "npx.cmd" : "npx", ["--version"], undefined, /(\d+[^\s]*)/, env);
+  const pnpm = await commandTool(execFile, process.platform === "win32" ? "pnpm.cmd" : "pnpm", ["--version"], undefined, /(\d+[^\s]*)/, env);
+  const yarn = await commandTool(execFile, process.platform === "win32" ? "yarn.cmd" : "yarn", ["--version"], undefined, /(\d+[^\s]*)/, env);
   const gradleWrapperPath = root ? path.join(root, process.platform === "win32" ? "gradlew.bat" : "gradlew") : "";
   const gradleWrapperReady = Boolean(root && await exists(gradleWrapperPath));
   const gradle = gradleWrapperReady
-    ? await commandTool(execFile, gradleWrapperPath, ["--version"], root ?? undefined, /Gradle\s+([^\s]+)/i)
-    : await commandTool(execFile, process.platform === "win32" ? "gradle.bat" : "gradle", ["--version"], undefined, /Gradle\s+([^\s]+)/i);
+    ? await commandTool(execFile, gradleWrapperPath, ["--version"], root ?? undefined, /Gradle\s+([^\s]+)/i, env)
+    : await commandTool(execFile, process.platform === "win32" ? "gradle.bat" : "gradle", ["--version"], undefined, /Gradle\s+([^\s]+)/i, env);
   const sdkRoot = env.ANDROID_HOME || env.ANDROID_SDK_ROOT || defaultAndroidSdkPath();
   const androidSdkReady = Boolean(sdkRoot && await exists(sdkRoot));
   const adbPath = sdkRoot ? path.join(sdkRoot, "platform-tools", process.platform === "win32" ? "adb.exe" : "adb") : (process.platform === "win32" ? "adb.exe" : "adb");
-  const adb = await commandTool(execFile, adbPath, ["version"], undefined, /Android Debug Bridge version\s+([^\s]+)/i);
-  const deviceOutput = await execText(execFile, adbPath, ["devices", "-l"], undefined).catch(() => ({ stdout: "", stderr: "" }));
-  const devices = adb.status === "ready" ? await enrichAndroidDeviceTargets(execFile, adbPath, parseAdbDevices(deviceOutput.stdout)) : [];
+  const adb = await commandTool(execFile, adbPath, ["version"], undefined, /Android Debug Bridge version\s+([^\s]+)/i, env);
+  const adbExecutable = adb.executablePath ?? adbPath;
+  const deviceOutput = await execText(execFile, adbExecutable, ["devices", "-l"], undefined, env).catch(() => ({ stdout: "", stderr: "" }));
+  const devices = adb.status === "ready" ? await enrichAndroidDeviceTargets(execFile, adbExecutable, parseAdbDevices(deviceOutput.stdout), env) : [];
   const emulatorPath = sdkRoot ? path.join(sdkRoot, "emulator", process.platform === "win32" ? "emulator.exe" : "emulator") : (process.platform === "win32" ? "emulator.exe" : "emulator");
-  const avdOutput = await execText(execFile, emulatorPath, ["-list-avds"], undefined).catch(() => ({ stdout: "", stderr: "" }));
+  const avdOutput = await execText(execFile, emulatorPath, ["-list-avds"], undefined, env).catch(() => ({ stdout: "", stderr: "" }));
   const avds = avdOutput.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const flutter = await commandTool(execFile, process.platform === "win32" ? "flutter.bat" : "flutter", ["--version"], undefined, /Flutter\s+([^\s]+)/i);
-  const dart = await commandTool(execFile, process.platform === "win32" ? "dart.bat" : "dart", ["--version"], undefined, /Dart SDK version:\s+([^\s]+)/i);
-  const flutterDoctor = flutter.status === "ready" ? await commandTool(execFile, process.platform === "win32" ? "flutter.bat" : "flutter", ["doctor", "-v"], undefined) : missingTool("Flutter doctor", "Install Flutter to run flutter doctor.");
-  const xcodebuild = process.platform === "darwin" ? await commandTool(execFile, "xcodebuild", ["-version"], undefined, /Xcode\s+([^\s]+)/i) : unavailableTool("xcodebuild", "Native iOS build requires macOS + Xcode.");
-  const swift = process.platform === "darwin" ? await commandTool(execFile, "swift", ["--version"], undefined, /Swift version\s+([^\s]+)/i) : unavailableTool("Swift", "Swift compilation for Apple platforms requires macOS toolchains.");
-  const simctl = process.platform === "darwin" ? await commandTool(execFile, "xcrun", ["simctl", "list", "devices", "available"], undefined) : unavailableTool("iOS simulators", "iOS simulators require macOS + Xcode.");
+  const flutter = await commandTool(execFile, process.platform === "win32" ? "flutter.bat" : "flutter", ["--version"], undefined, /Flutter\s+([^\s]+)/i, env);
+  const dart = await commandTool(execFile, process.platform === "win32" ? "dart.bat" : "dart", ["--version"], undefined, /Dart SDK version:\s+([^\s]+)/i, env);
+  const flutterDoctor = flutter.status === "ready" ? await commandTool(execFile, process.platform === "win32" ? "flutter.bat" : "flutter", ["doctor", "-v"], undefined, undefined, env) : missingTool("Flutter doctor", "Install Flutter to run flutter doctor.");
+  const xcodebuild = process.platform === "darwin" ? await commandTool(execFile, "xcodebuild", ["-version"], undefined, /Xcode\s+([^\s]+)/i, env) : unavailableTool("xcodebuild", "Native iOS build requires macOS + Xcode.");
+  const swift = process.platform === "darwin" ? await commandTool(execFile, "swift", ["--version"], undefined, /Swift version\s+([^\s]+)/i, env) : unavailableTool("Swift", "Swift compilation for Apple platforms requires macOS toolchains.");
+  const simctl = process.platform === "darwin" ? await commandTool(execFile, "xcrun", ["simctl", "list", "devices", "available"], undefined, undefined, env) : unavailableTool("iOS simulators", "iOS simulators require macOS + Xcode.");
 
   const gradleAvailableForAndroidStarter = gradleWrapperReady || gradle.status === "ready" || process.platform === "win32";
   const androidMissing = [java, adb].filter((tool) => tool.status !== "ready").map((tool) => tool.name);
@@ -269,7 +276,7 @@ export async function detectMobileEnvironment(root: string | null, execFile: Exe
       jdk: java.status === "ready" ? { ...java, name: "JDK" } : missingTool("JDK", "Install a JDK and ensure java is on PATH."),
       javaHome: env.JAVA_HOME ? readyTool("JAVA_HOME", env.JAVA_HOME) : missingTool("JAVA_HOME", "Set JAVA_HOME to the installed JDK when Gradle requires it."),
       androidSdk: androidSdkReady ? readyTool("Android SDK", sdkRoot) : missingTool("Android SDK", "Install Android Studio or the command line SDK and set ANDROID_HOME or ANDROID_SDK_ROOT."),
-      adb: adb.status === "ready" ? { ...adb, name: "ADB", executablePath: adbPath } : missingTool("ADB", "Install Android platform-tools or add adb to PATH."),
+      adb: adb.status === "ready" ? { ...adb, name: "ADB", executablePath: adbExecutable } : missingTool("ADB", "Install Android platform-tools or add adb to PATH."),
       gradle: gradle.status === "ready" ? { ...gradle, name: gradleWrapperReady ? "Gradle wrapper" : "Gradle" } : readyTool("Gradle", "Android starters create a workspace-local Gradle wrapper."),
       gradleWrapper: gradleWrapperReady ? readyTool("Gradle wrapper", normalizeSlashes(gradleWrapperPath)) : readyTool("Gradle wrapper", "Created for Android starters when missing."),
       buildTools: androidSdkReady && await hasSdkChild(sdkRoot, "build-tools") ? readyTool("Android build-tools", "Installed") : missingTool("Android build-tools", "Install Android SDK build-tools."),
@@ -294,7 +301,7 @@ export async function detectMobileEnvironment(root: string | null, execFile: Exe
       pnpm,
       yarn,
       npx,
-      expoCli: await commandTool(execFile, process.platform === "win32" ? "npx.cmd" : "npx", ["expo", "--version"], undefined, /([0-9][^\s]*)/),
+      expoCli: await commandTool(execFile, process.platform === "win32" ? "npx.cmd" : "npx", ["expo", "--version"], undefined, /([0-9][^\s]*)/, env),
       androidTooling: androidMissing.length ? missingTool("React Native Android tooling", `Missing ${androidMissing.join(", ")}.`) : readyTool("React Native Android tooling", "Ready"),
       iosTooling: process.platform === "darwin" ? readyTool("React Native iOS tooling", "macOS available") : unavailableTool("React Native iOS tooling", "Native iOS build requires macOS + Xcode.")
     },
@@ -337,15 +344,15 @@ export function parseAdbDevices(output: string): AndroidDeviceTarget[] {
     .filter((target) => target.id);
 }
 
-async function enrichAndroidDeviceTargets(execFile: ExecFile, adbPath: string, targets: AndroidDeviceTarget[]): Promise<AndroidDeviceTarget[]> {
+async function enrichAndroidDeviceTargets(execFile: ExecFile, adbPath: string, targets: AndroidDeviceTarget[], env: NodeJS.ProcessEnv): Promise<AndroidDeviceTarget[]> {
   const readyTargets = targets.filter((target) => target.state === "device");
   const enriched = new Map<string, AndroidDeviceTarget>();
   for (const target of readyTargets) {
     const [manufacturer, androidVersion, apiLevel, model] = await Promise.all([
-      readAndroidProperty(execFile, adbPath, target.id, "ro.product.manufacturer"),
-      readAndroidProperty(execFile, adbPath, target.id, "ro.build.version.release"),
-      readAndroidProperty(execFile, adbPath, target.id, "ro.build.version.sdk"),
-      readAndroidProperty(execFile, adbPath, target.id, "ro.product.model")
+      readAndroidProperty(execFile, adbPath, target.id, "ro.product.manufacturer", env),
+      readAndroidProperty(execFile, adbPath, target.id, "ro.build.version.release", env),
+      readAndroidProperty(execFile, adbPath, target.id, "ro.build.version.sdk", env),
+      readAndroidProperty(execFile, adbPath, target.id, "ro.product.model", env)
     ]);
     enriched.set(target.id, {
       ...target,
@@ -359,8 +366,8 @@ async function enrichAndroidDeviceTargets(execFile: ExecFile, adbPath: string, t
   return targets.map((target) => enriched.get(target.id) ?? target);
 }
 
-async function readAndroidProperty(execFile: ExecFile, adbPath: string, serial: string, property: string): Promise<string | undefined> {
-  const result = await execText(execFile, adbPath, ["-s", serial, "shell", "getprop", property], undefined).catch(() => ({ stdout: "", stderr: "" }));
+async function readAndroidProperty(execFile: ExecFile, adbPath: string, serial: string, property: string, env: NodeJS.ProcessEnv): Promise<string | undefined> {
+  const result = await execText(execFile, adbPath, ["-s", serial, "shell", "getprop", property], undefined, env).catch(() => ({ stdout: "", stderr: "" }));
   return firstLine(result.stdout)?.trim() || undefined;
 }
 
@@ -489,20 +496,62 @@ async function enrichIosProject(root: string, model: MobileProjectModel): Promis
   return { ...model, framework: swiftui ? "swiftui" : model.framework, evidence: unique([...model.evidence, ...(swiftui ? ["SwiftUI imports"] : [])]) };
 }
 
-async function commandTool(execFile: ExecFile, command: string, args: string[], cwd?: string, versionPattern?: RegExp): Promise<MobileTool> {
-  const result = await execText(execFile, command, args, cwd).catch((error) => ({ stdout: "", stderr: error instanceof Error ? error.message : String(error), failed: true }));
-  if ("failed" in result) return missingTool(path.basename(command), result.stderr || `Install ${command}.`);
+async function commandTool(execFile: ExecFile, command: string, args: string[], cwd?: string, versionPattern?: RegExp, env: NodeJS.ProcessEnv = getEffectiveDeveloperEnvironment()): Promise<MobileTool> {
+  const resolution = resolveMobileTool(command, env);
+  const executable = path.isAbsolute(command) ? resolution.resolvedPath ?? command : command;
+  const result = await execText(execFile, executable, args, cwd, env).catch((error) => ({ stdout: "", stderr: error instanceof Error ? error.message : String(error), failed: true }));
+  if ("failed" in result) {
+    return missingTool(path.basename(command), `${result.stderr || `Install ${command}.`} ${redactedDeveloperToolDiagnostic(resolution)}`);
+  }
   const text = `${result.stdout}\n${result.stderr}`;
-  return readyTool(path.basename(command), versionPattern?.exec(text)?.[1] ?? firstLine(text));
+  return { ...readyTool(path.basename(command), versionPattern?.exec(text)?.[1] ?? firstLine(text)), executablePath: executable };
 }
 
-function execText(execFile: ExecFile, command: string, args: string[], cwd?: string): Promise<{ stdout: string; stderr: string }> {
+function execText(execFile: ExecFile, command: string, args: string[], cwd?: string, env: NodeJS.ProcessEnv = getEffectiveDeveloperEnvironment()): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { cwd, timeout: TOOL_TIMEOUT_MS, windowsHide: true, maxBuffer: MAX_TOOL_OUTPUT }, (error, stdout, stderr) => {
+    execFile(command, args, { cwd, env, timeout: TOOL_TIMEOUT_MS, windowsHide: true, maxBuffer: MAX_TOOL_OUTPUT }, (error, stdout, stderr) => {
       if (error) reject(new Error(stderr.toString().trim() || stdout.toString().trim() || error.message));
       else resolve({ stdout: stdout.toString(), stderr: stderr.toString() });
     });
   });
+}
+
+function resolveMobileTool(command: string, env: NodeJS.ProcessEnv) {
+  if (path.isAbsolute(command)) {
+    return {
+      toolName: path.basename(command),
+      command,
+      resolvedPath: command,
+      pathSearched: (env.Path ?? env.PATH ?? "").split(path.delimiter).filter(Boolean),
+      fallbackLocationsChecked: []
+    };
+  }
+  const id = mobileToolIdForCommand(command);
+  return id
+    ? resolveDeveloperToolFromEnvironment(id, path.basename(command), env)
+    : {
+      toolName: path.basename(command),
+      command,
+      resolvedPath: path.isAbsolute(command) && existsSync(command) ? command : undefined,
+      pathSearched: (env.Path ?? env.PATH ?? "").split(path.delimiter).filter(Boolean),
+      fallbackLocationsChecked: []
+    };
+}
+
+function mobileToolIdForCommand(command: string): DeveloperToolId | undefined {
+  const base = path.basename(command).toLowerCase().replace(/\.(exe|cmd|bat)$/i, "");
+  if (base === "go") return "go";
+  if (base === "rustc") return "rustc";
+  if (base === "cargo") return "cargo";
+  if (base === "java") return "java";
+  if (base === "adb") return "adb";
+  if (base === "node") return "node";
+  if (base === "npm" || base === "npx" || base === "pnpm" || base === "yarn") return "npm";
+  if (base === "python" || base === "py") return "python";
+  if (base === "dotnet") return "dotnet";
+  if (base === "flutter" || base === "dart") return "flutter";
+  if (base === "git") return "git";
+  return undefined;
 }
 
 async function listFiles(root: string, limit: number): Promise<string[]> {
@@ -576,7 +625,8 @@ function defaultAndroidStudioJavaPath(): string {
 }
 
 function installedAndroidSdk(): string {
-  return process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || defaultAndroidSdkPath();
+  const env = getEffectiveDeveloperEnvironment();
+  return env.ANDROID_HOME || env.ANDROID_SDK_ROOT || defaultAndroidSdkPath();
 }
 
 function installedCompileSdk(sdkRoot: string): number | undefined {

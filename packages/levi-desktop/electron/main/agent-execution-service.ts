@@ -5,6 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { TextDecoder } from "node:util";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { BrowserWindow } from "electron";
+import { getEffectiveDeveloperEnvironment, resolveDeveloperToolFromEnvironment, type DeveloperToolId } from "./developer-environment";
 import type {
   AgentActionPreview,
   AgentActionType,
@@ -2035,9 +2036,11 @@ export class AgentExecutionService {
     let completed = false;
     try {
       const launch = resolveDirectProcessLaunch(preview);
-      const child = spawn(launch.executable, launch.args, {
+      const env = getEffectiveDeveloperEnvironment();
+      const executable = resolveDeveloperExecutable(launch.executable, env);
+      const child = spawn(executable, launch.args, {
         cwd: preview.cwd,
-        env: { ...process.env },
+        env,
         shell: false,
         windowsHide: true
       });
@@ -3696,6 +3699,28 @@ function resolveDirectProcessLaunch(preview: AgentTerminalPreview): { executable
     return { executable: process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe", args: ["/d", "/s", "/c", preview.executable, ...preview.args] };
   }
   return { executable: preview.executable, args: preview.args };
+}
+
+function resolveDeveloperExecutable(executable: string, env: NodeJS.ProcessEnv): string {
+  const id = developerToolIdForExecutable(executable);
+  if (!id) return executable;
+  return resolveDeveloperToolFromEnvironment(id, executable, env).resolvedPath ?? executable;
+}
+
+function developerToolIdForExecutable(executable: string): DeveloperToolId | undefined {
+  const base = path.basename(executable).toLowerCase().replace(/\.(exe|cmd|bat)$/i, "");
+  if (base === "go") return "go";
+  if (base === "rustc") return "rustc";
+  if (base === "cargo") return "cargo";
+  if (base === "java") return "java";
+  if (base === "adb") return "adb";
+  if (base === "node") return "node";
+  if (base === "npm" || base === "npx" || base === "pnpm" || base === "yarn") return "npm";
+  if (base === "python" || base === "py") return "python";
+  if (base === "dotnet") return "dotnet";
+  if (base === "flutter" || base === "dart") return "flutter";
+  if (base === "git") return "git";
+  return undefined;
 }
 
 function terminalExitInfrastructureMessage(run: AgentTerminalRunState): string | undefined {

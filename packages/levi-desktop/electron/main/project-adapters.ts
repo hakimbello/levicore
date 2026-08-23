@@ -2,6 +2,12 @@ import { execFile as execFileCallback } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { ProjectDetection, ProjectType, RunAppCommand, UniversalRunTargetKind, WorkspaceScanSummary } from "../../src/types/levi-api";
+import {
+  getEffectiveDeveloperEnvironment,
+  redactedDeveloperToolDiagnostic,
+  resolveDeveloperToolFromEnvironment,
+  type DeveloperToolId
+} from "./developer-environment";
 
 type ExecFile = typeof execFileCallback;
 
@@ -125,7 +131,8 @@ export function detectUniversalRunCommands(summary: WorkspaceScanSummary): RunAp
 
 export async function detectUniversalEnvironment(root: string | null, summary: WorkspaceScanSummary | undefined, execFile: ExecFile = execFileCallback): Promise<UniversalEnvironmentReport> {
   const profile = summary ? detectProjectAdapterProfile(summary) : null;
-  const tools = Object.fromEntries(await Promise.all(UNIVERSAL_TOOLS.map(async (tool) => [tool.id, await checkTool(tool, root, execFile)])));
+  const env = getEffectiveDeveloperEnvironment();
+  const tools = Object.fromEntries(await Promise.all(UNIVERSAL_TOOLS.map(async (tool) => [tool.id, await checkTool(tool, root, execFile, env)])));
   const relevantMissing = (profile?.requiredTools ?? []).filter((tool) => tools[toolId(tool)]?.status !== "ready");
   return {
     tools,
@@ -566,32 +573,47 @@ const UNIVERSAL_TOOLS: Array<{ id: string; name: string; command: string; args: 
   { id: "xcodebuild", name: "Xcode", command: "xcodebuild", args: ["-version"] }
 ];
 
-async function checkTool(tool: { id: string; name: string; command: string; args: string[] }, cwd: string | null, execFile: ExecFile): Promise<UniversalToolState> {
-  const command = resolveKnownToolCommand(tool.id, tool.command);
+async function checkTool(tool: { id: string; name: string; command: string; args: string[] }, cwd: string | null, execFile: ExecFile, env: NodeJS.ProcessEnv): Promise<UniversalToolState> {
+  const resolution = resolveKnownToolCommand(tool.id, tool.command, env);
+  const command = resolution.resolvedPath ?? tool.command;
   return new Promise((resolve) => {
     try {
-      execFile(command, tool.args, { cwd: cwd ?? undefined, timeout: 5_000, windowsHide: true, maxBuffer: 16_000 }, (error, stdout, stderr) => {
+      execFile(command, tool.args, { cwd: cwd ?? undefined, env, timeout: 5_000, windowsHide: true, maxBuffer: 16_000 }, (error, stdout, stderr) => {
         const output = `${stdout.toString()}\n${stderr.toString()}`.trim();
         if (error) {
-          resolve({ ...tool, status: "missing", message: output || error.message });
+          resolve({ ...tool, status: "missing", command, message: `${output || error.message} ${redactedDeveloperToolDiagnostic(resolution)}`.trim() });
         } else {
           resolve({ ...tool, command, status: "ready", version: output.split(/\r?\n/)[0]?.trim() });
         }
       });
     } catch (error) {
-      resolve({ ...tool, status: "missing", message: error instanceof Error ? error.message : "Tool could not be launched." });
+      resolve({ ...tool, command, status: "missing", message: `${error instanceof Error ? error.message : "Tool could not be launched."} ${redactedDeveloperToolDiagnostic(resolution)}` });
     }
   });
 }
 
-function resolveKnownToolCommand(id: string, command: string): string {
-  if (process.platform !== "win32") return command;
-  const candidates: Record<string, string[]> = {
-    go: ["C:\\Program Files\\Go\\bin\\go.exe"],
-    rustc: [path.join(process.env.USERPROFILE ?? "", ".cargo", "bin", "rustc.exe")],
-    cargo: [path.join(process.env.USERPROFILE ?? "", ".cargo", "bin", "cargo.exe")]
-  };
-  return candidates[id]?.find((candidate) => candidate && fs.existsSync(candidate)) ?? command;
+function resolveKnownToolCommand(id: string, command: string, env: NodeJS.ProcessEnv) {
+  const toolId = universalDeveloperToolId(id, command);
+  return toolId
+    ? resolveDeveloperToolFromEnvironment(toolId, command, env)
+    : {
+      toolName: id,
+      command,
+      resolvedPath: path.isAbsolute(command) && fs.existsSync(command) ? command : undefined,
+      pathSearched: (env.Path ?? env.PATH ?? "").split(path.delimiter).filter(Boolean),
+      fallbackLocationsChecked: []
+    };
+}
+
+function universalDeveloperToolId(id: string, command: string): DeveloperToolId | undefined {
+  const normalized = id.toLowerCase();
+  if (normalized === "android sdk") return "adb";
+  const base = path.basename(command).toLowerCase().replace(/\.(exe|cmd|bat)$/i, "");
+  if (["go", "rustc", "cargo", "java", "node", "npm", "python", "dotnet", "flutter", "git"].includes(normalized)) return normalized as DeveloperToolId;
+  if (base === "adb") return "adb";
+  if (base === "npm" || base === "pnpm" || base === "yarn") return "npm";
+  if (base === "dart") return "flutter";
+  return undefined;
 }
 
 function toolId(tool: string): string {

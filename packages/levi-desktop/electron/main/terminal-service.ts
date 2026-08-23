@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import * as pty from "node-pty";
+import { getEffectiveDeveloperEnvironment, resolveDeveloperToolFromEnvironment, type DeveloperToolId } from "./developer-environment";
 
 export const TERMINAL_MIN_COLS = 20;
 export const TERMINAL_MAX_COLS = 240;
@@ -113,15 +114,16 @@ export function spawnTerminalPty(options: TerminalSpawnOptions): TerminalPtySess
     throw new Error("Configured shell is not allowed.");
   }
 
+  const env = getEffectiveDeveloperEnvironment();
   const session = pty.spawn(shell.executable, [], {
     name: "xterm-256color",
     cols: options.cols,
     rows: options.rows,
     cwd: options.cwd,
     env: {
-      ...process.env,
+      ...env,
       TERM: "xterm-256color",
-      LANG: process.env.LANG ?? "en_US.UTF-8"
+      LANG: env.LANG ?? "en_US.UTF-8"
     }
   });
 
@@ -141,15 +143,17 @@ export function spawnTerminalPty(options: TerminalSpawnOptions): TerminalPtySess
 
 export function spawnCommandPty(options: TerminalCommandSpawnOptions): TerminalPtySession {
   const shell = detectDefaultShell();
-  const session = pty.spawn(options.executable, options.args, {
+  const env = getEffectiveDeveloperEnvironment();
+  const executable = resolveCommandExecutable(options.executable, env);
+  const session = pty.spawn(executable, options.args, {
     name: "xterm-256color",
     cols: options.cols,
     rows: options.rows,
     cwd: options.cwd,
     env: {
-      ...process.env,
+      ...env,
       TERM: "xterm-256color",
-      LANG: process.env.LANG ?? "en_US.UTF-8"
+      LANG: env.LANG ?? "en_US.UTF-8"
     }
   });
 
@@ -164,8 +168,30 @@ export function spawnCommandPty(options: TerminalCommandSpawnOptions): TerminalP
     cwd: options.cwd,
     shell,
     alive: true,
-    command: `${options.executable} ${options.args.join(" ")}`.trim()
+    command: `${executable} ${options.args.join(" ")}`.trim()
   };
+}
+
+function resolveCommandExecutable(executable: string, env: NodeJS.ProcessEnv): string {
+  const id = developerToolIdForExecutable(executable);
+  if (!id) return executable;
+  return resolveDeveloperToolFromEnvironment(id, executable, env).resolvedPath ?? executable;
+}
+
+function developerToolIdForExecutable(executable: string): DeveloperToolId | undefined {
+  const base = path.basename(executable).toLowerCase().replace(/\.(exe|cmd|bat)$/i, "");
+  if (base === "go") return "go";
+  if (base === "rustc") return "rustc";
+  if (base === "cargo") return "cargo";
+  if (base === "java") return "java";
+  if (base === "adb") return "adb";
+  if (base === "node") return "node";
+  if (base === "npm" || base === "npx" || base === "pnpm" || base === "yarn") return "npm";
+  if (base === "python" || base === "py") return "python";
+  if (base === "dotnet") return "dotnet";
+  if (base === "flutter" || base === "dart") return "flutter";
+  if (base === "git") return "git";
+  return undefined;
 }
 
 export function killTerminalPty(session: TerminalPtySession): void {

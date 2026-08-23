@@ -5,6 +5,7 @@ import { performance } from "node:perf_hooks";
 import type { BrowserWindow } from "electron";
 import type { SelectedProject, WorkspaceScanSummary } from "../../src/types/levi-api";
 import type { TerminalManager } from "./terminal-manager";
+import { getEffectiveDeveloperEnvironment, resolveDeveloperToolFromEnvironment, type DeveloperToolId } from "./developer-environment";
 import {
   androidComposeStarterFiles,
   androidRunCommands,
@@ -1015,13 +1016,26 @@ async function exists(targetPath: string): Promise<boolean> {
 }
 
 function exec(execFile: ExecFile, executable: string, args: string[], cwd: string, timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
-  const launch = resolveExecLaunch(executable, args);
+  const env = getEffectiveDeveloperEnvironment();
+  const launch = resolveExecLaunch(resolveExecutable(executable, env), args);
   return new Promise((resolve, reject) => {
-    execFile(launch.executable, launch.args, { cwd, timeout: timeoutMs, windowsHide: true, maxBuffer: MAX_OUTPUT_CHARS * 2 }, (error, stdout, stderr) => {
+    execFile(launch.executable, launch.args, { cwd, env, timeout: timeoutMs, windowsHide: true, maxBuffer: MAX_OUTPUT_CHARS * 2 }, (error, stdout, stderr) => {
       if (error) reject(new Error(stderr.toString().trim() || stdout.toString().trim() || error.message));
       else resolve({ stdout: stdout.toString(), stderr: stderr.toString() });
     });
   });
+}
+
+function resolveExecutable(executable: string, env: NodeJS.ProcessEnv): string {
+  const toolId = developerToolIdForExecutable(executable);
+  if (!toolId) return executable;
+  return resolveDeveloperToolFromEnvironment(toolId, executable, env).resolvedPath ?? executable;
+}
+
+function developerToolIdForExecutable(executable: string): DeveloperToolId | undefined {
+  const base = path.basename(executable).toLowerCase().replace(/\.(exe|cmd|bat)$/i, "");
+  const ids = new Set<DeveloperToolId>(["go", "rustc", "cargo", "java", "adb", "node", "npm", "python", "dotnet", "flutter", "git"]);
+  return ids.has(base as DeveloperToolId) ? base as DeveloperToolId : undefined;
 }
 
 function resolveExecLaunch(executable: string, args: string[]): { executable: string; args: string[] } {

@@ -4,6 +4,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { app } from "electron";
+import { getEffectiveDeveloperEnvironment } from "./developer-environment";
 import type {
   AgentActionType,
   AgentApprovalAction,
@@ -2042,7 +2043,7 @@ async function readGitStatus(rootPath: string): Promise<AgentProjectSummary["git
 
 function execFileText(command: string, args: string[], cwd: string, timeoutMs: number): Promise<{ stdout: string }> {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { cwd, timeout: timeoutMs, windowsHide: true, maxBuffer: 64 * 1024 }, (error, stdout) => {
+    execFile(command, args, { cwd, env: getEffectiveDeveloperEnvironment(), timeout: timeoutMs, windowsHide: true, maxBuffer: 64 * 1024 }, (error, stdout) => {
       if (error) reject(error);
       else resolve({ stdout: stdout.toString() });
     });

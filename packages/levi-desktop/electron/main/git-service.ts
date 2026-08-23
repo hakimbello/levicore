@@ -3,6 +3,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import type { AgentRiskLevel } from "../../src/features/agent";
+import { getEffectiveDeveloperEnvironment } from "./developer-environment";
 
 const GIT_TIMEOUT_MS = 10_000;
 const GIT_DIFF_TIMEOUT_MS = 15_000;
@@ -369,7 +370,7 @@ function isInside(root: string, candidate: string): boolean {
 
 function git(cwd: string, args: string[], timeoutMs: number, maxBuffer = 256 * 1024): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile("git", args, { cwd, timeout: timeoutMs, windowsHide: true, maxBuffer }, (error, stdout, stderr) => {
+    execFile("git", args, { cwd, env: getEffectiveDeveloperEnvironment(), timeout: timeoutMs, windowsHide: true, maxBuffer }, (error, stdout, stderr) => {
       if (error) {
         reject(new Error(stderr.toString().trim() || stdout.toString().trim() || error.message));
       } else {
