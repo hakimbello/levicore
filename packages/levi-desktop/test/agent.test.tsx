@@ -967,6 +967,53 @@ describe("Coding Agent foundation", () => {
     expect(await fsp.readFile(path.join(root, "src", "existing.txt"), "utf8")).toBe("before\r\n");
   });
 
+  it("treats compatible create-file and create-folder collisions as already satisfied", async () => {
+    const { service, statePath } = await createService(providerWithActions([
+      { type: "create-file", title: "Create existing file", description: "Create a text file.", relativePath: "src/existing.txt", content: "same\n" },
+      { type: "create-folder", title: "Create existing folder", description: "Create folder.", relativePath: "src" }
+    ]));
+    const root = path.dirname(statePath);
+    await fsp.mkdir(path.join(root, "src"), { recursive: true });
+    await fsp.writeFile(path.join(root, "src", "existing.txt"), "same\n", "utf8");
+
+    const planned = await service.plan({ prompt: "Create compatible existing targets", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const actions = planned.state.sessions[0].plan!.approvals;
+
+    for (const action of actions) {
+      await service.approve({ sessionId, actionId: action.id });
+      const preview = await service.preview({ sessionId, actionId: action.id });
+      expect(preview.preview.alreadySatisfied).toBe(true);
+      await service.execute({ sessionId, actionId: action.id, previewId: preview.preview.previewId });
+    }
+
+    const operation = (service.status({ sessionId }) as AgentSession).plan!.recovery!.operations[0];
+    expect(operation.filesCreated).toEqual([]);
+
+    await service.undo({ sessionId });
+    expect(await fsp.readFile(path.join(root, "src", "existing.txt"), "utf8")).toBe("same\n");
+    expect(fs.statSync(path.join(root, "src")).isDirectory()).toBe(true);
+  });
+
+  it("reports create-file and create-folder collisions when existing targets are incompatible", async () => {
+    const { service, statePath } = await createService(providerWithActions([
+      { type: "create-file", title: "Create colliding file", description: "Create a text file.", relativePath: "src/different.txt", content: "expected\n" },
+      { type: "create-folder", title: "Create colliding folder", description: "Create folder.", relativePath: "src/file-target" }
+    ]));
+    const root = path.dirname(statePath);
+    await fsp.mkdir(path.join(root, "src"), { recursive: true });
+    await fsp.writeFile(path.join(root, "src", "different.txt"), "actual\n", "utf8");
+    await fsp.writeFile(path.join(root, "src", "file-target"), "not a folder\n", "utf8");
+
+    const planned = await service.plan({ prompt: "Create incompatible existing targets", runtimeId: "ollama", modelId: "model-a" });
+    const sessionId = planned.sessionId;
+    const actions = planned.state.sessions[0].plan!.approvals;
+    for (const action of actions) await service.approve({ sessionId, actionId: action.id });
+
+    await expect(service.preview({ sessionId, actionId: actions[0].id })).rejects.toThrow(/different content/i);
+    await expect(service.preview({ sessionId, actionId: actions[1].id })).rejects.toThrow(/exists as a file/i);
+  });
+
   it("persists recovery ledger and resumes undo after restart", async () => {
     const { service, statePath, runtimeManager } = await createService(providerWithActions([
       { type: "create-file", title: "Create resumable file", description: "Create a text file.", relativePath: "src/resume.txt", content: "hello\n" }
@@ -1168,6 +1215,9 @@ describe("Coding Agent foundation", () => {
     expect(await fsp.readFile(path.join(root, "src", "new.txt"), "utf8")).toBe("move me\n");
     expect(fs.statSync(path.join(root, "src", "new-folder")).isDirectory()).toBe(true);
     expect(fs.statSync(path.join(root, "src", "renamed-folder")).isDirectory()).toBe(true);
+
+    await service.undo({ sessionId });
+    expect(fs.existsSync(path.join(root, "src", "new-folder"))).toBe(false);
 
     await service.approve({ sessionId, actionId: actions[4].id });
     await expect(service.preview({ sessionId, actionId: actions[4].id })).rejects.toThrow(/workspace file actions/i);

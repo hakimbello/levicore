@@ -212,6 +212,7 @@ type UndoRecord =
       relativePath: string;
       absolutePath: string;
       appliedHash?: string;
+      preExisting?: boolean;
       timestamp: string;
     }
   | {
@@ -241,6 +242,7 @@ type UndoRecord =
       actionId: string;
       relativePath: string;
       absolutePath: string;
+      preExisting?: boolean;
       timestamp: string;
     };
 
@@ -1383,9 +1385,9 @@ export class AgentExecutionService {
     }
 
     if (action.type === "create-file") {
-      await assertPathMissing(target.absolutePath, "Target file already exists.");
       proposedContent = validateTextContent(action.content, "File content");
-      const result = generateLocalDiff("", proposedContent);
+      originalContent = await existingCompatibleCreateFileContent(target, proposedContent);
+      const result = generateLocalDiff(originalContent ?? "", proposedContent);
       diff = result.lines.slice(0, MAX_DIFF_LINES);
       addedLineCount = result.addedLineCount;
       removedLineCount = result.removedLineCount;
@@ -1407,7 +1409,7 @@ export class AgentExecutionService {
       await assertExistingKind(target.absolutePath, "file");
       await assertPathMissing(destination.absolutePath, "Destination file already exists.");
     } else if (action.type === "create-folder") {
-      await assertPathMissing(target.absolutePath, "Target folder already exists.");
+      await assertCompatibleCreateFolderTarget(target.absolutePath);
     } else if (action.type === "rename-folder") {
       if (!destination) throw new Error("Rename folder actions require a destination path.");
       await assertExistingKind(target.absolutePath, "folder");
@@ -1423,6 +1425,7 @@ export class AgentExecutionService {
       actionType: action.type,
       targetPath: target.relativePath,
       destinationPath: destination?.relativePath,
+      alreadySatisfied: (action.type === "create-file" && originalContent !== undefined) || (action.type === "create-folder" && await pathIsDirectory(target.absolutePath)),
       summary: previewSummary(action),
       riskLevel: riskFor(action),
       destructive: action.type === "delete-file" || action.type === "rename-file" || action.type === "rename-folder",
@@ -1438,6 +1441,13 @@ export class AgentExecutionService {
   private async applyAction(action: AgentApprovalAction, preview: AgentActionPreview): Promise<UndoRecord> {
     const target = await this.resolvePath(preview.targetPath);
     if (action.type === "create-file") {
+      if (preview.alreadySatisfied) {
+        const current = await readTextFile(target.absolutePath, target.rootRealPath);
+        if (hashContent(current) !== hashContent(preview.proposedContent ?? "")) {
+          throw new Error("Target file already exists with different content.");
+        }
+        return { kind: "create-file", actionId: action.id, relativePath: target.relativePath, absolutePath: target.absolutePath, appliedHash: hashContent(current), preExisting: true, timestamp: new Date().toISOString() };
+      }
       await assertPathMissing(target.absolutePath, "Target file already exists.");
       await fs.mkdir(path.dirname(target.absolutePath), { recursive: true });
       await writeAtomically(target.absolutePath, preview.proposedContent ?? "");
@@ -1508,6 +1518,10 @@ export class AgentExecutionService {
       };
     }
     if (action.type === "create-folder") {
+      if (preview.alreadySatisfied) {
+        await assertExistingKind(target.absolutePath, "folder");
+        return { kind: "create-folder", actionId: action.id, relativePath: target.relativePath, absolutePath: target.absolutePath, preExisting: true, timestamp: new Date().toISOString() };
+      }
       await assertPathMissing(target.absolutePath, "Target folder already exists.");
       await fs.mkdir(path.dirname(target.absolutePath), { recursive: true });
       await fs.mkdir(target.absolutePath);
@@ -1549,7 +1563,7 @@ export class AgentExecutionService {
       actionsAttempted: [action.id],
       actionsCompleted: [],
       actionsFailed: [],
-      filesCreated: action.type === "create-file" || action.type === "create-folder" ? [preview.targetPath] : [],
+      filesCreated: (action.type === "create-file" || action.type === "create-folder") && !preview.alreadySatisfied ? [preview.targetPath] : [],
       filesModified: action.type === "modify-file" ? [preview.targetPath] : [],
       filesDeleted: action.type === "delete-file" ? [preview.targetPath] : [],
       filesRenamed: preview.destinationPath && (action.type === "rename-file" || action.type === "rename-folder") ? [{ from: preview.targetPath, to: preview.destinationPath }] : [],
@@ -1769,6 +1783,7 @@ export class AgentExecutionService {
 
   private async undoRecord(undo: UndoRecord): Promise<void> {
     if (undo.kind === "create-file") {
+      if (undo.preExisting) return;
       try {
         const current = await readTextFile(undo.absolutePath, path.dirname(undo.absolutePath));
         if (undo.appliedHash && hashContent(current) !== undo.appliedHash) {
@@ -1812,6 +1827,7 @@ export class AgentExecutionService {
       return;
     }
     if (undo.kind === "create-folder") {
+      if (undo.preExisting) return;
       await fs.rmdir(undo.absolutePath);
     }
   }
@@ -2590,7 +2606,7 @@ function appendSnapshot(operation: AgentOperationLedgerEntry, snapshot: AgentRec
 }
 
 function appendOperationFileLists(operation: AgentOperationLedgerEntry, action: AgentApprovalAction, preview: AgentActionPreview): void {
-  if (action.type === "create-file" || action.type === "create-folder") operation.filesCreated = uniqueStrings([...operation.filesCreated, preview.targetPath]);
+  if ((action.type === "create-file" || action.type === "create-folder") && !preview.alreadySatisfied) operation.filesCreated = uniqueStrings([...operation.filesCreated, preview.targetPath]);
   if (action.type === "modify-file") operation.filesModified = uniqueStrings([...operation.filesModified, preview.targetPath]);
   if (action.type === "delete-file") operation.filesDeleted = uniqueStrings([...operation.filesDeleted, preview.targetPath]);
   if (preview.destinationPath && (action.type === "rename-file" || action.type === "rename-folder")) {
@@ -2732,9 +2748,20 @@ function resumeReasonFromError(error: unknown): string {
 
 function snapshotFromPreview(preview: AgentActionPreview): AgentRecoveredFileSnapshot {
   if (preview.actionType === "create-file") {
+    if (preview.alreadySatisfied) {
+      return {
+        relativePath: preview.targetPath,
+        kind: "file",
+        beforeContent: preview.originalContent ?? "",
+        beforeHash: hashContent(preview.originalContent ?? ""),
+        afterContent: preview.proposedContent ?? "",
+        afterHash: hashContent(preview.proposedContent ?? "")
+      };
+    }
     return {
       relativePath: preview.targetPath,
       kind: "missing",
+      createdKind: "file",
       afterContent: preview.proposedContent ?? "",
       afterHash: hashContent(preview.proposedContent ?? "")
     };
@@ -2755,6 +2782,13 @@ function snapshotFromPreview(preview: AgentActionPreview): AgentRecoveredFileSna
       kind: "file",
       beforeContent: preview.originalContent ?? "",
       beforeHash: hashContent(preview.originalContent ?? "")
+    };
+  }
+  if (preview.actionType === "create-folder" && !preview.alreadySatisfied) {
+    return {
+      relativePath: preview.targetPath,
+      kind: "missing",
+      createdKind: "folder"
     };
   }
   return {
@@ -2794,6 +2828,12 @@ async function buildRollbackPlan(
       continue;
     }
     if (choice === "keep-current") {
+      continue;
+    }
+    if (snapshot.kind === "folder" && !snapshot.destinationRelativePath && snapshot.beforeContent === undefined && snapshot.afterHash === undefined) {
+      continue;
+    }
+    if (snapshot.kind === "file" && snapshot.beforeHash && snapshot.afterHash && snapshot.beforeHash === snapshot.afterHash && snapshot.beforeContent === snapshot.afterContent) {
       continue;
     }
     restoredPaths.push(relativePath);
@@ -2842,6 +2882,38 @@ async function rollbackConflict(
   choice: AgentRollbackChoice | undefined
 ): Promise<AgentRollbackConflict | undefined> {
   if (choice === "keep-current" || choice === "restore-snapshot") return undefined;
+  if (snapshot.destinationRelativePath && snapshot.kind === "folder") {
+    const stats = await fs.stat(currentAbsolutePath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (!stats || !stats.isDirectory()) {
+      return { relativePath: currentRelativePath, message: "This file changed after Levi's operation.", snapshotContent: snapshot.beforeContent };
+    }
+    return undefined;
+  }
+  if (snapshot.kind === "folder" && !snapshot.destinationRelativePath && snapshot.beforeContent === undefined && snapshot.afterHash === undefined) {
+    const stats = await fs.stat(currentAbsolutePath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (!stats) return undefined;
+    if (stats.isDirectory()) return undefined;
+    return { relativePath: currentRelativePath, message: "This file changed after Levi's operation." };
+  }
+  if (snapshot.kind === "missing" && snapshot.createdKind === "folder") {
+    const stats = await fs.stat(currentAbsolutePath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (!stats) return undefined;
+    if (!stats.isDirectory()) return { relativePath: currentRelativePath, message: "This file changed after Levi's operation." };
+    const entries = await fs.readdir(currentAbsolutePath);
+    if (entries.length > 0) {
+      return { relativePath: currentRelativePath, message: "This folder changed after Levi's operation." };
+    }
+    return undefined;
+  }
   const current = await readTextIfExists(currentAbsolutePath, rootRealPath);
   if (snapshot.destinationRelativePath) {
     if (!current.exists) return { relativePath: currentRelativePath, message: "This file changed after Levi's operation.", snapshotContent: snapshot.beforeContent };
@@ -3829,6 +3901,41 @@ async function readTextFile(absolutePath: string, rootRealPath: string): Promise
     return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
   } catch {
     throw new Error("Agent file target is not valid UTF-8.");
+  }
+}
+
+async function existingCompatibleCreateFileContent(target: ResolvedWorkspacePath, proposedContent: string): Promise<string | undefined> {
+  try {
+    const stats = await fs.lstat(target.absolutePath);
+    if (!stats.isFile()) throw new Error("Target file path already exists as a folder.");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  const current = await readTextFile(target.absolutePath, target.rootRealPath);
+  if (hashContent(current) !== hashContent(proposedContent)) {
+    throw new Error("Target file already exists with different content.");
+  }
+  return current;
+}
+
+async function assertCompatibleCreateFolderTarget(absolutePath: string): Promise<void> {
+  try {
+    const stats = await fs.lstat(absolutePath);
+    if (stats.isDirectory()) return;
+    throw new Error("Target folder path already exists as a file.");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+}
+
+async function pathIsDirectory(absolutePath: string): Promise<boolean> {
+  try {
+    return (await fs.lstat(absolutePath)).isDirectory();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
   }
 }
 

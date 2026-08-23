@@ -106,6 +106,7 @@ export type AgentActionPreview = {
   actionType: AgentActionType;
   targetPath: string;
   destinationPath?: string;
+  alreadySatisfied?: boolean;
   summary: string;
   riskLevel: AgentRiskLevel;
   destructive: boolean;
@@ -172,6 +173,7 @@ export type AgentRecoveredFileSnapshot = {
   relativePath: string;
   destinationRelativePath?: string;
   kind: AgentRecoveredFileKind;
+  createdKind?: "file" | "folder";
   beforeContent?: string;
   beforeHash?: string;
   afterContent?: string;
